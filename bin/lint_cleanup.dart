@@ -11,9 +11,8 @@ Future<void> main(List<String> arguments) async {
   try {
     argResults = _parser.parse(arguments);
   } on FormatException catch (e) {
-    printError(e.message);
+    setError(message: e.message, exitCode: ExitCode.usage.code);
     print(_parser.usage);
-    exitCode = ExitCode.usage.code;
     return;
   }
 
@@ -31,8 +30,10 @@ Future<void> main(List<String> arguments) async {
   } else {
     pkgDirectory = Directory(pkgDir);
     if (!pkgDirectory.existsSync()) {
-      print('Provided package-dir `$pkgDir` does not exist!');
-      exitCode = 1;
+      setError(
+        message: 'Provided package-dir `$pkgDir` does not exist!',
+        exitCode: ExitCode.usage.code,
+      );
       return;
     }
   }

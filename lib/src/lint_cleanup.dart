@@ -2,10 +2,13 @@ import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:io/ansi.dart' as ansi;
+import 'package:io/io.dart';
 import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 import 'package:yaml_edit/yaml_edit.dart';
+
+import 'util.dart';
 
 Future<void> runLintCleanup({
   required Directory packageDirectory,
@@ -15,8 +18,10 @@ Future<void> runLintCleanup({
   final config = await findPackageConfig(packageDirectory);
 
   if (config == null) {
-    print('No package was found in directory `${packageDirectory.path}`');
-    exitCode = 1;
+    setError(
+      message: 'No package was found in directory `${packageDirectory.path}`',
+      exitCode: ExitCode.config.code,
+    );
     return;
   }
 
@@ -167,9 +172,12 @@ _LintBundle _analysisOptionsFromPackage(
     throw StateError('Could not find the package `$pkg` in package config');
   }
 
-  final yamlPath = usedLintsPkg.root.resolve(
-    p.joinAll(['lib', ...includeUri.pathSegments.skip(1)]),
-  );
+  final segments = includeUri.pathSegments.skip(1).toList();
+  if (segments.any((s) => s == '..')) {
+    throw ArgumentError('Invalid path segments in include URI: $includeUri');
+  }
+
+  final yamlPath = usedLintsPkg.root.resolve(p.joinAll(['lib', ...segments]));
 
   return _lintsFromFile(p.fromUri(yamlPath), packageConfig);
 }

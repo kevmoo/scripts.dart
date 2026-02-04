@@ -1,16 +1,17 @@
-import 'dart:io';
-
+import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/tighten.dart';
+import 'package:kevmoo_scripts/src/util.dart';
 
 void main(List<String> args) async {
   try {
     await tighten();
   } on TightenException catch (e) {
-    stderr.writeln(e.message);
-    exitCode = 1;
+    setError(message: e.message, exitCode: ExitCode.config.code);
   } catch (e, stack) {
-    stderr.writeln('An unexpected error occurred: $e');
-    stderr.writeln(stack);
-    exitCode = 1;
+    setError(
+      message: 'An unexpected error occurred: $e',
+      exitCode: ExitCode.software.code,
+      stack: stack,
+    );
   }
 }

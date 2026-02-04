@@ -42,7 +42,7 @@ Future<void> tighten() async {
 
   final exitCode = await process.exitCode;
   if (exitCode != 0) {
-    exit(exitCode);
+    throw TightenException('Process exited with code $exitCode');
   }
 }
 

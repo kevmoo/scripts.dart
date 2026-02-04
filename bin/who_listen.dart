@@ -2,29 +2,39 @@
 
 import 'dart:convert';
 
+import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/shared.dart';
+import 'package:kevmoo_scripts/src/util.dart';
 import 'package:kevmoo_scripts/src/witr_types.dart';
 
 Future<void> main() async {
-  final processes = await _getListeningProcesses();
+  try {
+    final processes = await _getListeningProcesses();
 
-  for (final process in processes.values) {
-    final witrData = await _getWitrData(process.pid);
+    for (final process in processes.values) {
+      final witrData = await _getWitrData(process.pid);
 
-    final witrProcess = witrData.process;
+      final witrProcess = witrData.process;
 
-    print('${witrProcess.pid}: ${witrProcess.command}');
-    for (var ancester in witrData.ancestry) {
-      if (ancester.command == 'launchd') {
-        continue;
+      print('${witrProcess.pid}: ${witrProcess.command}');
+      for (var ancester in witrData.ancestry) {
+        if (ancester.command == 'launchd') {
+          continue;
+        }
+
+        if (ancester.pid == witrProcess.pid) {
+          continue;
+        }
+
+        print('  ${ancester.command}');
       }
-
-      if (ancester.pid == witrProcess.pid) {
-        continue;
-      }
-
-      print('  ${ancester.command}');
     }
+  } catch (e, stack) {
+    setError(
+      message: 'An unexpected error occurred: $e',
+      exitCode: ExitCode.software.code,
+      stack: stack,
+    );
   }
 }
 

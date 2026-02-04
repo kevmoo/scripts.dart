@@ -1,7 +1,7 @@
-import 'dart:io';
-
 import 'package:git/git.dart';
+import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/git_clean.dart';
+import 'package:kevmoo_scripts/src/util.dart';
 
 void main(List<String> args) async {
   try {
@@ -13,10 +13,12 @@ void main(List<String> args) async {
     final gitDir = await GitDir.fromExisting('.');
     await clean(gitDir);
   } on GitCleanException catch (e) {
-    print(e);
-    exitCode = 1;
-  } catch (e) {
-    print('An unexpected error occurred: $e');
-    exitCode = 1;
+    setError(message: e, exitCode: ExitCode.usage.code);
+  } catch (e, stack) {
+    setError(
+      message: 'An unexpected error occurred: $e',
+      exitCode: ExitCode.software.code,
+      stack: stack,
+    );
   }
 }
