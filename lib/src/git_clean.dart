@@ -140,25 +140,17 @@ Future<void> clean(GitDir gitDir) async {
     ], throwOnError: false);
 
     if (mergeResult.exitCode == 0) {
-      print('Fast-forwarded $primaryBranch.');
-    } else {
-      // It might fail if there's no upstream or if it can't fast-forward.
-      // We'll just ignore for now, maybe print stderr if verbose.
-      // But typically we just want to be silent if it's up to date or fails
-      // benignly.
-      // Actually, user asked for "if we've moved to the primary branch and
-      // everything worked".
-      // So printing something is good if it fails?
-      // "Already up to date." is stdout for success usually involved in merge?
-      // Git output varies.
-      // If it fails, likely it's "fatal: Not something we can merge" (no
-      // upstream) or "fatal: Not possible to fast-forward, aborting."
-      if (mergeResult.stderr.toString().contains('up to date')) {
-        print('Already up to date.');
+      if ((mergeResult.stdout as String).contains('Already up to date')) {
+        print('$primaryBranch is already up to date.');
       } else {
-        // Silently ignore or maybe debug print?
-        // Let's print the error only if it seems actionable, otherwise noise.
-        // For now, let's just leave it.
+        print('Fast-forwarded $primaryBranch.');
+      }
+    } else {
+      // The merge failed. This is not a critical error for this script's
+      // main purpose, so we don't throw. We can print stderr as a warning.
+      final stderr = (mergeResult.stderr as String).trim();
+      if (stderr.isNotEmpty) {
+        printError('Could not fast-forward $primaryBranch: $stderr');
       }
     }
   }
