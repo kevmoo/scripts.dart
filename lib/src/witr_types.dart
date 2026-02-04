@@ -56,9 +56,9 @@ class SourceData {
   SourceData({required this.type, required this.name});
 
   factory SourceData.fromJson(Map<String, dynamic> json) => SourceData(
-      type: json['Type'] as String? ?? '<unknown>',
-      name: json['Name'] as String? ?? '<unknown>',
-    );
+    type: json['Type'] as String? ?? '<unknown>',
+    name: json['Name'] as String? ?? '<unknown>',
+  );
 }
 
 class ProcessData {
@@ -83,19 +83,17 @@ class ProcessData {
   });
 
   factory ProcessData.fromJson(Map<String, dynamic> json) => ProcessData(
-      pid: json['PID'] as int,
-      command: json['Command'] as String? ?? '<unknown>',
-      cmdline: json['Cmdline'] as String? ?? '<unknown>',
-      user: json['User'] as String? ?? '<unknown>',
-      workingDir: json['WorkingDir'] as String? ?? '<unknown>',
-      listeningPorts: (json['ListeningPorts'] as List<dynamic>? ?? [])
-          .map((e) => e as int)
-          .toList(),
-      bindAddresses: (json['BindAddresses'] as List<dynamic>? ?? [])
-          .map((e) => e as String)
-          .toList(),
-      env: (json['Env'] as List<dynamic>? ?? [])
-          .map((e) => e as String)
-          .toList(),
-    );
+    pid: json['PID'] as int,
+    command: json['Command'] as String? ?? '<unknown>',
+    cmdline: json['Cmdline'] as String? ?? '<unknown>',
+    user: json['User'] as String? ?? '<unknown>',
+    workingDir: json['WorkingDir'] as String? ?? '<unknown>',
+    listeningPorts: (json['ListeningPorts'] as List<dynamic>? ?? [])
+        .map((e) => e as int)
+        .toList(),
+    bindAddresses: (json['BindAddresses'] as List<dynamic>? ?? [])
+        .map((e) => e as String)
+        .toList(),
+    env: (json['Env'] as List<dynamic>? ?? []).map((e) => e as String).toList(),
+  );
 }
