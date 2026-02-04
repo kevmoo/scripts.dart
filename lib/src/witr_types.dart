@@ -15,21 +15,21 @@ class WitrData {
 
   factory WitrData.fromJson(Map<String, dynamic> json) {
     final processJson = switch (json['Process']) {
-      Map<String, dynamic> v => v,
+      final Map<String, dynamic> v => v,
       _ => throw const FormatException(
         '`Process` field is missing or not a map.',
       ),
     };
 
     final restartCount = switch (json['RestartCount']) {
-      int v => v,
+      final int v => v,
       _ => throw const FormatException(
         '`RestartCount` field is missing or not an int.',
       ),
     };
 
     final sourceJson = switch (json['Source']) {
-      Map<String, dynamic> v => v,
+      final Map<String, dynamic> v => v,
       _ => throw const FormatException(
         '`Source` field is missing or not a map.',
       ),
@@ -55,12 +55,10 @@ class SourceData {
 
   SourceData({required this.type, required this.name});
 
-  factory SourceData.fromJson(Map<String, dynamic> json) {
-    return SourceData(
+  factory SourceData.fromJson(Map<String, dynamic> json) => SourceData(
       type: json['Type'] as String? ?? '<unknown>',
       name: json['Name'] as String? ?? '<unknown>',
     );
-  }
 }
 
 class ProcessData {
@@ -84,8 +82,7 @@ class ProcessData {
     this.env,
   });
 
-  factory ProcessData.fromJson(Map<String, dynamic> json) {
-    return ProcessData(
+  factory ProcessData.fromJson(Map<String, dynamic> json) => ProcessData(
       pid: json['PID'] as int,
       command: json['Command'] as String? ?? '<unknown>',
       cmdline: json['Cmdline'] as String? ?? '<unknown>',
@@ -101,5 +98,4 @@ class ProcessData {
           .map((e) => e as String)
           .toList(),
     );
-  }
 }

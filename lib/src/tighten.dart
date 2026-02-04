@@ -23,7 +23,7 @@ Future<void> tighten() async {
   }
 
   final minSdkVersion = switch (VersionConstraint.parse(sdkConstraintRaw)) {
-    Version version => version,
+    final Version version => version,
     VersionRange(:final min?) => min,
     _ => throw TightenException(
       'Could not determine minimum SDK version from constraint: '

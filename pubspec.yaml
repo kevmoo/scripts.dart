@@ -22,7 +22,7 @@ dev_dependencies:
   test_descriptor: ^2.0.2
 
 executables:
-  git_clean:
+  git-goma: git_clean
   who_listen:
   tighten:
   lint_cleanup:
