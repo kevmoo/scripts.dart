@@ -15,7 +15,8 @@ void main(List<String> args) async {
       result = await Process.run('git', ['rev-parse', '--show-toplevel']);
     } on ProcessException catch (e, stack) {
       setError(
-        message: 'Failed to run git. Is it installed and in your PATH? Error: ${e.message}',
+        message:
+            'Failed to run git. Is it installed and in your PATH? Error: ${e.message}',
         exitCode: ExitCode.software.code,
         stack: stack,
       );
