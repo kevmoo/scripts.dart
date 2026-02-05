@@ -4,7 +4,7 @@ import 'dart:io' as io;
 import 'package:io/ansi.dart';
 import 'package:stack_trace/stack_trace.dart';
 
-void printError(Object? value) {
+void printError(Object value) {
   final message = wrapWith(value.toString(), [red, styleBold]);
   if (_testState != null) {
     print(message);

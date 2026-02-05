@@ -12,16 +12,19 @@ void main(List<String> args) async {
     // TODO: all of this logic should be added to the git package
     ProcessResult result;
     try {
-      result = await Process.run('git', [
-        'rev-parse',
-        '--show-toplevel',
-      ], runInShell: true);
-    } on ProcessException catch (e) {
-      throw GitCleanException('Not a git directory: ${e.message}');
+      result = await Process.run('git', ['rev-parse', '--show-toplevel']);
+    } on ProcessException catch (e, stack) {
+      setError(
+        message: 'An unexpected error occurred: ${e.message}',
+        exitCode: ExitCode.software.code,
+        stack: stack,
+      );
+      return;
     }
 
     if (result.exitCode != 0) {
-      throw GitCleanException('Not a git directory.');
+      setError(message: result.stderr.toString(), exitCode: result.exitCode);
+      return;
     }
 
     final gitRoot = (result.stdout as String).trim();
@@ -32,7 +35,7 @@ void main(List<String> args) async {
     setError(message: e, exitCode: ExitCode.usage.code);
   } catch (e, stack) {
     setError(
-      message: 'An unexpected error occurred: $e',
+      message: 'An unexpected error occurred: ${e.toString().trim()}',
       exitCode: ExitCode.software.code,
       stack: stack,
     );
