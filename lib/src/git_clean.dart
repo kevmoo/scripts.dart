@@ -152,6 +152,15 @@ Future<void> clean(GitDir gitDir) async {
         printError('Could not fast-forward $primaryBranch: $stderr');
       }
     }
+  } else {
+    if (primaryBranch != null) {
+      print(
+        'Current branch ($newCurrentBranch) is not the primary branch '
+        '($primaryBranch). Skipping fast-forward.',
+      );
+    } else {
+      print('No primary branch found. Skipping fast-forward.');
+    }
   }
 
   if (branchesToDelete.isEmpty) {
@@ -176,7 +185,7 @@ Future<void> clean(GitDir gitDir) async {
       printError('Failed to delete $branch: ${delResult.stderr}');
       // We log but don't throw here to allow other deletions to proceed
     } else {
-      print('Deleted $branch');
+      print('  Done!');
     }
   }
 }

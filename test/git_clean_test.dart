@@ -60,6 +60,10 @@ void main() {
     // Create branch 'feature' in local
     await localGitDir.runCommand(['checkout', '-b', 'feature']);
     await localGitDir.runCommand(['push', '-u', 'origin', 'feature']);
+    final sha = (await localGitDir.runCommand([
+      'rev-parse',
+      'HEAD',
+    ])).stdout.toString().trim().substring(0, 7);
 
     // Switch back to main in local
     await localGitDir.runCommand(['checkout', 'main']);
@@ -70,18 +74,18 @@ void main() {
     // Run git_clean API
     await _runClean(
       localGitDir,
-      printsMatcher: stringContainsInOrder([
-        'Fetching and pruning...',
-        'Current branch: main',
-        'Primary branch identified as: main',
-        'Attempting to fast-forward main...',
-        'main is already up to date.',
-        'Found 1 branches to delete:',
-        '  feature (',
-        ')',
-        'Deleting feature...',
-        'Deleted feature',
-      ]),
+      printsMatcher:
+          '''
+Fetching and pruning...
+Current branch: main
+Primary branch identified as: main
+Attempting to fast-forward main...
+main is already up to date.
+Found 1 branches to delete:
+  feature ($sha)
+Deleting feature...
+  Done!
+''',
     );
 
     // Verify 'feature' is gone in local
@@ -93,6 +97,10 @@ void main() {
     // Create branch 'feature-gone'
     await localGitDir.runCommand(['checkout', '-b', 'feature-gone']);
     await localGitDir.runCommand(['push', '-u', 'origin', 'feature-gone']);
+    final sha = (await localGitDir.runCommand([
+      'rev-parse',
+      'HEAD',
+    ])).stdout.toString().trim().substring(0, 7);
 
     // Delete 'feature-gone' in REMOTE
     await remoteGitDir.runCommand(['branch', '-D', 'feature-gone']);
@@ -104,19 +112,19 @@ void main() {
     // Run git_clean API
     await _runClean(
       localGitDir,
-      printsMatcher: stringContainsInOrder([
-        'Fetching and pruning...',
-        'Current branch: feature-gone',
-        'Primary branch identified as: main',
-        'Current branch feature-gone is gone. Switching to main...',
-        'Attempting to fast-forward main...',
-        'main is already up to date.',
-        'Found 1 branches to delete:',
-        '  feature-gone (',
-        ')',
-        'Deleting feature-gone...',
-        'Deleted feature-gone',
-      ]),
+      printsMatcher:
+          '''
+Fetching and pruning...
+Current branch: feature-gone
+Primary branch identified as: main
+Current branch feature-gone is gone. Switching to main...
+Attempting to fast-forward main...
+main is already up to date.
+Found 1 branches to delete:
+  feature-gone ($sha)
+Deleting feature-gone...
+  Done!
+''',
     );
 
     // Verify we are now on 'main'
@@ -183,21 +191,21 @@ void main() {
     // Now delete 'feature' in REMOTE
     await remoteGitDir.runCommand(['branch', '-D', 'feature']);
 
-    // Verify 'feature' is gone in local AND verify SHA in output
-    // Measure output
+    // Run git_clean API
     await _runClean(
       localGitDir,
-      printsMatcher: stringContainsInOrder([
-        'Fetching and pruning...',
-        'Current branch: main',
-        'Primary branch identified as: main',
-        'Attempting to fast-forward main...',
-        'main is already up to date.',
-        'Found 1 branches to delete:',
-        '  feature ($featureSha)',
-        'Deleting feature...',
-        'Deleted feature',
-      ]),
+      printsMatcher:
+          '''
+Fetching and pruning...
+Current branch: main
+Primary branch identified as: main
+Attempting to fast-forward main...
+main is already up to date.
+Found 1 branches to delete:
+  feature ($featureSha)
+Deleting feature...
+  Done!
+''',
     );
 
     // Verify 'feature' is gone in local
@@ -222,6 +230,10 @@ void main() {
 
     // Switch to feature-gone
     await localGitDir.runCommand(['checkout', 'feature-gone']);
+    final sha = (await localGitDir.runCommand([
+      'rev-parse',
+      'HEAD',
+    ])).stdout.toString().trim().substring(0, 7);
 
     // Delete 'feature-gone' in REMOTE
     await remoteGitDir.runCommand(['branch', '-D', 'feature-gone']);
@@ -229,19 +241,19 @@ void main() {
     // Capture print output
     await _runClean(
       localGitDir,
-      printsMatcher: stringContainsInOrder([
-        'Fetching and pruning...',
-        'Current branch: feature-gone',
-        'Primary branch identified as: main',
-        'Current branch feature-gone is gone. Switching to main...',
-        'Attempting to fast-forward main...',
-        'Fast-forwarded main.',
-        'Found 1 branches to delete:',
-        '  feature-gone (',
-        ')',
-        'Deleting feature-gone...',
-        'Deleted feature-gone',
-      ]),
+      printsMatcher:
+          '''
+Fetching and pruning...
+Current branch: feature-gone
+Primary branch identified as: main
+Current branch feature-gone is gone. Switching to main...
+Attempting to fast-forward main...
+Fast-forwarded main.
+Found 1 branches to delete:
+  feature-gone ($sha)
+Deleting feature-gone...
+  Done!
+''',
     );
 
     // Verify we are now on 'main'
@@ -259,6 +271,10 @@ void main() {
     // Create branch 'feature-sub'
     await localGitDir.runCommand(['checkout', '-b', 'feature-sub']);
     await localGitDir.runCommand(['push', '-u', 'origin', 'feature-sub']);
+    final sha = (await localGitDir.runCommand([
+      'rev-parse',
+      'HEAD',
+    ])).stdout.toString().trim().substring(0, 7);
 
     // Switch to main
     await localGitDir.runCommand(['checkout', 'main']);
@@ -292,18 +308,18 @@ void main() {
     final subDirGitDir = await GitDir.fromExisting(gitRoot);
     await _runClean(
       subDirGitDir,
-      printsMatcher: stringContainsInOrder([
-        'Fetching and pruning...',
-        'Current branch: main',
-        'Primary branch identified as: main',
-        'Attempting to fast-forward main...',
-        'main is already up to date.',
-        'Found 1 branches to delete:',
-        '  feature-sub (',
-        ')',
-        'Deleting feature-sub...',
-        'Deleted feature-sub',
-      ]),
+      printsMatcher:
+          '''
+Fetching and pruning...
+Current branch: main
+Primary branch identified as: main
+Attempting to fast-forward main...
+main is already up to date.
+Found 1 branches to delete:
+  feature-sub ($sha)
+Deleting feature-sub...
+  Done!
+''',
     );
 
     // Verify 'feature-sub' is deleted
