@@ -72,17 +72,16 @@ Future<void> clean(GitDir gitDir) async {
     // space if track is empty)
     // or "branchname [ahead 1] sha" etc.
 
-    // We can't just split by space easily because track might be empty.
-    // However, `git for-each-ref` output is reliable.
-    // The format is: "%(refname:short) %(upstream:track) %(objectname:short)"
+    // Use `indexOf` and `lastIndexOf` for more robust parsing of the format:
+    // "%(refname:short) %(upstream:track) %(objectname:short)"
+    final firstSpace = line.indexOf(' ');
+    final lastSpace = line.lastIndexOf(' ');
 
-    final parts = line.split(' ');
-    // Filter out empty strings from splitting
-    final cleanParts = parts.where((p) => p.isNotEmpty).toList();
-
-    if (cleanParts.length >= 3 && cleanParts[1] == '[gone]') {
-      final branchName = cleanParts[0];
-      final sha = cleanParts.last;
+    if (firstSpace != -1 &&
+        lastSpace > firstSpace &&
+        line.substring(firstSpace + 1, lastSpace).trim() == '[gone]') {
+      final branchName = line.substring(0, firstSpace);
+      final sha = line.substring(lastSpace + 1);
 
       if (branchName == 'master' || branchName == 'main') {
         print('Skipping $branchName despite it being marked as [gone].');
