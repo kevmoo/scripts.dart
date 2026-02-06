@@ -48,3 +48,16 @@ const _testStateKey = #_testState;
 class _TestState {
   int exitCode = 0;
 }
+
+Future<String> runProcess(String executable, List<String> arguments) async {
+  final result = await io.Process.run(executable, arguments);
+  if (result.exitCode != 0) {
+    throw io.ProcessException(
+      executable,
+      arguments,
+      result.stderr.toString(),
+      result.exitCode,
+    );
+  }
+  return result.stdout as String;
+}
