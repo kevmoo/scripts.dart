@@ -45,7 +45,7 @@ final class _RuntimeState extends _HelperState {
   @override
   void printError(Object value, {bool boldRed = false}) {
     final message = boldRed
-        ? wrapWith(value.toString(), [red, styleBold])!
+        ? wrapWith(value.toString(), [red, styleBold]) ?? value.toString()
         : value.toString();
     doPrint(message);
   }
