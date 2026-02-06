@@ -8,7 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
-import 'util.dart';
+import 'testable_print.dart';
 
 Future<void> lintCleanup({
   required Directory packageDirectory,

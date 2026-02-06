@@ -2,7 +2,7 @@ import 'dart:convert';
 
 import 'package:git/git.dart';
 
-import 'util.dart';
+import 'testable_print.dart';
 
 Future<void> gitClean(GitDir gitDir) async {
   // 2. Fetch with prune to update remote tracking branches

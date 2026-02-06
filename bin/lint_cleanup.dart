@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/lint_cleanup.dart';
-import 'package:kevmoo_scripts/src/util.dart';
+import 'package:kevmoo_scripts/src/testable_print.dart';
 
 Future<void> main(List<String> arguments) async {
   final ArgResults argResults;

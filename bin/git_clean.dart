@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:git/git.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/git_clean.dart';
-import 'package:kevmoo_scripts/src/util.dart';
+import 'package:kevmoo_scripts/src/testable_print.dart';
 
 void main(List<String> args) async {
   try {
