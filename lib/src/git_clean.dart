@@ -4,7 +4,7 @@ import 'package:git/git.dart';
 
 import 'util.dart';
 
-Future<void> clean(GitDir gitDir) async {
+Future<void> gitClean(GitDir gitDir) async {
   // 2. Fetch with prune to update remote tracking branches
   print('Fetching and pruning...');
   final pr = await gitDir.runCommand(['fetch', '--prune'], throwOnError: false);

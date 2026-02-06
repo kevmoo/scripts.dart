@@ -32,7 +32,7 @@ void main(List<String> args) async {
     final gitRoot = (result.stdout as String).trim();
 
     final gitDir = await GitDir.fromExisting(gitRoot);
-    await clean(gitDir);
+    await gitClean(gitDir);
   } on GitCleanException catch (e) {
     setError(message: e, exitCode: ExitCode.usage.code);
   } catch (e, stack) {

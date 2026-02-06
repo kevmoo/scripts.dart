@@ -383,11 +383,11 @@ Future<void> _runClean(
   await expectLater(() async {
     if (throwsMatcher != null) {
       await expectLater(
-        () => wrappedForTesting(() => clean(gitDir)),
+        () => wrappedForTesting(() => gitClean(gitDir)),
         throwsA(throwsMatcher),
       );
     } else {
-      theExitCode = await wrappedForTesting(() => clean(gitDir));
+      theExitCode = await wrappedForTesting(() => gitClean(gitDir));
     }
   }, prints(printsMatcher));
 
