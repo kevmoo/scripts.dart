@@ -2,7 +2,7 @@ import 'dart:io';
 
 import 'package:git/git.dart';
 import 'package:kevmoo_scripts/src/git_clean.dart';
-import 'package:kevmoo_scripts/src/util.dart';
+import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;

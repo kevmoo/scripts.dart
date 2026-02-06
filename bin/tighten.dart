@@ -1,6 +1,6 @@
 import 'package:io/io.dart';
+import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:kevmoo_scripts/src/tighten.dart';
-import 'package:kevmoo_scripts/src/util.dart';
 
 void main(List<String> args) async {
   try {
