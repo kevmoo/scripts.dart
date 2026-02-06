@@ -38,7 +38,7 @@ Future<void> main(List<String> arguments) async {
     }
   }
 
-  return runLintCleanup(packageDirectory: pkgDirectory, rewrite: rewrite);
+  return lintCleanup(packageDirectory: pkgDirectory, rewrite: rewrite);
 }
 
 final _parser = ArgParser()

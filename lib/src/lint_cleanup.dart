@@ -10,7 +10,7 @@ import 'package:yaml_edit/yaml_edit.dart';
 
 import 'util.dart';
 
-Future<void> runLintCleanup({
+Future<void> lintCleanup({
   required Directory packageDirectory,
   Directory? directoryWithAnalysisOptions,
   bool rewrite = false,
