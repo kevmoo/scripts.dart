@@ -1,6 +1,6 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'run_command.dart';
+part of 'puppy.dart';
 
 // **************************************************************************
 // CliGenerator
@@ -21,12 +21,4 @@ final _$parserForRunArgs = _$populateRunArgsParser(ArgParser());
 RunArgs parseRunArgs(List<String> args) {
   final result = _$parserForRunArgs.parse(args);
   return _$parseRunArgsResult(result);
-}
-
-abstract class _$RunArgsCommand<T> extends Command<T> {
-  _$RunArgsCommand() {
-    _$populateRunArgsParser(argParser);
-  }
-
-  late final _options = _$parseRunArgsResult(argResults!);
 }
