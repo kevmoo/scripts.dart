@@ -38,9 +38,7 @@ class RunCommand extends _$RunArgsCommand<void> {
     for (final packageDir in packages) {
       final relative = p.relative(packageDir.path);
 
-      print(
-        green.wrap('$relative (${++count} of ${packages.length})'),
-      );
+      print(green.wrap('$relative (${++count} of ${packages.length})'));
       final proc = await Process.start(
         exe,
         extraArgs,
@@ -63,10 +61,7 @@ class RunArgs {
 
   final List<String> rest;
 
-  RunArgs({
-    this.deep = false,
-    required this.rest,
-  }) {
+  RunArgs({this.deep = false, required this.rest}) {
     if (rest.isEmpty) {
       throw UsageException(
         'Missing command to invoke!',

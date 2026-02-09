@@ -6,10 +6,8 @@ part of 'run_command.dart';
 // CliGenerator
 // **************************************************************************
 
-RunArgs _$parseRunArgsResult(ArgResults result) => RunArgs(
-      deep: result['deep'] as bool,
-      rest: result.rest,
-    );
+RunArgs _$parseRunArgsResult(ArgResults result) =>
+    RunArgs(deep: result['deep'] as bool, rest: result.rest);
 
 ArgParser _$populateRunArgsParser(ArgParser parser) => parser
   ..addFlag(
