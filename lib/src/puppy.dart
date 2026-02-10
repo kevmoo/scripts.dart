@@ -39,8 +39,14 @@ Future<void> runPuppy(RunArgs args) async {
     print('');
   }
 
-  if (exits.values.any((e) => e != 0)) {
-    throw PuppyException('Some commands failed.');
+  final failures = exits.entries.where((entry) => entry.value != 0).toList();
+  if (failures.isNotEmpty) {
+    final failedPackages = failures
+        .map((e) => p.relative(e.key))
+        .join('\n  - ');
+    throw PuppyException(
+      'One or more commands failed in:\n  - $failedPackages',
+    );
   }
 }
 

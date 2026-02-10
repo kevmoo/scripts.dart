@@ -18,8 +18,8 @@ List<Directory> findPackages(Directory root, {bool deep = false}) {
   final results = <Directory>[];
 
   void traverse(Directory dir, {required bool deep}) {
-    final pubspecs = dir
-        .listSync()
+    final entities = dir.listSync();
+    final pubspecs = entities
         .whereType<File>()
         .where((element) => element.uri.pathSegments.last == 'pubspec.yaml')
         .toList();
@@ -29,16 +29,17 @@ List<Directory> findPackages(Directory root, {bool deep = false}) {
     }
 
     if (!pubspecs.isNotEmpty || deep) {
-      for (var subDir in dir.listSync().whereType<Directory>().where(
-        (element) =>
-            !element.uri.pathSegments.any((segment) => segment.startsWith('.')),
+      for (var subDir in entities.whereType<Directory>().where(
+        (element) => !element.uri.pathSegments.any(
+          (segment) => segment.startsWith('.') && segment != '.',
+        ),
       )) {
         traverse(subDir, deep: deep);
       }
     }
   }
 
-  traverse(Directory.current, deep: deep);
+  traverse(root, deep: deep);
 
   results.sort((a, b) => a.path.compareTo(b.path));
 
