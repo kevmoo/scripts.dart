@@ -1,10 +1,10 @@
 import 'dart:async';
-import 'dart:io' as io;
+import 'dart:io';
 
 Future<String> runProcess(String executable, List<String> arguments) async {
-  final result = await io.Process.run(executable, arguments);
+  final result = await Process.run(executable, arguments);
   if (result.exitCode != 0) {
-    throw io.ProcessException(
+    throw ProcessException(
       executable,
       arguments,
       result.stderr.toString(),
@@ -12,4 +12,36 @@ Future<String> runProcess(String executable, List<String> arguments) async {
     );
   }
   return result.stdout as String;
+}
+
+List<Directory> findPackages(Directory root, {bool deep = false}) {
+  final results = <Directory>[];
+
+  void traverse(Directory dir, {required bool deep}) {
+    final entities = dir.listSync();
+    final pubspecs = entities
+        .whereType<File>()
+        .where((element) => element.uri.pathSegments.last == 'pubspec.yaml')
+        .toList();
+
+    if (pubspecs.isNotEmpty) {
+      results.add(dir);
+    }
+
+    if (!pubspecs.isNotEmpty || deep) {
+      for (var subDir in entities.whereType<Directory>().where(
+        (element) => !element.uri.pathSegments.any(
+          (segment) => segment.startsWith('.') && segment != '.',
+        ),
+      )) {
+        traverse(subDir, deep: deep);
+      }
+    }
+  }
+
+  traverse(root, deep: deep);
+
+  results.sort((a, b) => a.path.compareTo(b.path));
+
+  return results;
 }
