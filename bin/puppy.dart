@@ -13,6 +13,8 @@ Future<void> main(List<String> args) async {
     await runPuppy(puppyArgs);
   } on UsageException catch (e) {
     setError(message: e.message, exitCode: ExitCode.usage.code);
+  } on PuppyException catch (e) {
+    setError(message: e.message, exitCode: ExitCode.software.code);
   } catch (e, stack) {
     setError(
       message: 'An unexpected error occurred: $e',

@@ -38,6 +38,19 @@ Future<void> runPuppy(RunArgs args) async {
 
     print('');
   }
+
+  if (exits.values.any((e) => e != 0)) {
+    throw PuppyException('Some commands failed.');
+  }
+}
+
+class PuppyException implements Exception {
+  final String message;
+
+  PuppyException(this.message);
+
+  @override
+  String toString() => message;
 }
 
 @CliOptions()
