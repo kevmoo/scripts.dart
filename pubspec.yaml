@@ -26,6 +26,7 @@ dev_dependencies:
 
 executables:
   git-goma: git_clean
-  who_listen:
-  tighten:
   lint_cleanup:
+  puppy:
+  tighten:
+  who_listen:
