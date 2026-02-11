@@ -65,14 +65,13 @@ Future<void> tighten({bool isWorkspace = false}) async {
   }
 
   if (shouldWarn) {
-    print(
-      '\n'
-      '***********************************************************************\n'
-      '* WARNING: You are in a workspace but did NOT use the --workspace flag.\n'
-      '* This may result in unwanted changes to workspace constraints.\n'
-      '* Consider running with --workspace.\n'
-      '***********************************************************************',
-    );
+    print('''
+\n
+***********************************************************************
+* WARNING: You are in a workspace but did NOT use the --workspace flag.
+* This may result in unwanted changes to workspace constraints.
+* Consider running with --workspace.
+***********************************************************************''');
   }
 }
 
@@ -138,7 +137,10 @@ Future<Map<String, String>> _getWorkspacePackages() async {
 
   final json = jsonDecode(process.stdout as String) as Map<String, dynamic>;
   final packages = json['packages'] as List<dynamic>;
-  return {for (final p in packages) p['name'] as String: p['path'] as String};
+  return {
+    for (final p in packages.cast<Map>())
+      p['name'] as String: p['path'] as String,
+  };
 }
 
 Future<void> _revertWorkspaceChanges(
@@ -166,7 +168,7 @@ Future<void> _revertWorkspaceChanges(
         final packageName = changeMatch.group(1)!;
         final oldValue = changeMatch.group(2)!;
 
-        // If parsed path is relative, dart pub usually treats it relative to CWD.
+        // If parsed path is relative, dart pub treats it relative to CWD.
         // We use it as is with File(currentFile).
 
         if (workspacePackages.contains(packageName)) {
@@ -207,7 +209,8 @@ Future<void> _revertConstraint(
   final content = await file.readAsString();
   final editor = YamlEditor(content);
 
-  // Try to find where the dependency is defined (dependencies or dev_dependencies)
+  // Try to find where the dependency is defined
+  // (dependencies or dev_dependencies)
   // We can try both? Or rely on YamlEditor to find it?
   // YamlEditor needs a path.
   // We don't know if it's in dependencies or dev_dependencies.
