@@ -209,12 +209,7 @@ Future<void> _revertConstraint(
   final content = await file.readAsString();
   final editor = YamlEditor(content);
 
-  // Try to find where the dependency is defined
-  // (dependencies or dev_dependencies)
-  // We can try both? Or rely on YamlEditor to find it?
-  // YamlEditor needs a path.
-  // We don't know if it's in dependencies or dev_dependencies.
-  // We can check the yaml to see where it is?
+  // Find where the dependency is defined to update it.
 
   final yaml = loadYaml(content) as YamlMap;
   final dependencies = yaml['dependencies'] as YamlMap?;
