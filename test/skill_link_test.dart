@@ -135,5 +135,125 @@ targets:
         p.join(d.sandbox, 'source_dir_2', '.agent', 'skill_b'),
       );
     });
+    test('warns when unable to create symlink due to existing file', () async {
+      await d.dir('source_dir', [
+        d.dir('.agent', [
+          d.dir('skill_a', [d.file('SKILL.md', 'skill content')]),
+        ]),
+      ]).create();
+
+      await d.dir('target_dir', [
+        // Create a regular file with the same name as the skill
+        d.file('skill_a', 'I am a file, not a symlink'),
+      ]).create();
+
+      await d.file('config.yaml', '''
+sources:
+  - ${p.join(d.sandbox, 'source_dir')}
+targets:
+  - ${p.join(d.sandbox, 'target_dir')}
+''').create();
+
+      late int code;
+      await expectLater(
+        () async {
+          code = await runSkillLink(
+            configPath: p.join(d.sandbox, 'config.yaml'),
+            defaultHomeDir: d.sandbox,
+          );
+        },
+        prints(
+          contains(
+            'skill_a: Warning! Cannot create symlink at '
+            '${p.join(d.sandbox, 'target_dir', 'skill_a')} '
+            'because a file or directory already exists there.',
+          ),
+        ),
+      );
+      expect(code, 0);
+    });
+
+    test('warns on symlink to non-existent dir outside sources', () async {
+      await d.dir('source_dir', [
+        d.dir('.agent', [
+          d.dir('skill_a', [d.file('SKILL.md', 'skill content')]),
+        ]),
+      ]).create();
+      await d.dir('target_dir').create();
+
+      final targetPath = p.join(d.sandbox, 'target_dir');
+      final brokenPath = p.join(targetPath, 'mysterious_link');
+      Link(
+        brokenPath,
+      ).createSync(p.join(d.sandbox, 'some', 'random', 'nowhere'));
+
+      await d.file('config.yaml', '''
+sources:
+  - ${p.join(d.sandbox, 'source_dir')}
+targets:
+  - $targetPath
+''').create();
+
+      late int code;
+      await expectLater(
+        () async {
+          code = await runSkillLink(
+            configPath: p.join(d.sandbox, 'config.yaml'),
+            defaultHomeDir: d.sandbox,
+          );
+        },
+        prints(
+          contains(
+            'mysterious_link: Warning! Symlink points to a non-existent '
+            'directory that is NOT a child of configured sources.',
+          ),
+        ),
+      );
+      expect(code, 0);
+    });
+
+    test(
+      'warns when finding unexpected symlink to existing directory',
+      () async {
+        await d.dir('source_dir', [
+          d.dir('.agent', [
+            d.dir('skill_a', [d.file('SKILL.md', 'skill content')]),
+          ]),
+        ]).create();
+
+        final unrelatedDir = p.join(d.sandbox, 'unrelated_dir');
+        Directory(unrelatedDir).createSync(recursive: true);
+
+        await d.dir('target_dir').create();
+
+        final targetPath = p.join(d.sandbox, 'target_dir');
+        final unexpectedPath = p.join(targetPath, 'unexpected_link');
+        Link(unexpectedPath).createSync(unrelatedDir);
+
+        await d.file('config.yaml', '''
+sources:
+  - ${p.join(d.sandbox, 'source_dir')}
+targets:
+  - $targetPath
+''').create();
+
+        late int code;
+        await expectLater(
+          () async {
+            code = await runSkillLink(
+              configPath: p.join(d.sandbox, 'config.yaml'),
+              defaultHomeDir: d.sandbox,
+            );
+          },
+          prints(
+            contains(
+              'unexpected_link: Warning! Unexpected symlink points to an '
+              'existing directory: $unrelatedDir',
+            ),
+          ),
+        );
+        expect(code, 0);
+      },
+    );
   });
 }

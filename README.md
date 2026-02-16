@@ -7,7 +7,7 @@ This repository contains various scripts and utilities for development.
 | `bin/git_clean.dart` | `git-goma` | Fetches, prunes, fast-forwards primary branch, and cleans up local branches. |
 | `bin/lint_cleanup.dart` | `lint_cleanup` | Rewrites the `analysis_options.yaml` file to remove duplicative entries. |
 | `bin/puppy.dart` | `puppy` | Executes a command across all nested packages in a repository. |
-| `bin/skill_link.dart` | `skill_link` | Manages agent skill symlinks in a specified target directory. |
+| `bin/skill_link.dart` | `skill-link` | Manages agent skill symlinks in a specified target directory. |
 | `bin/tighten.dart` | `tighten` | Tightens package dependencies based on the oldest supported Dart SDK version. |
 | `bin/who_listen.dart` | `who_listen` | Lists active listening server processes and associated ports. |
 

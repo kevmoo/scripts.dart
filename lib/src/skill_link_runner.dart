@@ -166,8 +166,10 @@ targets:
           }
         } else {
           // Symlink points to an existing directory, but is unexpected.
-          // We just ignore/warn? The instructions only specify behavior
-          // for symlinks pointing to directories that don't exist.
+          targetOutput.add(
+            '    $linkName: Warning! Unexpected symlink points to an '
+            'existing directory: $linkTarget',
+          );
         }
       }
     }
