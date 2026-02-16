@@ -25,9 +25,7 @@ void main() {
     // (depending on git config)
     remoteGitDir = await GitDir.init(remotePath, allowContent: true);
 
-    // Configure user
-    await remoteGitDir.runCommand(['config', 'user.email', 'test@test.com']);
-    await remoteGitDir.runCommand(['config', 'user.name', 'Tester']);
+    await remoteGitDir.configureTestIdentity();
 
     // Rename branch to main just in case (if it initialized as master)
     // Or we could have used --initial-branch=main if passed to init, but
@@ -49,11 +47,32 @@ void main() {
     await Process.run('git', ['clone', remotePath, localPath]);
 
     localGitDir = await GitDir.fromExisting(localPath);
-    await localGitDir.runCommand(['config', 'user.email', 'test@test.com']);
-    await localGitDir.runCommand(['config', 'user.name', 'Tester']);
+    await localGitDir.configureTestIdentity();
 
     // Verify setup
-    expect(await localGitDir.isWorkingTreeClean(), isTrue);
+    var isClean = await localGitDir.isWorkingTreeClean();
+    String? statusOutput;
+    if (!isClean) {
+      // In CI environments (especially Linux tmpfs), the file system might
+      // sometimes be flaky immediately after a clone, causing files to appear
+      // missing/modified.
+      // We force a reset to ensure it's clean before failing the test setup.
+      await localGitDir.runCommand(['reset', '--hard', 'HEAD']);
+      isClean = await localGitDir.isWorkingTreeClean();
+
+      if (!isClean) {
+        final statusResult = await localGitDir.runCommand([
+          'status',
+          '--short',
+        ]);
+        statusOutput = statusResult.stdout as String;
+      }
+    }
+    expect(
+      isClean,
+      isTrue,
+      reason: 'Working tree is dirty.\\nStatus output:\\n$statusOutput',
+    );
   });
 
   test('cleans up deleted branch', () async {
@@ -401,5 +420,12 @@ extension on GitDir {
   Future<String> getShortSha() async {
     final result = await runCommand(['rev-parse', 'HEAD']);
     return (result.stdout as String).trim().substring(0, 7);
+  }
+
+  Future<void> configureTestIdentity() async {
+    await runCommand(['config', 'user.email', 'test@test.com']);
+    await runCommand(['config', 'user.name', 'Tester']);
+    // Configure user and autocrlf to prevent dirty working trees on Windows/CI
+    await runCommand(['config', 'core.autocrlf', 'false']);
   }
 }
