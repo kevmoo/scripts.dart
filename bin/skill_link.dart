@@ -2,46 +2,31 @@
 
 import 'dart:io';
 
-import 'package:args/args.dart';
+import 'package:args/command_runner.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/skill_link_runner.dart';
 
 Future<void> main(List<String> arguments) async {
-  final parser = ArgParser()
-    ..addOption(
-      'config',
-      abbr: 'c',
-      help:
-          'Path to the configuration file.\n'
-          'Defaults to $documentedConfigLocation',
-    )
-    ..addFlag(
-      'help',
-      abbr: 'h',
-      negatable: false,
-      help: 'Print this usage information.',
-    );
-
-  final ArgResults argResults;
+  final SkillLinkOptions options;
   try {
-    argResults = parser.parse(arguments);
-  } on FormatException catch (e) {
+    options = parseSkillLinkOptions(arguments);
+  } on UsageException catch (e) {
     print(e.message);
     print('');
-    print(parser.usage);
+    print(e.usage);
     exitCode = ExitCode.usage.code;
     return;
   }
 
-  if (argResults.flag('help')) {
+  if (options.help) {
     print('Manage agent skill symlinks.');
     print('');
-    print(parser.usage);
+    print(skillLinkUsage);
     return;
   }
 
   try {
-    exitCode = await runSkillLink(configPath: argResults.option('config'));
+    exitCode = await runSkillLink(configPath: options.config);
   } catch (e, stack) {
     print('An unexpected error occurred:');
     print(e);

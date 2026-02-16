@@ -1,8 +1,11 @@
 import 'dart:io';
 
+import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
+
+part 'skill_link_runner.g.dart';
 
 const _homeConfigDir = '.config';
 const _configFileName = 'com.kevmoo.skills.yaml';
@@ -209,6 +212,24 @@ targets:
       }
     }
   }
-
+  print('Done.');
   return ExitCode.success.code;
 }
+
+@CliOptions()
+class SkillLinkOptions {
+  @CliOption(
+    abbr: 'c',
+    help:
+        'Path to the configuration file.\n'
+        'Defaults to \$documentedConfigLocation',
+  )
+  final String? config;
+
+  @CliOption(abbr: 'h', negatable: false, help: 'Print this usage information.')
+  final bool help;
+
+  SkillLinkOptions({this.config, this.help = false});
+}
+
+String get skillLinkUsage => _$parserForSkillLinkOptions.usage;

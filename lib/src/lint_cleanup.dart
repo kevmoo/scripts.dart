@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:collection/collection.dart';
 import 'package:io/ansi.dart' as ansi;
 import 'package:io/io.dart';
@@ -9,6 +10,8 @@ import 'package:yaml/yaml.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
 import 'testable_print.dart';
+
+part 'lint_cleanup.g.dart';
 
 Future<void> lintCleanup({
   required Directory packageDirectory,
@@ -181,3 +184,33 @@ _LintBundle _analysisOptionsFromPackage(
 
   return _lintsFromFile(p.fromUri(yamlPath), packageConfig);
 }
+
+@CliOptions()
+class LintCleanupOptions {
+  @CliOption(
+    abbr: 'p',
+    help:
+        'The directory to a package within the repository that depends\n'
+        'on the referenced include file. Needed for mono repos.',
+  )
+  final String? packageDir;
+
+  @CliOption(
+    abbr: 'r',
+    help:
+        'Rewrites the analysis_options.yaml file to remove duplicative '
+        'entries.',
+  )
+  final bool rewrite;
+
+  @CliOption(abbr: 'h', negatable: false, help: 'Prints out usage and exits')
+  final bool help;
+
+  LintCleanupOptions({
+    this.packageDir,
+    this.rewrite = false,
+    this.help = false,
+  });
+}
+
+String get lintCleanupUsage => _$parserForLintCleanupOptions.usage;
