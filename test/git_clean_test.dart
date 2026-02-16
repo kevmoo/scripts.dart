@@ -25,9 +25,7 @@ void main() {
     // (depending on git config)
     remoteGitDir = await GitDir.init(remotePath, allowContent: true);
 
-    // Configure user
-    await remoteGitDir.runCommand(['config', 'user.email', 'test@test.com']);
-    await remoteGitDir.runCommand(['config', 'user.name', 'Tester']);
+    await remoteGitDir.configureTestIdentity();
 
     // Rename branch to main just in case (if it initialized as master)
     // Or we could have used --initial-branch=main if passed to init, but
@@ -49,8 +47,7 @@ void main() {
     await Process.run('git', ['clone', remotePath, localPath]);
 
     localGitDir = await GitDir.fromExisting(localPath);
-    await localGitDir.runCommand(['config', 'user.email', 'test@test.com']);
-    await localGitDir.runCommand(['config', 'user.name', 'Tester']);
+    await localGitDir.configureTestIdentity();
 
     // Verify setup
     final isClean = await localGitDir.isWorkingTreeClean();
@@ -411,5 +408,12 @@ extension on GitDir {
   Future<String> getShortSha() async {
     final result = await runCommand(['rev-parse', 'HEAD']);
     return (result.stdout as String).trim().substring(0, 7);
+  }
+
+  Future<void> configureTestIdentity() async {
+    await runCommand(['config', 'user.email', 'test@test.com']);
+    await runCommand(['config', 'user.name', 'Tester']);
+    // Configure user and autocrlf to prevent dirty working trees on Windows/CI
+    await runCommand(['config', 'core.autocrlf', 'false']);
   }
 }
