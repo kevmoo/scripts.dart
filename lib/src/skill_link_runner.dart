@@ -63,7 +63,6 @@ targets:
   // Mapping of expected skills: basename -> absolute expected path
   final expectedSkills = <String, String>{};
   final skillsBySource = <String, List<String>>{};
-  const validPaths = ['.agent', '.agents', '_agent', '_agents'];
 
   for (final source in sources) {
     final sourceDir = Directory(source);
@@ -74,24 +73,22 @@ targets:
 
     final sourceSkills = <String>[];
 
-    // Agent skills spec implies directories live under .agent, etc.
-    for (final dirName in validPaths) {
-      final agentDir = Directory(p.join(source, dirName));
-      if (agentDir.existsSync()) {
-        final entities = agentDir.listSync(recursive: true);
-        for (final entity in entities) {
-          if (entity is File && p.basename(entity.path) == 'SKILL.md') {
-            final skillDir = entity.parent.path;
-            final skillName = p.basename(skillDir);
+    // Agent skills spec implies directories live under .agent
+    final agentDir = Directory(p.join(source, '.agent'));
+    if (agentDir.existsSync()) {
+      final entities = agentDir.listSync(recursive: true);
+      for (final entity in entities) {
+        if (entity is File && p.basename(entity.path) == 'SKILL.md') {
+          final skillDir = entity.parent.path;
+          final skillName = p.basename(skillDir);
 
-            if (expectedSkills.containsKey(skillName)) {
-              sourceSkills.add(
-                '$skillName -> WILL BE IGNORED. Duplicate skill name.',
-              );
-            } else {
-              expectedSkills[skillName] = skillDir;
-              sourceSkills.add(skillName);
-            }
+          if (expectedSkills.containsKey(skillName)) {
+            sourceSkills.add(
+              '$skillName -> WILL BE IGNORED. Duplicate skill name.',
+            );
+          } else {
+            expectedSkills[skillName] = skillDir;
+            sourceSkills.add(skillName);
           }
         }
       }
