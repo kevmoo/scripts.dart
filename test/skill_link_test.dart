@@ -15,6 +15,13 @@ void main() {
       expect(code, 78);
     });
 
+    test('skillLinkUsage matches expected', () {
+      expect(skillLinkUsage, r'''
+-c, --config    Path to the configuration file.
+                Defaults to $documentedConfigLocation
+-h, --help      Print this usage information.''');
+    });
+
     test('executes logic and creates missing symlinks correctly', () async {
       await d.dir('source_dir', [
         d.dir('.agent', [
