@@ -1,6 +1,7 @@
 # Contributing to Scripts
 
-When creating or modifying CLI scripts in this repository, please adhere to the following best practices:
+When creating or modifying CLI scripts in this repository, please adhere to the
+following best practices:
 
 ## 1. Entrypoint Structure (`bin/`)
 Keep the contents of your entrypoint file minimal to decouple logic from the

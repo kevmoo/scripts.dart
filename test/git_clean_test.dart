@@ -53,7 +53,17 @@ void main() {
     await localGitDir.runCommand(['config', 'user.name', 'Tester']);
 
     // Verify setup
-    expect(await localGitDir.isWorkingTreeClean(), isTrue);
+    final isClean = await localGitDir.isWorkingTreeClean();
+    String? statusOutput;
+    if (!isClean) {
+      final statusResult = await localGitDir.runCommand(['status', '--short']);
+      statusOutput = statusResult.stdout as String;
+    }
+    expect(
+      isClean,
+      isTrue,
+      reason: 'Working tree is dirty.\\nStatus output:\\n$statusOutput',
+    );
   });
 
   test('cleans up deleted branch', () async {

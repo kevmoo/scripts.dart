@@ -140,7 +140,7 @@ targets:
           missingSkills[linkName] == linkTarget;
 
       if (isExpected) {
-        targetOutput.add('    $linkName: symlink exists and is corret');
+        targetOutput.add('    $linkName: symlink exists and is correct');
         // Remove from expected map so we don\'t try to create it again
         missingSkills.remove(linkName);
       } else {
