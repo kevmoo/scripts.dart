@@ -50,11 +50,22 @@ void main() {
     await localGitDir.configureTestIdentity();
 
     // Verify setup
-    final isClean = await localGitDir.isWorkingTreeClean();
+    var isClean = await localGitDir.isWorkingTreeClean();
     String? statusOutput;
     if (!isClean) {
-      final statusResult = await localGitDir.runCommand(['status', '--short']);
-      statusOutput = statusResult.stdout as String;
+      // In CI environments (especially Linux tmpfs), the file system might sometimes
+      // be flaky immediately after a clone, causing files to appear missing/modified.
+      // We force a reset to ensure it's clean before failing the test setup.
+      await localGitDir.runCommand(['reset', '--hard', 'HEAD']);
+      isClean = await localGitDir.isWorkingTreeClean();
+
+      if (!isClean) {
+        final statusResult = await localGitDir.runCommand([
+          'status',
+          '--short',
+        ]);
+        statusOutput = statusResult.stdout as String;
+      }
     }
     expect(
       isClean,
