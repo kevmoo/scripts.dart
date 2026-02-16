@@ -53,8 +53,9 @@ void main() {
     var isClean = await localGitDir.isWorkingTreeClean();
     String? statusOutput;
     if (!isClean) {
-      // In CI environments (especially Linux tmpfs), the file system might sometimes
-      // be flaky immediately after a clone, causing files to appear missing/modified.
+      // In CI environments (especially Linux tmpfs), the file system might
+      // sometimes be flaky immediately after a clone, causing files to appear
+      // missing/modified.
       // We force a reset to ensure it's clean before failing the test setup.
       await localGitDir.runCommand(['reset', '--hard', 'HEAD']);
       isClean = await localGitDir.isWorkingTreeClean();
