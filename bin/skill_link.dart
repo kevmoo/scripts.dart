@@ -3,6 +3,7 @@
 import 'dart:io';
 
 import 'package:args/args.dart';
+import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/skill_link_runner.dart';
 
 Future<void> main(List<String> arguments) async {
@@ -28,7 +29,7 @@ Future<void> main(List<String> arguments) async {
     print(e.message);
     print('');
     print(parser.usage);
-    exitCode = 64; // ExitCode.usage.code
+    exitCode = ExitCode.usage.code;
     return;
   }
 
@@ -45,6 +46,6 @@ Future<void> main(List<String> arguments) async {
     print('An unexpected error occurred:');
     print(e);
     print(stack);
-    exitCode = 1;
+    exitCode = ExitCode.software.code;
   }
 }

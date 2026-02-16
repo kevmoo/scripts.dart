@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
@@ -8,10 +9,13 @@ const _configFileName = 'com.kevmoo.skills.yaml';
 final documentedConfigLocation = p.join('~', _homeConfigDir, _configFileName);
 
 Future<int> runSkillLink({String? configPath, String? defaultHomeDir}) async {
-  final homeDir = defaultHomeDir ?? Platform.environment['HOME'];
+  final homeDir =
+      defaultHomeDir ??
+      Platform.environment['HOME'] ??
+      Platform.environment['USERPROFILE'];
   if (homeDir == null) {
     print('Error: HOME environment variable is not set.');
-    return 1;
+    return ExitCode.software.code;
   }
 
   final resolvedConfigPath =
@@ -28,7 +32,7 @@ sources:
 targets:
   - /path/to/target1
 ''');
-    return 78; // ExitCode.config.code
+    return ExitCode.config.code;
   }
 
   final yamlString = configFile.readAsStringSync();
@@ -38,7 +42,7 @@ targets:
   } catch (e) {
     print('Error parsing YAML from $resolvedConfigPath:');
     print(e);
-    return 78;
+    return ExitCode.config.code;
   }
 
   final sourcesNode = yamlDoc['sources'] as YamlList?;
@@ -46,7 +50,7 @@ targets:
 
   if (sourcesNode == null || targetsNode == null) {
     print('Error: Configuration must contain "sources" and "targets" lists.');
-    return 78;
+    return ExitCode.config.code;
   }
 
   final sources = sourcesNode.cast<String>().toList();
@@ -56,7 +60,7 @@ targets:
     final targetDir = Directory(target);
     if (!targetDir.existsSync()) {
       print('Target directory does not exist: $target');
-      return 78;
+      return ExitCode.config.code;
     }
   }
 
@@ -206,5 +210,5 @@ targets:
     }
   }
 
-  return 0; // Success
+  return ExitCode.success.code;
 }
