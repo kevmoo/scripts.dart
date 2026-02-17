@@ -17,7 +17,7 @@ Future<void> main(List<String> arguments) async {
   }
 
   if (options.help) {
-    print('Cleans up analysis_options.yaml files.');
+    print('Clean up analysis_options.yaml files.');
     print('');
     print('Usage: lint_cleanup [arguments]');
     print('');
