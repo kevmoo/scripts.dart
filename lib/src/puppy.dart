@@ -64,10 +64,13 @@ class RunArgs {
   @CliOption(abbr: 'd', help: 'Keep looking for "nested" pubspec files.')
   final bool deep;
 
+  @CliOption(abbr: 'h', negatable: false, help: 'Print this usage information.')
+  final bool help;
+
   final List<String> rest;
 
-  RunArgs({this.deep = false, required this.rest}) {
-    if (rest.isEmpty) {
+  RunArgs({this.deep = false, this.help = false, required this.rest}) {
+    if (!help && rest.isEmpty) {
       throw UsageException(
         'Missing command to invoke!',
         'puppy [--deep] <command to invoke>',
@@ -75,3 +78,5 @@ class RunArgs {
     }
   }
 }
+
+String get runArgsUsage => _$parserForRunArgs.usage;
