@@ -8,6 +8,12 @@ import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:yaml/yaml.dart';
 
 void main() {
+  test('tightenUsage matches expected', () {
+    expect(tightenUsage, '''
+-w, --workspace    Tighten workspace dependencies
+-h, --help         Print this usage information.''');
+  });
+
   test('tighten non-workspace', () async {
     await d.dir('simple', [
       d.file('pubspec.yaml', '''

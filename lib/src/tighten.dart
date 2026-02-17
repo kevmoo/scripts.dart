@@ -1,9 +1,12 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:pub_semver/pub_semver.dart';
 import 'package:yaml/yaml.dart';
 import 'package:yaml_edit/yaml_edit.dart';
+
+part 'tighten.g.dart';
 
 Future<void> tighten({bool isWorkspace = false}) async {
   final pubspecFile = File('pubspec.yaml');
@@ -120,6 +123,23 @@ Future<Version> _getWorkspaceMinSdk(Iterable<String> packagePaths) async {
   }
   return maxMinSdk;
 }
+
+@CliOptions()
+class TightenOptions {
+  @CliOption(
+    abbr: 'w',
+    negatable: false,
+    help: 'Tighten workspace dependencies',
+  )
+  final bool workspace;
+
+  @CliOption(abbr: 'h', negatable: false, help: 'Print this usage information.')
+  final bool help;
+
+  TightenOptions({this.workspace = false, this.help = false});
+}
+
+String get tightenUsage => _$parserForTightenOptions.usage;
 
 Future<Map<String, String>> _getWorkspacePackages() async {
   final process = await Process.run('dart', [

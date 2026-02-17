@@ -1,28 +1,31 @@
 import 'dart:io';
 
-import 'package:args/args.dart';
+import 'package:args/command_runner.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/lint_cleanup.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 
 Future<void> main(List<String> arguments) async {
-  final ArgResults argResults;
+  final LintCleanupOptions options;
 
   try {
-    argResults = _parser.parse(arguments);
-  } on FormatException catch (e) {
+    options = parseLintCleanupOptions(arguments);
+  } on UsageException catch (e) {
     setError(message: e.message, exitCode: ExitCode.usage.code);
-    print(_parser.usage);
+    print(e.usage);
     return;
   }
 
-  if (argResults['help'] as bool) {
-    print(_parser.usage);
+  if (options.help) {
+    print('Usage: lint_cleanup [arguments]');
+    print('');
+    print('Options:');
+    print(lintCleanupUsage);
     return;
   }
 
-  final pkgDir = argResults['package-dir'] as String?;
-  final rewrite = argResults['rewrite'] as bool;
+  final pkgDir = options.packageDir;
+  final rewrite = options.rewrite;
 
   Directory pkgDirectory;
   if (pkgDir == null) {
@@ -40,25 +43,3 @@ Future<void> main(List<String> arguments) async {
 
   return lintCleanup(packageDirectory: pkgDirectory, rewrite: rewrite);
 }
-
-final _parser = ArgParser()
-  ..addOption(
-    'package-dir',
-    abbr: 'p',
-    help:
-        'The directory to a package within the repository that depends on the '
-        'referenced include file. Needed for mono repos.',
-  )
-  ..addFlag(
-    'rewrite',
-    abbr: 'r',
-    help:
-        'Rewrites the analysis_options.yaml file to remove duplicative '
-        'entries.',
-  )
-  ..addFlag(
-    'help',
-    abbr: 'h',
-    negatable: false,
-    help: 'Prints out usage and exits',
-  );
