@@ -4,11 +4,11 @@ This repository contains various scripts and utilities for development.
 
 | Activated As | Script | Description |
 |---|---|---|
-| `git-goma` | `bin/git_clean.dart` | Clean up local git branches that have been merged or deleted on the remote. |
-| `lint-cleanup` | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
-| `puppy` | `bin/puppy.dart` | Run a command in all package directories. |
-| `skill-link` | `bin/skill_link.dart` | Manage agent skill symlinks. |
-| `tighten` | `bin/tighten.dart` | Tighten workspace dependencies. |
+| [`git-goma`](#git-goma) | `bin/git_clean.dart` | Clean up local git branches that have been merged or deleted on the remote. |
+| [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
+| [`puppy`](#puppy) | `bin/puppy.dart` | Run a command in all package directories. |
+| [`skill-link`](#skill-link) | `bin/skill_link.dart` | Manage agent skill symlinks. |
+| [`tighten`](#tighten) | `bin/tighten.dart` | Tighten workspace dependencies. |
 
 ## Scripts
 

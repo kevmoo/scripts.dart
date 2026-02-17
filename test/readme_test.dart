@@ -39,7 +39,13 @@ void main() {
       // columns: ['', '`git-goma`', '`bin/git_clean.dart`', 'Clean up...', '']
       expect(columns.length, 5);
 
-      final exeCol = columns[1].replaceAll('`', '');
+      var exeCol = columns[1].replaceAll('`', '');
+      // Strip markdown link if present: [name](#anchor) -> name
+      final linkMatch = RegExp(r'^\[(.*?)\]\(.*?\)').firstMatch(exeCol);
+      if (linkMatch != null) {
+        exeCol = linkMatch.group(1)!;
+      }
+
       final binCol = columns[2].replaceAll('`', '');
       final helpCol = columns[3];
 
