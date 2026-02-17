@@ -19,7 +19,7 @@ ArgParser _$populateSkillLinkOptionsParser(ArgParser parser) => parser
     'config',
     abbr: 'c',
     help:
-        'Path to the configuration file.\nDefaults to `\$HOME/.config/com.kevmoo.skills.yaml`',
+        'Path to the configuration file.\nDefaults to `\$HOME/.config/skill-link.yaml`',
   )
   ..addFlag(
     'help',

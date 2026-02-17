@@ -47,11 +47,21 @@ puppy [arguments] <command to invoke>
 ### `skill-link`
 Manages agent skill symlinks in a specified target directory.
 
-Reads a YAML configuration file (`~/.config/com.kevmoo.skills.yaml` by default)
+Reads a YAML configuration file (`~/.config/skill-link.yaml` by default)
 that declares a list of `sources` and `targets`. It discovers agent skill
 directories (folders containing a `SKILL.md` file nested inside specific `.agent`
 or `_agent` folders) within the sources, and creates or maintains symlinks for
 these skills inside the target directories.
+
+**Sample `skill-link.yaml`**
+
+```yaml
+sources:
+  - /git/dart_skills
+  - /git/team_skills
+targets:
+  - /Users/my_name/.gemini/agent-skills
+```
 
 **Usage:**
 ```shell
