@@ -14,11 +14,12 @@ import 'util.dart';
 
 part 'puppy.g.dart';
 
-Future<void> runPuppy(RunArgs args) async {
+Future<void> runPuppy(RunArgs args, {String? cwd}) async {
   final exe = args.rest.first;
   final extraArgs = args.rest.skip(1).toList();
 
-  final packages = findPackages(Directory.current, deep: args.deep);
+  final targetDir = cwd == null ? Directory.current : Directory(cwd);
+  final packages = findPackages(targetDir, deep: args.deep);
   final exits = <String, int>{};
 
   var count = 0;

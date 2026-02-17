@@ -14,7 +14,7 @@ void main(List<String> args) async {
   }
 
   if (options.help) {
-    print('Tighten workspace dependencies');
+    print('Tighten workspace dependencies.');
     print('');
     print(tightenUsage);
     return;
