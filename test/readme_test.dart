@@ -68,19 +68,19 @@ void main() {
       );
 
       // Verify the help text matches running the command
-      final result = await Process.run('dart', [binCol, '--help']);
+      final result = Process.runSync(Platform.executable, [binCol, '--help']);
       expect(
         result.exitCode,
         0,
         reason:
-            'Running \$binCol --help should exit 0. Stderr: \${result.stderr}',
+            'Running $binCol --help should exit 0. Stderr: ${result.stderr}',
       );
 
       final helpLines = (result.stdout as String).trim().split('\n');
       expect(
         helpLines,
         isNotEmpty,
-        reason: 'Help output for \$binCol should not be empty',
+        reason: 'Help output for $binCol should not be empty',
       );
 
       final description = helpLines.first.trim();
@@ -88,8 +88,8 @@ void main() {
         helpCol,
         description,
         reason:
-            'README description for \$exeCol does not match '
-            '`--help` output of \$binCol',
+            'README description for $exeCol does not match '
+            '`--help` output of $binCol',
       );
     }
   });
