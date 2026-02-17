@@ -16,9 +16,9 @@ void main() {
     });
 
     test('skillLinkUsage matches expected', () {
-      expect(skillLinkUsage, r'''
+      expect(skillLinkUsage, '''
 -c, --config    Path to the configuration file.
-                Defaults to $documentedConfigLocation
+                Defaults to `$documentedConfigLocation`
 -h, --help      Print this usage information.''');
     });
 

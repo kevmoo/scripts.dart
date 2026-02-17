@@ -9,7 +9,11 @@ part 'skill_link_runner.g.dart';
 
 const _homeConfigDir = '.config';
 const _configFileName = 'com.kevmoo.skills.yaml';
-final documentedConfigLocation = p.join('~', _homeConfigDir, _configFileName);
+final documentedConfigLocation = [
+  r'$HOME',
+  _homeConfigDir,
+  _configFileName,
+].join('/');
 
 Future<int> runSkillLink({String? configPath, String? defaultHomeDir}) async {
   final homeDir =
@@ -222,7 +226,7 @@ class SkillLinkOptions {
     abbr: 'c',
     help:
         'Path to the configuration file.\n'
-        'Defaults to \$documentedConfigLocation',
+        r'Defaults to `$HOME/.config/com.kevmoo.skills.yaml`',
   )
   final String? config;
 
