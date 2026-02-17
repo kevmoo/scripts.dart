@@ -8,7 +8,7 @@ import 'package:yaml/yaml.dart';
 part 'skill_link_runner.g.dart';
 
 const _homeConfigDir = '.config';
-const _configFileName = 'com.kevmoo.skills.yaml';
+const _configFileName = 'skill-link.yaml';
 final documentedConfigLocation = [
   r'$HOME',
   _homeConfigDir,
@@ -226,7 +226,7 @@ class SkillLinkOptions {
     abbr: 'c',
     help:
         'Path to the configuration file.\n'
-        r'Defaults to `$HOME/.config/com.kevmoo.skills.yaml`',
+        r'Defaults to `$HOME/.config/skill-link.yaml`',
   )
   final String? config;
 
