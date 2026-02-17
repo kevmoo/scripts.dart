@@ -7,10 +7,10 @@ import 'package:yaml/yaml.dart';
 void main() {
   test('README table is up-to-date', () async {
     final readmeFile = File('README.md');
-    final readmeContent = await readmeFile.readAsString();
+    final readmeContent = readmeFile.readAsStringSync();
 
     final pubspecFile = File('pubspec.yaml');
-    final pubspecContent = await pubspecFile.readAsString();
+    final pubspecContent = pubspecFile.readAsStringSync();
     final pubspec = loadYaml(pubspecContent) as YamlMap;
     final executables = pubspec['executables'] as YamlMap;
 
