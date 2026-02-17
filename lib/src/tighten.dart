@@ -2,14 +2,16 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:build_cli_annotations/build_cli_annotations.dart';
+import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
 import 'package:yaml/yaml.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
 part 'tighten.g.dart';
 
-Future<void> tighten({bool isWorkspace = false}) async {
-  final pubspecFile = File('pubspec.yaml');
+Future<void> tighten({bool isWorkspace = false, String? cwd}) async {
+  final targetDir = cwd == null ? Directory.current : Directory(cwd);
+  final pubspecFile = File(p.join(targetDir.path, 'pubspec.yaml'));
   if (!await pubspecFile.exists()) {
     throw TightenException('No pubspec.yaml found in the current directory.');
   }
@@ -21,7 +23,7 @@ Future<void> tighten({bool isWorkspace = false}) async {
   Map<String, String>? workspacePackages;
 
   try {
-    workspacePackages = await _getWorkspacePackages();
+    workspacePackages = await _getWorkspacePackages(cwd: targetDir.path);
   } catch (_) {
     // Ignore errors here, just means we can't detect workspace
   }
@@ -44,6 +46,7 @@ Future<void> tighten({bool isWorkspace = false}) async {
     'dart',
     ['pub', 'downgrade', '--tighten'],
     environment: {'_PUB_TEST_SDK_VERSION': minSdkVersion.toString()},
+    workingDirectory: targetDir.path,
   );
 
   final stdoutBuffer = StringBuffer();
@@ -64,6 +67,7 @@ Future<void> tighten({bool isWorkspace = false}) async {
     await _revertWorkspaceChanges(
       stdoutBuffer.toString(),
       workspacePackageNames,
+      cwd: targetDir.path,
     );
   }
 
@@ -141,13 +145,13 @@ class TightenOptions {
 
 String get tightenUsage => _$parserForTightenOptions.usage;
 
-Future<Map<String, String>> _getWorkspacePackages() async {
+Future<Map<String, String>> _getWorkspacePackages({required String cwd}) async {
   final process = await Process.run('dart', [
     'pub',
     'workspace',
     'list',
     '--json',
-  ]);
+  ], workingDirectory: cwd);
 
   if (process.exitCode != 0) {
     throw TightenException(
@@ -165,8 +169,9 @@ Future<Map<String, String>> _getWorkspacePackages() async {
 
 Future<void> _revertWorkspaceChanges(
   String output,
-  Set<String> workspacePackages,
-) async {
+  Set<String> workspacePackages, {
+  required String cwd,
+}) async {
   final fileHeaderRegex = RegExp(r'^Changed \d+ constraints? in (.*):$');
   final changeRegex = RegExp(r'^\s+([a-zA-Z0-9_]+): (.*) -> .*$');
 
@@ -209,7 +214,7 @@ Future<void> _revertWorkspaceChanges(
       print('  $file:');
       for (final (packageName, oldValue) in changes) {
         print('    - $packageName (restoring $oldValue)');
-        await _revertConstraint(file, packageName, oldValue);
+        await _revertConstraint(p.join(cwd, file), packageName, oldValue);
       }
     }
   }
