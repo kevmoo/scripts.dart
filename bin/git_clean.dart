@@ -6,6 +6,16 @@ import 'package:kevmoo_scripts/src/git_clean.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 
 void main(List<String> args) async {
+  if (args.contains('--help') || args.contains('-h')) {
+    print(
+      'Clean up local git branches that have been merged or deleted on '
+      'the remote.',
+    );
+    print('');
+    print('Usage: git_clean');
+    return;
+  }
+
   try {
     // 1. Validating we are in a git repo
 

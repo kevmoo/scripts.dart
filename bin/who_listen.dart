@@ -7,7 +7,14 @@ import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:kevmoo_scripts/src/util.dart';
 import 'package:kevmoo_scripts/src/witr_types.dart';
 
-Future<void> main() async {
+Future<void> main(List<String> args) async {
+  if (args.contains('--help') || args.contains('-h')) {
+    print('Find out what process is listening on a port.');
+    print('');
+    print('Usage: who_listen');
+    return;
+  }
+
   try {
     final processes = await _getListeningProcesses();
 

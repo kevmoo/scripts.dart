@@ -8,14 +8,19 @@ part of 'puppy.dart';
 // CliGenerator
 // **************************************************************************
 
-RunArgs _$parseRunArgsResult(ArgResults result) =>
-    RunArgs(deep: result['deep'] as bool, rest: result.rest);
+RunArgs _$parseRunArgsResult(ArgResults result) => RunArgs(
+  deep: result['deep'] as bool,
+  help: result['help'] as bool,
+  rest: result.rest,
+);
 
 ArgParser _$populateRunArgsParser(ArgParser parser) => parser
+  ..addFlag('deep', abbr: 'd', help: 'Keep looking for "nested" pubspec files.')
   ..addFlag(
-    'deep',
-    abbr: 'd',
-    help: 'Keep looking for "nested" pubspec files.',
+    'help',
+    abbr: 'h',
+    help: 'Print this usage information.',
+    negatable: false,
   );
 
 final _$parserForRunArgs = _$populateRunArgsParser(ArgParser());
