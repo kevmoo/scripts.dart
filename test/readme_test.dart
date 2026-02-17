@@ -7,17 +7,14 @@ import 'package:yaml/yaml.dart';
 void main() {
   test('README table is up-to-date', () async {
     final readmeFile = File('README.md');
-    final readmeContent = readmeFile.readAsStringSync();
-
     final pubspecFile = File('pubspec.yaml');
     final pubspecContent = pubspecFile.readAsStringSync();
     final pubspec = loadYaml(pubspecContent) as YamlMap;
     final executables = pubspec['executables'] as YamlMap;
 
-    // Look for lines that contain `| \`bin/`
-    final tableLines = readmeContent
-        .split('\n')
-        .where((line) => line.contains('| `bin/') && line.endsWith('|'))
+    final tableLines = readmeFile
+        .readAsLinesSync()
+        .where((line) => line.contains('| `bin/') && line.trim().endsWith('|'))
         .toList();
 
     expect(tableLines, isNotEmpty, reason: 'Should find table rows in README');
