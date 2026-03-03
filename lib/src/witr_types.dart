@@ -63,7 +63,7 @@ class SourceData {
 
 class ProcessData {
   final int pid;
-  final int ppid;
+  final int? ppid;
   final String command;
   final String cmdline;
   final String user;
@@ -74,7 +74,7 @@ class ProcessData {
 
   ProcessData({
     required this.pid,
-    required this.ppid,
+    this.ppid,
     required this.command,
     required this.cmdline,
     required this.user,
@@ -86,7 +86,7 @@ class ProcessData {
 
   factory ProcessData.fromJson(Map<String, dynamic> json) => ProcessData(
     pid: json['PID'] as int,
-    ppid: json['PPID'] as int? ?? 0,
+    ppid: json['PPID'] as int?,
     command: json['Command'] as String? ?? '<unknown>',
     cmdline: json['Cmdline'] as String? ?? '<unknown>',
     user: json['User'] as String? ?? '<unknown>',

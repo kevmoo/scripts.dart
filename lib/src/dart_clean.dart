@@ -11,6 +11,10 @@ import 'witr_types.dart';
 part 'dart_clean.g.dart';
 
 Future<void> runDartClean(DartCleanOptions options) async {
+  if (!Platform.isMacOS) {
+    throw DartCleanException('dart-clean is currently only supported on macOS.');
+  }
+
   final currentPid = pid;
 
   // Find all dart processes
