@@ -61,6 +61,21 @@ Future<void> runDartClean(DartCleanOptions options) async {
       );
 
       if (data.source.type == 'launchd') {
+        // Check if it's owned by a running VS Code instance
+        final vscodePidStr = data.process.env?.firstWhere(
+          (e) => e.startsWith('VSCODE_PID='),
+          orElse: () => '',
+        );
+
+        if (vscodePidStr != null && vscodePidStr.isNotEmpty) {
+          final vscodePid = int.tryParse(vscodePidStr.split('=')[1]);
+          if (vscodePid != null) {
+            if (await _isProcessRunning(vscodePid)) {
+              continue;
+            }
+          }
+        }
+
         orphanedPids.add(p);
         orphanedDetails[p] = data;
       }
@@ -88,20 +103,29 @@ Future<void> runDartClean(DartCleanOptions options) async {
   if (options.list) return;
 
   if (options.force) {
-    _killPids(orphanedPids);
+    await _killPids(orphanedPids);
   } else {
     print('');
     stdout.write('Kill all orphaned processes? (y/N) ');
     final response = stdin.readLineSync();
     if (response?.toLowerCase() == 'y') {
-      _killPids(orphanedPids);
+      await _killPids(orphanedPids);
     } else {
       print('Skipping kill.');
     }
   }
 }
 
-void _killPids(List<int> pids) {
+Future<bool> _isProcessRunning(int pid) async {
+  try {
+    await runProcess('ps', ['-p', pid.toString(), '-o', 'pid=']);
+    return true;
+  } on ProcessException {
+    return false;
+  }
+}
+
+Future<void> _killPids(List<int> pids) async {
   var killedCount = 0;
   final failedPids = <int>[];
   for (final p in pids) {
