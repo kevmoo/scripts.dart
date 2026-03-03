@@ -25,6 +25,7 @@ dev_dependencies:
   test_descriptor: ^2.0.2
 
 executables:
+  dart-clean: dart_clean
   git-goma: git_clean
   lint-cleanup: lint_cleanup
   puppy:

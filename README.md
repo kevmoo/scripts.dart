@@ -4,6 +4,7 @@ This repository contains various scripts and utilities for development.
 
 | Activated As | Script | Description |
 |---|---|---|
+| [`dart-clean`](#dart-clean) | `bin/dart_clean.dart` | Find and kill orphaned Dart processes. |
 | [`git-goma`](#git-goma) | `bin/git_clean.dart` | Clean up local git branches that have been merged or deleted on the remote. |
 | [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
 | [`puppy`](#puppy) | `bin/puppy.dart` | Run a command in all package directories. |
@@ -11,6 +12,22 @@ This repository contains various scripts and utilities for development.
 | [`tighten`](#tighten) | `bin/tighten.dart` | Tighten workspace dependencies. |
 
 ## Scripts
+
+### `dart-clean`
+Find and kill orphaned Dart processes.
+
+**Requirements:**
+This tool is only supported on macOS and requires the `witr` command-line
+utility to be installed and in your `PATH`.
+
+**Usage:**
+```shell
+dart-clean
+
+-f, --[no-]force    Force kill without confirmation.
+-l, --[no-]list     Only list orphaned processes; do not kill.
+-h, --help          Print this usage information.
+```
 
 ### `git-goma`
 Clean up local git branches that have been merged or deleted on the remote.
