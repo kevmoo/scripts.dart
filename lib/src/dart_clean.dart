@@ -116,7 +116,8 @@ void _killPids(List<int> pids) {
   if (failedPids.isNotEmpty) {
     print(
       red.wrap(
-        'Failed to kill ${failedPids.length} processes: ${failedPids.join(', ')}',
+        'Failed to kill ${failedPids.length} processes: '
+        '${failedPids.join(', ')}',
       ),
     );
   }
