@@ -88,20 +88,20 @@ Future<void> runDartClean(DartCleanOptions options) async {
   if (options.list) return;
 
   if (options.force) {
-    await _killPids(orphanedPids);
+    _killPids(orphanedPids);
   } else {
     print('');
     stdout.write('Kill all orphaned processes? (y/N) ');
     final response = stdin.readLineSync();
     if (response?.toLowerCase() == 'y') {
-      await _killPids(orphanedPids);
+      _killPids(orphanedPids);
     } else {
       print('Skipping kill.');
     }
   }
 }
 
-Future<void> _killPids(List<int> pids) async {
+void _killPids(List<int> pids) {
   for (final p in pids) {
     print('Killing $p...');
     Process.killPid(p);
