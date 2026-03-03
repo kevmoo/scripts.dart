@@ -102,11 +102,24 @@ Future<void> runDartClean(DartCleanOptions options) async {
 }
 
 void _killPids(List<int> pids) {
+  var killedCount = 0;
+  final failedPids = <int>[];
   for (final p in pids) {
     print('Killing $p...');
-    Process.killPid(p);
+    if (Process.killPid(p)) {
+      killedCount++;
+    } else {
+      failedPids.add(p);
+    }
   }
-  print(green.wrap('Killed ${pids.length} processes.'));
+  print(green.wrap('Killed $killedCount processes.'));
+  if (failedPids.isNotEmpty) {
+    print(
+      red.wrap(
+        'Failed to kill ${failedPids.length} processes: ${failedPids.join(', ')}',
+      ),
+    );
+  }
 }
 
 @CliOptions()
