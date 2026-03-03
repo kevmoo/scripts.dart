@@ -2,10 +2,7 @@ class WitrData {
   final ProcessData process;
   final SourceData source;
 
-  WitrData({
-    required this.process,
-    required this.source,
-  });
+  WitrData({required this.process, required this.source});
 
   factory WitrData.fromJson(Map<String, dynamic> json) {
     final processJson = switch (json['Process']) {
@@ -34,19 +31,15 @@ class SourceData {
 
   SourceData({required this.type});
 
-  factory SourceData.fromJson(Map<String, dynamic> json) => SourceData(
-    type: json['Type'] as String? ?? '<unknown>',
-  );
+  factory SourceData.fromJson(Map<String, dynamic> json) =>
+      SourceData(type: json['Type'] as String? ?? '<unknown>');
 }
 
 class ProcessData {
   final String cmdline;
   final List<String>? env;
 
-  ProcessData({
-    required this.cmdline,
-    this.env,
-  });
+  ProcessData({required this.cmdline, this.env});
 
   factory ProcessData.fromJson(Map<String, dynamic> json) => ProcessData(
     cmdline: json['Cmdline'] as String? ?? '<unknown>',
