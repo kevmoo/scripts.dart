@@ -2,10 +2,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:args/command_runner.dart';
 import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:io/ansi.dart';
-import 'package:io/io.dart';
 
 import 'util.dart';
 import 'witr_types.dart';
@@ -29,8 +27,10 @@ Future<void> runDartClean(DartCleanOptions options) async {
   // Get current process children so we don't kill them
   final protectedPids = {currentPid};
   try {
-    final childrenOutput =
-        await runProcess('pgrep', ['-P', currentPid.toString()]);
+    final childrenOutput = await runProcess('pgrep', [
+      '-P',
+      currentPid.toString(),
+    ]);
     protectedPids.addAll(childrenOutput.trim().split('\n').map(int.parse));
   } on ProcessException catch (e) {
     if (e.errorCode != 1) rethrow;
@@ -45,9 +45,15 @@ Future<void> runDartClean(DartCleanOptions options) async {
     if (protectedPids.contains(p)) continue;
 
     try {
-      final witrOutput = await runProcess('witr', ['--pid', p.toString(), '--json']);
-      final data = WitrData.fromJson(jsonDecode(witrOutput) as Map<String, dynamic>);
-      
+      final witrOutput = await runProcess('witr', [
+        '--pid',
+        p.toString(),
+        '--json',
+      ]);
+      final data = WitrData.fromJson(
+        jsonDecode(witrOutput) as Map<String, dynamic>,
+      );
+
       if (data.source.type == 'launchd') {
         orphanedPids.add(p);
         orphanedDetails[p] = data;
@@ -92,7 +98,7 @@ Future<void> runDartClean(DartCleanOptions options) async {
 Future<void> _killPids(List<int> pids) async {
   for (final p in pids) {
     print('Killing $p...');
-    Process.killPid(p, ProcessSignal.sigterm);
+    Process.killPid(p);
   }
   print(green.wrap('Killed ${pids.length} processes.'));
 }
@@ -108,11 +114,7 @@ class DartCleanOptions {
   @CliOption(abbr: 'h', negatable: false, help: 'Print this usage information.')
   final bool help;
 
-  DartCleanOptions({
-    this.force = false,
-    this.list = false,
-    this.help = false,
-  });
+  DartCleanOptions({this.force = false, this.list = false, this.help = false});
 }
 
 String get dartCleanOptionsUsage => _$parserForDartCleanOptions.usage;

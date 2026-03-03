@@ -2,8 +2,6 @@
 
 import 'dart:io';
 
-import 'package:args/command_runner.dart';
-import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/dart_clean.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
