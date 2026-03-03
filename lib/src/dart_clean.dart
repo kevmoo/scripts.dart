@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:build_cli_annotations/build_cli_annotations.dart';
-import 'package:collection/collection.dart';
 import 'package:io/ansi.dart';
 
 import 'util.dart';
@@ -21,7 +20,7 @@ Future<void> runDartClean(DartCleanOptions options) async {
   final currentPid = pid;
 
   Iterable<int> parsePgrepOutput(String output) =>
-      output.trim().split('\n').where((s) => s.isNotEmpty).map(int.parse);
+      LineSplitter.split(output).where((s) => s.isNotEmpty).map(int.parse);
 
   // Find all dart processes
   final pids = <int>{};
@@ -66,9 +65,9 @@ Future<void> runDartClean(DartCleanOptions options) async {
 
       if (data.source.type == 'launchd') {
         // Check if it's owned by a running VS Code instance
-        final vscodePidStr = data.process.env?.firstWhereOrNull(
-          (e) => e.startsWith('VSCODE_PID='),
-        );
+        final vscodePidStr = data.process.env
+            ?.where((e) => e.startsWith('VSCODE_PID='))
+            .firstOrNull;
 
         if (vscodePidStr != null) {
           final vscodePid = int.tryParse(vscodePidStr.split('=')[1]);
