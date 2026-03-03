@@ -16,6 +16,10 @@ This repository contains various scripts and utilities for development.
 ### `dart-clean`
 Find and kill orphaned Dart processes.
 
+**Requirements:**
+This tool is only supported on macOS and requires the `witr` command-line
+utility to be installed and in your `PATH`.
+
 **Usage:**
 ```shell
 dart-clean

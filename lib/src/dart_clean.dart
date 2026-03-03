@@ -24,7 +24,9 @@ Future<void> runDartClean(DartCleanOptions options) async {
   for (final exe in ['dart', 'dartvm']) {
     try {
       final output = await runProcess('pgrep', [exe]);
-      pids.addAll(output.trim().split('\n').map(int.parse));
+      pids.addAll(
+        output.trim().split('\n').where((s) => s.isNotEmpty).map(int.parse),
+      );
     } on ProcessException catch (e) {
       if (e.errorCode != 1) rethrow;
     }
@@ -37,7 +39,13 @@ Future<void> runDartClean(DartCleanOptions options) async {
       '-P',
       currentPid.toString(),
     ]);
-    protectedPids.addAll(childrenOutput.trim().split('\n').map(int.parse));
+    protectedPids.addAll(
+      childrenOutput
+          .trim()
+          .split('\n')
+          .where((s) => s.isNotEmpty)
+          .map(int.parse),
+    );
   } on ProcessException catch (e) {
     if (e.errorCode != 1) rethrow;
   }
