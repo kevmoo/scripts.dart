@@ -4,6 +4,7 @@ import 'dart:io';
 
 import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:io/ansi.dart';
+import 'package:meta/meta.dart';
 
 import 'util.dart';
 import 'witr_types.dart';
@@ -99,7 +100,7 @@ Future<void> runDartClean(DartCleanOptions options) async {
   print(yellow.wrap('Found ${orphanedPids.length} orphaned Dart processes:'));
   for (final p in orphanedPids) {
     final data = orphanedDetails[p]!;
-    print('  [$p] ${data.process.cmdline}');
+    print('  [$p] ${formatCmdline(data.process.cmdline)}');
   }
 
   if (options.list) return;
@@ -174,4 +175,40 @@ class DartCleanException implements Exception {
 
   @override
   String toString() => message;
+}
+
+@visibleForTesting
+String formatCmdline(String cmdline) {
+  if (cmdline == '<unknown>') return cmdline;
+
+  final parts = cmdline.trim().split(RegExp(r'\s+'));
+  if (parts.isEmpty || parts.first.isEmpty) return cmdline;
+
+  final result = <String>[];
+
+  // First part is the executable. Get the base name.
+  final exePath = parts.first;
+  final exeName = exePath.split('/').last;
+  result.add(exeName);
+
+  var addedArgs = 0;
+  for (var i = 1; i < parts.length; i++) {
+    final part = parts[i];
+    if (part.isEmpty) continue;
+
+    // Skip dashed flags
+    if (part.startsWith('-')) continue;
+
+    if (part.endsWith('.dart') || part.endsWith('.snapshot')) {
+      result.add(part.split('/').last);
+      break; // Stop after the script
+    }
+
+    result.add(part.split('/').last);
+    addedArgs++;
+
+    if (addedArgs >= 3) break;
+  }
+
+  return result.join(' ');
 }
