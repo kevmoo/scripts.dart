@@ -199,12 +199,13 @@ String formatCmdline(String cmdline) {
     // Skip dashed flags
     if (part.startsWith('-')) continue;
 
+    final baseName = part.split('/').last;
     if (part.endsWith('.dart') || part.endsWith('.snapshot')) {
-      result.add(part.split('/').last);
+      result.add(baseName);
       break; // Stop after the script
     }
 
-    result.add(part.split('/').last);
+    result.add(baseName);
     addedArgs++;
 
     if (addedArgs >= 3) break;
