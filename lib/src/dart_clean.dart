@@ -106,7 +106,7 @@ Future<void> runDartClean(DartCleanOptions options) async {
   if (options.list) return;
 
   if (options.force) {
-    await _killPids(orphanedPids);
+    await _killPids(orphanedPids, force: true);
   } else {
     print('');
     stdout.write('Kill all orphaned processes? (y/N) ');
@@ -128,22 +128,70 @@ Future<bool> _isProcessRunning(int pid) async {
   }
 }
 
-Future<void> _killPids(List<int> pids) async {
+Future<void> _killPids(List<int> pids, {bool force = false}) async {
   var killedCount = 0;
-  final failedPids = <int>[];
+  var failedPids = <int>[];
+
   for (final p in pids) {
     print('Killing $p...');
-    if (Process.killPid(p)) {
-      killedCount++;
-    } else {
+    if (!Process.killPid(p)) {
       failedPids.add(p);
     }
   }
-  print(green.wrap('Killed $killedCount processes.'));
+
+  if (pids.length > failedPids.length) {
+    await Future<void>.delayed(const Duration(milliseconds: 500));
+  }
+
+  final stillRunning = <int>[];
+  for (final p in pids) {
+    if (failedPids.contains(p)) continue;
+    if (await _isProcessRunning(p)) {
+      stillRunning.add(p);
+    } else {
+      killedCount++;
+    }
+  }
+
+  if (stillRunning.isNotEmpty) {
+    if (!force) {
+      print('');
+      print(red.wrap('${stillRunning.length} processes failed to terminate.'));
+      stdout.write('Force kill (kill -9) remaining processes? (y/N) ');
+      final response = stdin.readLineSync();
+      force = response?.toLowerCase() == 'y';
+    }
+
+    if (force) {
+      for (final p in stillRunning) {
+        print('Force killing $p...');
+        Process.killPid(p, ProcessSignal.sigkill);
+      }
+
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+
+      for (final p in stillRunning) {
+        if (await _isProcessRunning(p)) {
+          failedPids.add(p);
+        } else {
+          killedCount++;
+        }
+      }
+    } else {
+      failedPids.addAll(stillRunning);
+    }
+  }
+
+  failedPids = failedPids.toSet().toList();
+
+  print('');
+  if (killedCount > 0) {
+    print(green.wrap('Successfully terminated $killedCount processes.'));
+  }
   if (failedPids.isNotEmpty) {
     print(
       red.wrap(
-        'Failed to kill ${failedPids.length} processes: '
+        'Failed to terminate ${failedPids.length} processes: '
         '${failedPids.join(', ')}',
       ),
     );
