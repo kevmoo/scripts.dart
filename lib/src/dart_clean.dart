@@ -74,6 +74,12 @@ Future<void> runDartClean(DartCleanOptions options) async {
           final vscodePid = int.tryParse(vscodePidStr.split('=')[1]);
           if (vscodePid != null) {
             if (await _isProcessRunning(vscodePid)) {
+              print(
+                darkGray.wrap(
+                  '  Skipping $p since VS Code (PID $vscodePid) is running. '
+                  '(${formatCmdline(data.process.cmdline)})',
+                ),
+              );
               continue;
             }
           }
