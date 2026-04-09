@@ -1,6 +1,9 @@
 import 'dart:io';
+
 import 'package:git/git.dart';
+import 'package:io/ansi.dart';
 import 'package:io/io.dart';
+
 import 'testable_print.dart';
 
 /// Safely switches to and updates the default branch of a Git repository.
@@ -26,20 +29,43 @@ Future<void> gitGm({String? workingDirectory}) async {
   // 1. Determine Default Branch
   final defaultBranch = await getDefaultBranch(gitDir);
 
-  print('Default branch: $defaultBranch');
+  final boldBranch = wrapWith(defaultBranch, [styleBold]) ?? defaultBranch;
+  final defaultBranchMsg = 'Default branch: $boldBranch';
+  print(wrapWith(defaultBranchMsg, [styleDim]) ?? defaultBranchMsg);
 
   // 2. Verify Alignment
   await verifyAlignment(gitDir, defaultBranch);
 
   // 3. Checkout default branch
-  print('Checking out $defaultBranch...');
-  await gitDir.runCommand(['checkout', defaultBranch]);
+  final checkoutMsg = 'Checking out $defaultBranch...';
+  print(wrapWith(checkoutMsg, [styleDim]) ?? checkoutMsg);
+  final checkoutProcess = await Process.start(
+    'git',
+    ['checkout', defaultBranch],
+    workingDirectory: gitDir.path,
+    mode: ProcessStartMode.inheritStdio,
+  );
+  final checkoutExitCode = await checkoutProcess.exitCode;
+  if (checkoutExitCode != 0) {
+    throw GitGmException(
+      'Failed to checkout branch $defaultBranch',
+      exitCode: checkoutExitCode,
+    );
+  }
 
   // 4. Update with pull --ff-only
-  print('Pulling updates...');
-  await gitDir.runCommand(['pull', '--ff-only']);
-
-  print('Successfully updated $defaultBranch.');
+  const pullMsg = 'Pulling updates...';
+  print(wrapWith(pullMsg, [styleDim]) ?? pullMsg);
+  final pullProcess = await Process.start(
+    'git',
+    ['pull', '--ff-only'],
+    workingDirectory: gitDir.path,
+    mode: ProcessStartMode.inheritStdio,
+  );
+  final pullExitCode = await pullProcess.exitCode;
+  if (pullExitCode != 0) {
+    throw GitGmException('Failed to pull updates', exitCode: pullExitCode);
+  }
 }
 
 /// Resolves the Git repository root directory.

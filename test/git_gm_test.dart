@@ -41,7 +41,7 @@ void main() {
         () => gitGm(workingDirectory: localPath),
       );
       expect(exitCode, 0);
-    }, prints(contains('Successfully updated $defaultBranch.')));
+    }, prints(contains('Default branch: $defaultBranch')));
   });
 
   test('getDefaultBranch fails when origin/HEAD is missing', () async {
@@ -148,7 +148,7 @@ void main() {
 
     await expectLater(
       () => wrappedForTesting(() => gitGm(workingDirectory: localPath)),
-      throwsA(isA<ProcessException>()),
+      throwsA(isA<GitGmException>()),
     );
   });
 }
