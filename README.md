@@ -5,6 +5,7 @@ This repository contains various scripts and utilities for development.
 | Activated As | Script | Description |
 |---|---|---|
 | [`dart-clean`](#dart-clean) | `bin/dart_clean.dart` | Find and kill orphaned Dart processes. |
+| [`git-gm`](#git-gm) | `bin/git_gm.dart` | Safely switch to and update the default branch. |
 | [`git-goma`](#git-goma) | `bin/git_clean.dart` | Clean up local git branches that have been merged or deleted on the remote. |
 | [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
 | [`puppy`](#puppy) | `bin/puppy.dart` | Run a command in all package directories. |
@@ -27,6 +28,14 @@ dart-clean
 -f, --[no-]force    Force kill without confirmation.
 -l, --[no-]list     Only list orphaned processes; do not kill.
 -h, --help          Print this usage information.
+```
+
+### `git-gm`
+Safely switch to and update the default branch of a Git repository.
+
+**Usage:**
+```shell
+git-gm [--verbose | -v] [--help | -h]
 ```
 
 ### `git-goma`
