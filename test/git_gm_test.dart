@@ -10,28 +10,26 @@ import 'package:test_descriptor/test_descriptor.dart' as d;
 void main() {
   late String localPath;
   late GitDir localGitDir;
-  late String scriptsRepoPath;
 
   setUp(() async {
-    scriptsRepoPath = Directory.current.path;
+    // 1. Create a "remote" repo
+    await d.dir('remote', [d.file('README.md', 'remote readme')]).create();
+    final remotePath = p.join(d.sandbox, 'remote');
+    final remoteGitDir = await GitDir.init(remotePath, allowContent: true);
+    await remoteGitDir.configureTestIdentity();
+    await remoteGitDir.runCommand(['branch', '-M', 'main']);
+    await remoteGitDir.runCommand(['add', '.']);
+    await remoteGitDir.runCommand(['commit', '-m', 'Initial commit']);
 
-    // Create a sandbox directory for the local clone
+    // 2. Clone to "local"
     localPath = p.join(d.sandbox, 'local');
-
-    // Clone the scripts repo into the sandbox
-    final result = await Process.run('git', [
-      'clone',
-      scriptsRepoPath,
-      localPath,
-    ]);
-    expect(
-      result.exitCode,
-      0,
-      reason: 'Failed to clone repo: ${result.stderr}',
-    );
+    await Process.run('git', ['clone', remotePath, localPath]);
 
     localGitDir = await GitDir.fromExisting(localPath);
     await localGitDir.configureTestIdentity();
+
+    // 3. Set origin/HEAD explicitly to be safe
+    await localGitDir.runCommand(['remote', 'set-head', 'origin', 'main']);
   });
 
   test('Success case: finds origin/HEAD and updates', () async {

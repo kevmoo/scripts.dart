@@ -53,10 +53,11 @@ Future<void> gitGm({String? workingDirectory}) async {
 Future<GitDir> getGitDir(String workingDirectory) async {
   ProcessResult result;
   try {
-    result = await Process.run('git', [
-      'rev-parse',
-      '--show-toplevel',
-    ], workingDirectory: workingDirectory);
+    result = await runGit(
+      ['rev-parse', '--show-toplevel'],
+      processWorkingDir: workingDirectory,
+      throwOnError: false,
+    );
   } on ProcessException catch (e) {
     throw GitGmException(
       'Failed to run git. Is it installed and in your PATH? '
