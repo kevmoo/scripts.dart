@@ -133,6 +133,26 @@ void main() {
       );
     },
   );
+
+  test('gitGm fails when working tree is dirty and conflicts', () async {
+    final filePath = p.join(localPath, 'conflict.txt');
+    File(filePath).writeAsStringSync('content A');
+    await localGitDir.runCommand(['add', 'conflict.txt']);
+    await localGitDir.runCommand(['commit', '-m', 'add conflict.txt']);
+
+    await localGitDir.runCommand(['checkout', '-b', 'feature']);
+
+    File(filePath).writeAsStringSync('content B');
+    await localGitDir.runCommand(['add', 'conflict.txt']);
+    await localGitDir.runCommand(['commit', '-m', 'update conflict.txt']);
+
+    File(filePath).writeAsStringSync('content C');
+
+    await expectLater(
+      () => wrappedForTesting(() => gitGm(workingDirectory: localPath)),
+      throwsA(isA<ProcessException>()),
+    );
+  });
 }
 
 extension on GitDir {

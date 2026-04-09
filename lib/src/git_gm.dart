@@ -171,10 +171,7 @@ Future<void> verifyAlignment(GitDir gitDir, String defaultBranch) async {
     printError(
       'Error: Local branch "$defaultBranch" has no upstream configured.',
     );
-    printError('To fix this, run:');
-    printError(
-      '  git branch --set-upstream-to=origin/$defaultBranch $defaultBranch',
-    );
+    _printUpstreamFixSuggestion(defaultBranch);
     throw GitGmException(
       'Branch has no upstream.',
       exitCode: ExitCode.config.code,
@@ -186,15 +183,19 @@ Future<void> verifyAlignment(GitDir gitDir, String defaultBranch) async {
     printError(
       'Error: Local branch "$defaultBranch" tracks "$upstream", not "origin/$defaultBranch".',
     );
-    printError('To fix this, run:');
-    printError(
-      '  git branch --set-upstream-to=origin/$defaultBranch $defaultBranch',
-    );
+    _printUpstreamFixSuggestion(defaultBranch);
     throw GitGmException(
       'Branch alignment failed.',
       exitCode: ExitCode.config.code,
     );
   }
+}
+
+void _printUpstreamFixSuggestion(String defaultBranch) {
+  printError('To fix this, run:');
+  printError(
+    '  git branch --set-upstream-to=origin/$defaultBranch $defaultBranch',
+  );
 }
 
 /// Exception thrown by `git-gm` operations.

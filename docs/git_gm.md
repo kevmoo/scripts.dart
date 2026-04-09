@@ -75,7 +75,6 @@ they can configure things to fix the problem (e.g., by running `git branch
 
 - Name in pubspec.yaml executables section: `git-gm`
 - Arguments: None (usually).
-  - `--dry-run`: Show what would be done without doing it.
 
 ## Testing
 We will use `package:test` and `package:test_descriptor` to create tests.

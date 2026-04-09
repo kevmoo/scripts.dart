@@ -8,10 +8,8 @@ import 'package:kevmoo_scripts/src/testable_print.dart';
 Future<void> main(List<String> arguments) async {
   final help = arguments.contains('--help') || arguments.contains('-h');
   if (help) {
+    print('Safely switch to and update the default branch.');
     print('Usage: git-gm [--verbose | -v] [--help | -h]');
-    print(
-      'Safely switch to and update the default branch of a Git repository.',
-    );
     return;
   }
 
