@@ -1,40 +1,27 @@
-import 'dart:convert';
+import 'dart:io';
 
 import 'package:git/git.dart';
 
+import 'git_extensions.dart';
 import 'testable_print.dart';
 
 Future<void> gitClean(GitDir gitDir) async {
   // 2. Fetch with prune to update remote tracking branches
   print('Fetching and pruning...');
-  final pr = await gitDir.runCommand(['fetch', '--prune'], throwOnError: false);
-  if (pr.exitCode != 0) {
-    throw GitCleanException('Error fetching: ${pr.stderr}');
+  try {
+    await gitDir.fetch(prune: true);
+  } on ProcessException catch (e) {
+    throw GitCleanException('Error fetching: ${e.message}');
   }
 
   // 3a. Get current branch
-  final currentBranchResult = await gitDir.runCommand([
-    'branch',
-    '--show-current',
-  ], throwOnError: false);
-  if (currentBranchResult.exitCode != 0) {
-    throw GitCleanException(
-      'Error getting current branch: ${currentBranchResult.stderr}',
-    );
-  }
-  final currentBranch = (currentBranchResult.stdout as String).trim();
+  final currentBranch = (await gitDir.currentBranch()).branchName;
   print('Current branch: $currentBranch');
 
   // 3b. Identify "primary" branch (main or master)
   String? primaryBranch;
   for (final branch in ['main', 'master']) {
-    final result = await gitDir.runCommand([
-      'show-ref',
-      '--verify',
-      '--quiet',
-      'refs/heads/$branch',
-    ], throwOnError: false);
-    if (result.exitCode == 0) {
+    if (await gitDir.hasBranch(branch)) {
       primaryBranch = branch;
       break;
     }
@@ -47,54 +34,26 @@ Future<void> gitClean(GitDir gitDir) async {
   }
 
   // 3c. Get all branches and their upstream status
-  // %(refname:short) gives the branch name (e.g. 'main')
-  // %(upstream:track) gives '[gone]' if the upstream is missing
-  // %(objectname:short) gives the standard 7-char SHA
-  final result = await gitDir.runCommand([
-    'for-each-ref',
-    '--format=%(refname:short) %(upstream:track) %(objectname:short)',
-    'refs/heads',
-  ], throwOnError: false);
-
-  if (result.exitCode != 0) {
-    throw GitCleanException('Error listing branches: ${result.stderr}');
-  }
+  final branchesStatus = await gitDir.getBranchesStatus();
 
   // Key: branch name, Value: SHA
   final branchesToDelete = <String, String>{};
-  final lines = LineSplitter.split(result.stdout as String);
-
   var currentIsGone = false;
 
-  for (final line in lines) {
-    // line format: "branchname [gone] sha"
-    // or "branchname  sha" (if no upstream or up-to-date, note the double
-    // space if track is empty)
-    // or "branchname [ahead 1] sha" etc.
-
-    // Use `indexOf` and `lastIndexOf` for more robust parsing of the format:
-    // "%(refname:short) %(upstream:track) %(objectname:short)"
-    final firstSpace = line.indexOf(' ');
-    final lastSpace = line.lastIndexOf(' ');
-
-    if (firstSpace != -1 &&
-        lastSpace > firstSpace &&
-        line.substring(firstSpace + 1, lastSpace).trim() == '[gone]') {
-      final branchName = line.substring(0, firstSpace);
-      final sha = line.substring(lastSpace + 1);
-
+  branchesStatus.forEach((branchName, status) {
+    if (status.isUpstreamGone) {
       if (branchName == 'master' || branchName == 'main') {
         print('Skipping $branchName despite it being marked as [gone].');
-        continue;
+        return;
       }
 
       if (branchName == currentBranch) {
         currentIsGone = true;
       }
 
-      branchesToDelete[branchName] = sha;
+      branchesToDelete[branchName] = status.sha;
     }
-  }
+  });
 
   if (currentIsGone) {
     if (primaryBranch != null) {
@@ -132,11 +91,7 @@ Future<void> gitClean(GitDir gitDir) async {
     // We are on primary branch. Let's try to git merge --ff-only @{u}
     // We don't want to crash if it fails, just try it.
     print('Attempting to fast-forward $primaryBranch...');
-    final mergeResult = await gitDir.runCommand([
-      'merge',
-      '--ff-only',
-      '@{u}',
-    ], throwOnError: false);
+    final mergeResult = await gitDir.fastForwardMerge();
 
     if (mergeResult.exitCode == 0) {
       if ((mergeResult.stdout as String).contains('Already up to date')) {
@@ -176,16 +131,12 @@ Future<void> gitClean(GitDir gitDir) async {
   // 4. Delete the branches
   for (final branch in branchesToDelete.keys) {
     print('Deleting $branch...');
-    final delResult = await gitDir.runCommand([
-      'branch',
-      '-D',
-      branch,
-    ], throwOnError: false);
-    if (delResult.exitCode != 0) {
-      printError('Failed to delete $branch: ${delResult.stderr}');
-      // We log but don't throw here to allow other deletions to proceed
-    } else {
+    try {
+      await gitDir.deleteBranch(branch, force: true);
       print('  Done!');
+    } on ProcessException catch (e) {
+      printError('Failed to delete $branch: ${e.message}');
+      // We log but don't throw here to allow other deletions to proceed
     }
   }
 }

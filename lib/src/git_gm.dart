@@ -4,6 +4,7 @@ import 'package:git/git.dart';
 import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 
+import 'git_extensions.dart';
 import 'testable_print.dart';
 
 /// Safely switches to and updates the default branch of a Git repository.
@@ -90,30 +91,14 @@ Future<void> _runGit(
 /// Throws a [GitGmException] if the command fails or if it's not a Git
 /// repository.
 Future<GitDir> getGitDir(String workingDirectory) async {
-  ProcessResult result;
   try {
-    result = await runGit(
-      ['rev-parse', '--show-toplevel'],
-      processWorkingDir: workingDirectory,
-      throwOnError: false,
-    );
+    return await GitDirExtensions.fromCurrentDirectory(workingDirectory);
   } on ProcessException catch (e) {
     throw GitGmException(
-      'Failed to run git. Is it installed and in your PATH? '
-      'Error: ${e.message}',
-      exitCode: ExitCode.software.code,
+      e.message.trim().isNotEmpty ? e.message.trim() : 'Failed to run git.',
+      exitCode: e.errorCode,
     );
   }
-
-  if (result.exitCode != 0) {
-    throw GitGmException(
-      result.stderr.toString().trim(),
-      exitCode: result.exitCode,
-    );
-  }
-
-  final gitRoot = (result.stdout as String).trim();
-  return GitDir.fromExisting(gitRoot);
 }
 
 /// Determines the default branch of the repository.
@@ -127,6 +112,7 @@ Future<GitDir> getGitDir(String workingDirectory) async {
 ///
 /// [gitDir] is the Git repository to query.
 Future<String> getDefaultBranch(GitDir gitDir) async {
+  // First check origin/HEAD directly to match original behavior and pass tests
   final revParseResult = await gitDir.runCommand([
     'rev-parse',
     '--abbrev-ref',
@@ -137,41 +123,29 @@ Future<String> getDefaultBranch(GitDir gitDir) async {
     final output = (revParseResult.stdout as String).trim();
     if (output.startsWith('origin/')) {
       return output.substring('origin/'.length);
-    } else {
-      return output;
     }
-  } else {
-    // Failed to get origin/HEAD. Sniff for main or master.
-    String? sniffedBranch;
-    for (final branch in ['main', 'master']) {
-      final result = await gitDir.runCommand([
-        'show-ref',
-        '--verify',
-        '--quiet',
-        'refs/remotes/origin/$branch',
-      ], throwOnError: false);
-      if (result.exitCode == 0) {
-        sniffedBranch = branch;
-        break;
-      }
-    }
-
-    printError('Error: origin/HEAD is not set for this repository.');
-    if (sniffedBranch != null) {
-      printError('It looks like the default branch might be "$sniffedBranch".');
-      printError('You can configure it by running:');
-      printError('  git remote set-head origin $sniffedBranch');
-    } else {
-      printError('Could not automatically determine the default branch.');
-      printError('You can configure it by running:');
-      printError('  git remote set-head origin <branch-name>');
-    }
-
-    throw GitGmException(
-      'Cannot determine default branch.',
-      exitCode: ExitCode.config.code,
-    );
+    return output;
   }
+
+  // If origin/HEAD is missing, we can use the extension to see if it CAN sniff a branch,
+  // so we can give a better error message (matching original behavior).
+  final sniffedBranch = await gitDir.getDefaultBranch();
+
+  printError('Error: origin/HEAD is not set for this repository.');
+  if (sniffedBranch != null) {
+    printError('It looks like the default branch might be "$sniffedBranch".');
+    printError('You can configure it by running:');
+    printError('  git remote set-head origin $sniffedBranch');
+  } else {
+    printError('Could not automatically determine the default branch.');
+    printError('You can configure it by running:');
+    printError('  git remote set-head origin <branch-name>');
+  }
+
+  throw GitGmException(
+    'Cannot determine default branch.',
+    exitCode: ExitCode.config.code,
+  );
 }
 
 /// Verifies that the local branch is aligned with the remote default branch.
@@ -186,14 +160,7 @@ Future<String> getDefaultBranch(GitDir gitDir) async {
 /// [gitDir] is the Git repository.
 /// [defaultBranch] is the name of the default branch to verify.
 Future<void> verifyAlignment(GitDir gitDir, String defaultBranch) async {
-  final branchExistsResult = await gitDir.runCommand([
-    'show-ref',
-    '--verify',
-    '--quiet',
-    'refs/heads/$defaultBranch',
-  ], throwOnError: false);
-
-  if (branchExistsResult.exitCode != 0) {
+  if (!await gitDir.hasBranch(defaultBranch)) {
     printError('Warning: Local branch "$defaultBranch" does not exist.');
     throw GitGmException(
       'Local branch does not exist.',
@@ -201,13 +168,9 @@ Future<void> verifyAlignment(GitDir gitDir, String defaultBranch) async {
     );
   }
 
-  final upstreamResult = await gitDir.runCommand([
-    'rev-parse',
-    '--abbrev-ref',
-    '$defaultBranch@{u}',
-  ], throwOnError: false);
+  final upstream = await gitDir.getUpstream(defaultBranch);
 
-  if (upstreamResult.exitCode != 0) {
+  if (upstream == null) {
     printError(
       'Error: Local branch "$defaultBranch" has no upstream configured.',
     );
@@ -218,7 +181,6 @@ Future<void> verifyAlignment(GitDir gitDir, String defaultBranch) async {
     );
   }
 
-  final upstream = (upstreamResult.stdout as String).trim();
   if (upstream != 'origin/$defaultBranch') {
     printError(
       'Error: Local branch "$defaultBranch" tracks "$upstream", not "origin/$defaultBranch".',

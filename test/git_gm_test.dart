@@ -1,6 +1,8 @@
 import 'dart:io';
+
 import 'package:git/git.dart';
 import 'package:io/io.dart';
+import 'package:kevmoo_scripts/src/git_extensions.dart';
 import 'package:kevmoo_scripts/src/git_gm.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
@@ -217,12 +219,4 @@ void main() {
       throwsA(isA<GitGmException>()),
     );
   });
-}
-
-extension on GitDir {
-  Future<void> configureTestIdentity() async {
-    await runCommand(['config', 'user.email', 'test@test.com']);
-    await runCommand(['config', 'user.name', 'Tester']);
-    await runCommand(['config', 'core.autocrlf', 'false']);
-  }
 }

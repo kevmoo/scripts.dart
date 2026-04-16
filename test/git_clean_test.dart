@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:git/git.dart';
 import 'package:kevmoo_scripts/src/git_clean.dart';
+import 'package:kevmoo_scripts/src/git_extensions.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -412,20 +413,5 @@ Future<void> _runClean(
 
   if (throwsMatcher == null) {
     expect(theExitCode, exitCode);
-  }
-}
-
-extension on GitDir {
-  // TODO: should add to pkg:git
-  Future<String> getShortSha() async {
-    final result = await runCommand(['rev-parse', 'HEAD']);
-    return (result.stdout as String).trim().substring(0, 7);
-  }
-
-  Future<void> configureTestIdentity() async {
-    await runCommand(['config', 'user.email', 'test@test.com']);
-    await runCommand(['config', 'user.name', 'Tester']);
-    // Configure user and autocrlf to prevent dirty working trees on Windows/CI
-    await runCommand(['config', 'core.autocrlf', 'false']);
   }
 }
