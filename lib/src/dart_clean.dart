@@ -52,48 +52,83 @@ Future<void> runDartClean(DartCleanOptions options) async {
   print('Checking ${pids.length} processes...');
 
   for (final p in pids) {
-    if (protectedPids.contains(p)) continue;
+    if (protectedPids.contains(p)) {
+      print(
+        darkGray.wrap(
+          '  Skipping $p since it is a protected process '
+          '(current script or child).',
+        ),
+      );
+      continue;
+    }
 
     try {
-      final witrOutput = await runProcess('witr', [
+      final result = await Process.run('witr', [
         '--pid',
         p.toString(),
         '--json',
       ]);
+
+      final witrOutput = result.stdout as String;
+
+      if (witrOutput.trim().isEmpty && result.exitCode != 0) {
+        print(
+          darkGray.wrap(
+            '  Skipping $p since witr failed with exit code '
+            '${result.exitCode} and no output.',
+          ),
+        );
+        continue;
+      }
+
       final data = WitrData.fromJson(
         jsonDecode(witrOutput) as Map<String, dynamic>,
       );
 
-      if (data.source.type == 'launchd') {
-        // Check if it's owned by a running VS Code instance
-        final vscodePidStr = data.process.env
-            ?.where((e) => e.startsWith('VSCODE_PID='))
-            .firstOrNull;
+      if (data.source.type != 'launchd') {
+        print(
+          darkGray.wrap(
+            '  Skipping $p since source type is not launchd '
+            '(${data.source.type}). '
+            '(${formatCmdline(data.process.cmdline)})',
+          ),
+        );
+        continue;
+      }
 
-        if (vscodePidStr != null) {
-          final vscodePid = int.tryParse(vscodePidStr.split('=')[1]);
-          if (vscodePid != null) {
-            if (await _isProcessRunning(vscodePid)) {
-              print(
-                darkGray.wrap(
-                  '  Skipping $p since VS Code (PID $vscodePid) is running. '
-                  '(${formatCmdline(data.process.cmdline)})',
-                ),
-              );
-              continue;
-            }
+      // Check if it's owned by a running VS Code instance
+      final vscodePidStr = data.process.env
+          ?.where((e) => e.startsWith('VSCODE_PID='))
+          .firstOrNull;
+
+      if (vscodePidStr != null) {
+        final vscodePid = int.tryParse(vscodePidStr.split('=')[1]);
+        if (vscodePid != null) {
+          if (await _isProcessRunning(vscodePid)) {
+            print(
+              darkGray.wrap(
+                '  Skipping $p since VS Code (PID $vscodePid) is running. '
+                '(${formatCmdline(data.process.cmdline)})',
+              ),
+            );
+            continue;
           }
         }
-
-        orphanedPids.add(p);
-        orphanedDetails[p] = data;
       }
-    } on ProcessException {
+
+      orphanedPids.add(p);
+      orphanedDetails[p] = data;
+    } on ProcessException catch (e, stackTrace) {
       // Process might have exited
+      print(
+        darkGray.wrap(
+          '  Skipping $p since process likely exited.\n$e\n$stackTrace',
+        ),
+      );
       continue;
-    } catch (e) {
+    } catch (e, stackTrace) {
       // Failed to parse witr output or something else
-      stderr.writeln('Warning: failed to check PID $p: $e');
+      stderr.writeln('Warning: failed to check PID $p: $e\n$stackTrace');
       continue;
     }
   }
