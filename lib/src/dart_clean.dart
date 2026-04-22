@@ -4,8 +4,7 @@ import 'dart:io';
 
 import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:io/ansi.dart';
-import 'package:meta/meta.dart';
-
+import 'process_utils.dart';
 import 'util.dart';
 import 'witr_types.dart';
 
@@ -48,17 +47,22 @@ Future<void> runDartClean(DartCleanOptions options) async {
 
   final orphanedPids = <int>[];
   final orphanedDetails = <int, WitrData>{};
+  final skipMessages = <SkipMessage>[];
 
   print('Checking ${pids.length} processes...');
 
   for (final p in pids) {
     if (protectedPids.contains(p)) {
-      print(
-        darkGray.wrap(
-          '  Skipping $p since it is a protected process '
-          '(current script or child).',
-        ),
-      );
+      final cmdline = formatCmdline(await getProcessCmdline(p));
+      final cwd = await getProcessCwd(p);
+      skipMessages.add((
+        pid: p,
+        cmdline: cmdline,
+        parentPid: null,
+        parentName: null,
+        cwd: cwd,
+        reason: 'since it is a protected process (current script or child).',
+      ));
       continue;
     }
 
@@ -72,12 +76,18 @@ Future<void> runDartClean(DartCleanOptions options) async {
       final witrOutput = result.stdout as String;
 
       if (witrOutput.trim().isEmpty && result.exitCode != 0) {
-        print(
-          darkGray.wrap(
-            '  Skipping $p since witr failed with exit code '
-            '${result.exitCode} and no output.',
-          ),
-        );
+        final cmdline = formatCmdline(await getProcessCmdline(p));
+        final cwd = await getProcessCwd(p);
+        skipMessages.add((
+          pid: p,
+          cmdline: cmdline,
+          parentPid: null,
+          parentName: null,
+          cwd: cwd,
+          reason:
+              'since witr failed with exit code ${result.exitCode} '
+              'and no output.',
+        ));
         continue;
       }
 
@@ -85,32 +95,54 @@ Future<void> runDartClean(DartCleanOptions options) async {
         jsonDecode(witrOutput) as Map<String, dynamic>,
       );
 
-      if (data.source.type != 'launchd') {
-        print(
-          darkGray.wrap(
-            '  Skipping $p since source type is not launchd '
-            '(${data.source.type}). '
-            '(${formatCmdline(data.process.cmdline)})',
-          ),
-        );
+      final ppid = data.process.ppid;
+      final parentName = ppid != null
+          ? await getProcessName(ppid)
+          : '<unknown>';
+
+      if (ppid != 1) {
+        final cwdEnv = data.process.env
+            ?.where((String e) => e.startsWith('PWD='))
+            .firstOrNull;
+        final cwd = cwdEnv != null
+            ? cwdEnv.substring(4)
+            : await getProcessCwd(p);
+        skipMessages.add((
+          pid: p,
+          cmdline: formatCmdline(data.process.cmdline),
+          parentPid: ppid,
+          parentName: parentName,
+          cwd: cwd,
+          reason: '',
+        ));
         continue;
       }
 
       // Check if it's owned by a running VS Code instance
       final vscodePidStr = data.process.env
-          ?.where((e) => e.startsWith('VSCODE_PID='))
+          ?.where((String e) => e.startsWith('VSCODE_PID='))
           .firstOrNull;
 
       if (vscodePidStr != null) {
         final vscodePid = int.tryParse(vscodePidStr.split('=')[1]);
         if (vscodePid != null) {
-          if (await _isProcessRunning(vscodePid)) {
-            print(
-              darkGray.wrap(
-                '  Skipping $p since VS Code (PID $vscodePid) is running. '
-                '(${formatCmdline(data.process.cmdline)})',
-              ),
-            );
+          if (await isProcessRunning(vscodePid)) {
+            final cwdEnv = data.process.env
+                ?.where((String e) => e.startsWith('PWD='))
+                .firstOrNull;
+            final cwd = cwdEnv != null
+                ? cwdEnv.substring(4)
+                : await getProcessCwd(p);
+            skipMessages.add((
+              pid: p,
+              cmdline: formatCmdline(data.process.cmdline),
+              parentPid: null,
+              parentName: null,
+              cwd: cwd,
+              reason:
+                  'parent is launchd, but since VS Code '
+                  '(PID $vscodePid) is running.',
+            ));
             continue;
           }
         }
@@ -118,19 +150,81 @@ Future<void> runDartClean(DartCleanOptions options) async {
 
       orphanedPids.add(p);
       orphanedDetails[p] = data;
-    } on ProcessException catch (e, stackTrace) {
-      // Process might have exited
-      print(
-        darkGray.wrap(
-          '  Skipping $p since process likely exited.\n$e\n$stackTrace',
-        ),
-      );
+    } on ProcessException {
+      final cmdline = formatCmdline(await getProcessCmdline(p));
+      final cwd = await getProcessCwd(p);
+      skipMessages.add((
+        pid: p,
+        cmdline: cmdline,
+        parentPid: null,
+        parentName: null,
+        cwd: cwd,
+        reason: 'since process likely exited.',
+      ));
       continue;
     } catch (e, stackTrace) {
       // Failed to parse witr output or something else
       stderr.writeln('Warning: failed to check PID $p: $e\n$stackTrace');
       continue;
     }
+  }
+
+  if (skipMessages.isNotEmpty) {
+    print('Skipping:');
+    var maxPidDigits = 0;
+    var maxCmdLen = 0;
+    var maxParentPidDigits = 0;
+
+    final groupedParents = <int, ({String name, List<SkipMessage> children})>{};
+    final otherSkips = <SkipMessage>[];
+
+    for (final m in skipMessages) {
+      final digits = m.pid.toString().length;
+      if (digits > maxPidDigits) maxPidDigits = digits;
+      final cmdLen = m.cmdline.length;
+      if (cmdLen > maxCmdLen) maxCmdLen = cmdLen;
+
+      if (m.parentPid != null && m.parentName != null) {
+        final pDigits = m.parentPid!.toString().length;
+        if (pDigits > maxParentPidDigits) maxParentPidDigits = pDigits;
+
+        final entry = groupedParents.putIfAbsent(
+          m.parentPid!,
+          () => (name: m.parentName!, children: []),
+        );
+        entry.children.add(m);
+      } else {
+        otherSkips.add(m);
+      }
+    }
+
+    for (final ppid in groupedParents.keys) {
+      final parent = groupedParents[ppid]!;
+      final pPidStr = ppid.toString().padLeft(maxParentPidDigits);
+      print('  Parent [$pPidStr] ${parent.name}');
+      for (final m in parent.children) {
+        final pidStr = m.pid.toString().padLeft(maxPidDigits);
+        final cmdStr = m.cmdline.padRight(maxCmdLen);
+        final cwdStr = (m.cwd != null && m.cwd != '/')
+            ? '  ${abbreviatePath(m.cwd!)}'
+            : '';
+        print('    [$pidStr]  $cmdStr$cwdStr');
+      }
+    }
+
+    if (otherSkips.isNotEmpty) {
+      print('  Other:');
+      for (final m in otherSkips) {
+        final pidStr = m.pid.toString().padLeft(maxPidDigits);
+        final cmdStr = m.cmdline.padRight(maxCmdLen);
+        final cwdStr = (m.cwd != null && m.cwd != '/')
+            ? '  ${abbreviatePath(m.cwd!)}'
+            : '';
+        print('    [$pidStr]  $cmdStr$cwdStr  ${m.reason}');
+      }
+    }
+
+    print('');
   }
 
   if (orphanedPids.isEmpty) {
@@ -147,97 +241,27 @@ Future<void> runDartClean(DartCleanOptions options) async {
   if (options.list) return;
 
   if (options.force) {
-    await _killPids(orphanedPids, force: true);
+    await killPids(orphanedPids, force: true);
   } else {
     print('');
     stdout.write('Kill all orphaned processes? (y/N) ');
     final response = stdin.readLineSync();
     if (response?.toLowerCase() == 'y') {
-      await _killPids(orphanedPids);
+      await killPids(orphanedPids);
     } else {
       print('Skipping kill.');
     }
   }
 }
 
-Future<bool> _isProcessRunning(int pid) async {
-  try {
-    await runProcess('ps', ['-p', pid.toString(), '-o', 'pid=']);
-    return true;
-  } on ProcessException {
-    return false;
-  }
-}
-
-Future<void> _killPids(List<int> pids, {bool force = false}) async {
-  var killedCount = 0;
-  var failedPids = <int>[];
-
-  for (final p in pids) {
-    print('Killing $p...');
-    if (!Process.killPid(p)) {
-      failedPids.add(p);
-    }
-  }
-
-  if (pids.length > failedPids.length) {
-    await Future<void>.delayed(const Duration(milliseconds: 500));
-  }
-
-  final stillRunning = <int>[];
-  for (final p in pids) {
-    if (failedPids.contains(p)) continue;
-    if (await _isProcessRunning(p)) {
-      stillRunning.add(p);
-    } else {
-      killedCount++;
-    }
-  }
-
-  if (stillRunning.isNotEmpty) {
-    if (!force) {
-      print('');
-      print(red.wrap('${stillRunning.length} processes failed to terminate.'));
-      stdout.write('Force kill (kill -9) remaining processes? (y/N) ');
-      final response = stdin.readLineSync();
-      force = response?.toLowerCase() == 'y';
-    }
-
-    if (force) {
-      for (final p in stillRunning) {
-        print('Force killing $p...');
-        Process.killPid(p, ProcessSignal.sigkill);
-      }
-
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-
-      for (final p in stillRunning) {
-        if (await _isProcessRunning(p)) {
-          failedPids.add(p);
-        } else {
-          killedCount++;
-        }
-      }
-    } else {
-      failedPids.addAll(stillRunning);
-    }
-  }
-
-  failedPids = failedPids.toSet().toList();
-
-  print('');
-  if (killedCount > 0) {
-    print(green.wrap('Successfully terminated $killedCount processes.'));
-  }
-  if (failedPids.isNotEmpty) {
-    print(
-      red.wrap(
-        'Failed to terminate ${failedPids.length} processes: '
-        '${failedPids.join(', ')}',
-      ),
-    );
-  }
-}
+typedef SkipMessage = ({
+  int pid,
+  String cmdline,
+  int? parentPid,
+  String? parentName,
+  String? cwd,
+  String reason,
+});
 
 @CliOptions()
 class DartCleanOptions {
@@ -264,41 +288,4 @@ class DartCleanException implements Exception {
 
   @override
   String toString() => message;
-}
-
-@visibleForTesting
-String formatCmdline(String cmdline) {
-  if (cmdline == '<unknown>') return cmdline;
-
-  final parts = cmdline.trim().split(RegExp(r'\s+'));
-  if (parts.isEmpty || parts.first.isEmpty) return cmdline;
-
-  final result = <String>[];
-
-  // First part is the executable. Get the base name.
-  final exePath = parts.first;
-  final exeName = exePath.split('/').last;
-  result.add(exeName);
-
-  var addedArgs = 0;
-  for (var i = 1; i < parts.length; i++) {
-    final part = parts[i];
-    if (part.isEmpty) continue;
-
-    // Skip dashed flags
-    if (part.startsWith('-')) continue;
-
-    final baseName = part.split('/').last;
-    if (part.endsWith('.dart') || part.endsWith('.snapshot')) {
-      result.add(baseName);
-      break; // Stop after the script
-    }
-
-    result.add(baseName);
-    addedArgs++;
-
-    if (addedArgs >= 3) break;
-  }
-
-  return result.join(' ');
 }
