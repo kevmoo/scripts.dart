@@ -151,7 +151,10 @@ class _ProcessNode {
   });
 
   void printNode(String indent) {
-    final reasonStr = reason.isNotEmpty ? ' ($reason)' : '';
+    var reasonStr = reason.isNotEmpty ? ' ($reason)' : '';
+    if (reason.contains('parent is launchd')) {
+      reasonStr = ' (${cyan.wrap(reason)})';
+    }
     final cwdStr = (cwd != null && cwd != '/')
         ? '  ${abbreviatePath(cwd!)}'
         : '';
@@ -173,6 +176,7 @@ class DartProcess {
   final String reason;
   final bool isDart;
   final List<({int pid, String command})> ancestry;
+  final int? ownerPid;
 
   DartProcess({
     required this.pid,
@@ -183,6 +187,7 @@ class DartProcess {
     required this.reason,
     this.isDart = true,
     required this.ancestry,
+    this.ownerPid,
   });
 }
 
@@ -249,6 +254,7 @@ Future<DartProcess?> _checkProcess(int p, Set<int> protectedPids) async {
     final parentName = ppid != null ? await getProcessName(ppid) : '<unknown>';
 
     var reason = '';
+    int? ownerPid;
     if (ppid != 1) {
       reason = '';
     } else {
@@ -260,8 +266,10 @@ Future<DartProcess?> _checkProcess(int p, Set<int> protectedPids) async {
         final vscodePid = int.tryParse(vscodePidStr.split('=')[1]);
         if (vscodePid != null) {
           if (await isProcessRunning(vscodePid)) {
-            reason = 'parent is launchd, but since VS Code '
+            reason =
+                'parent is launchd, but since VS Code '
                 '(PID $vscodePid) is running.';
+            ownerPid = vscodePid;
           }
         }
       }
@@ -284,6 +292,7 @@ Future<DartProcess?> _checkProcess(int p, Set<int> protectedPids) async {
       cwd: cwd,
       reason: reason,
       ancestry: [], // Ancestry will be fetched lazily in _buildTree
+      ownerPid: ownerPid,
     );
   } on ProcessException {
     final cmdline = formatCmdline(await getProcessCmdline(p));
@@ -379,6 +388,16 @@ Future<List<_ProcessNode>> _buildTree(List<DartProcess> processes) async {
     final pid = p.pid;
     final ppid = p.ppid;
     final node = nodes[pid]!;
+
+    if (p.ownerPid != null) {
+      final ownerNode = nodes[p.ownerPid];
+      if (ownerNode != null) {
+        if (!ownerNode.children.contains(node)) {
+          ownerNode.children.add(node);
+        }
+        continue;
+      }
+    }
 
     if (ppid == null || ppid == 1) {
       if (!roots.contains(node)) {
