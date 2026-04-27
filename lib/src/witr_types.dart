@@ -38,11 +38,13 @@ class SourceData {
 class ProcessData {
   final String cmdline;
   final List<String>? env;
+  final int? ppid;
 
-  ProcessData({required this.cmdline, this.env});
+  ProcessData({required this.cmdline, this.env, this.ppid});
 
   factory ProcessData.fromJson(Map<String, dynamic> json) => ProcessData(
     cmdline: json['Cmdline'] as String? ?? '<unknown>',
     env: (json['Env'] as List<dynamic>? ?? []).map((e) => e as String).toList(),
+    ppid: json['PPID'] as int?,
   );
 }
