@@ -94,15 +94,6 @@ Future<void> runDartClean(DartCleanOptions options) async {
   }
 }
 
-typedef SkipMessage = ({
-  int pid,
-  String cmdline,
-  int? parentPid,
-  String? parentName,
-  String? cwd,
-  String reason,
-});
-
 @CliOptions()
 class DartCleanOptions {
   @CliOption(abbr: 'f', help: 'Force kill without confirmation.')
@@ -361,15 +352,17 @@ Future<List<_ProcessNode>> _buildTree(List<DartProcess> processes) async {
 
             return (pid: pid, ancestry: ancestry);
           } catch (e) {
-            print('Failed to parse ancestry for PID $pid: $e');
-            print('Output was: ${treeResult.stdout}');
+            stderr
+              ..writeln('Failed to parse ancestry for PID $pid: $e')
+              ..writeln('Output was: ${treeResult.stdout}');
           }
         } else {
-          print(
-            'witr --tree failed for PID $pid with exit code '
-            '${treeResult.exitCode}',
-          );
-          print('Stderr: ${treeResult.stderr}');
+          stderr
+            ..writeln(
+              'witr --tree failed for PID $pid with exit code '
+              '${treeResult.exitCode}',
+            )
+            ..writeln('Stderr: ${treeResult.stderr}');
         }
         return null;
       })
