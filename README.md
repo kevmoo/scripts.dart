@@ -5,6 +5,7 @@ This repository contains various scripts and utilities for development.
 | Activated As | Script | Description |
 |---|---|---|
 | [`dart-clean`](#dart-clean) | `bin/dart_clean.dart` | Find and kill orphaned Dart processes. |
+| [`gerrit-view`](#gerrit-view) | `bin/gerrit_view.dart` | Complete overview of your active work on Gerrit. |
 | [`git-gm`](#git-gm) | `bin/git_gm.dart` | Safely switch to and update the default branch. |
 | [`git-goma`](#git-goma) | `bin/git_clean.dart` | Clean up local git branches that have been merged or deleted on the remote. |
 | [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
@@ -28,6 +29,17 @@ dart-clean
 -f, --[no-]force    Force kill without confirmation.
 -l, --[no-]list     Only list orphaned processes; do not kill.
 -h, --help          Print this usage information.
+```
+
+### `gerrit-view`
+Complete overview of your active work on Gerrit.
+
+**Usage:**
+```shell
+gerrit-view [options]
+
+-p, --path-to-gerrit-repo    Path to a local gerrit repo. Defaults to CWD.
+-h, --help                   Print this usage information.
 ```
 
 ### `git-gm`

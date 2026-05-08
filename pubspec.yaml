@@ -28,6 +28,7 @@ dev_dependencies:
 
 executables:
   dart-clean: dart_clean
+  gerrit-view: gerrit_view
   git-gm: git_gm
   git-goma: git_clean
   lint-cleanup: lint_cleanup
