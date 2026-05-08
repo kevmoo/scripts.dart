@@ -29,42 +29,48 @@ Future<void> gitGm({String? workingDirectory}) async {
   // 1. Determine Default Branch
   final defaultBranch = await getDefaultBranch(gitDir);
 
-  final boldBranch = wrapWith(defaultBranch, [styleBold]) ?? defaultBranch;
-  final defaultBranchMsg = 'Default branch: $boldBranch';
-  print(wrapWith(defaultBranchMsg, [styleDim]) ?? defaultBranchMsg);
+  final boldBranch = styleBold.wrap(defaultBranch) ?? defaultBranch;
+  print(
+    styleDim.wrap('Default branch: $boldBranch') ??
+        'Default branch: $boldBranch',
+  );
 
   // 2. Verify Alignment
   await verifyAlignment(gitDir, defaultBranch);
 
   // 3. Checkout default branch
-  final checkoutMsg = 'Checking out $defaultBranch...';
-  print(wrapWith(checkoutMsg, [styleDim]) ?? checkoutMsg);
-  final checkoutProcess = await Process.start(
-    'git',
+  await _runGit(
+    gitDir,
     ['checkout', defaultBranch],
-    workingDirectory: gitDir.path,
-    mode: ProcessStartMode.inheritStdio,
+    statusMessage: 'Checking out $defaultBranch...',
+    errorMessage: 'Failed to checkout branch $defaultBranch',
   );
-  final checkoutExitCode = await checkoutProcess.exitCode;
-  if (checkoutExitCode != 0) {
-    throw GitGmException(
-      'Failed to checkout branch $defaultBranch',
-      exitCode: checkoutExitCode,
-    );
-  }
 
   // 4. Update with pull --ff-only
-  const pullMsg = 'Pulling updates...';
-  print(wrapWith(pullMsg, [styleDim]) ?? pullMsg);
-  final pullProcess = await Process.start(
-    'git',
+  await _runGit(
+    gitDir,
     ['pull', '--ff-only'],
+    statusMessage: 'Pulling updates...',
+    errorMessage: 'Failed to pull updates',
+  );
+}
+
+Future<void> _runGit(
+  GitDir gitDir,
+  List<String> args, {
+  required String statusMessage,
+  required String errorMessage,
+}) async {
+  print(styleDim.wrap(statusMessage) ?? statusMessage);
+  final process = await Process.start(
+    'git',
+    args,
     workingDirectory: gitDir.path,
     mode: ProcessStartMode.inheritStdio,
   );
-  final pullExitCode = await pullProcess.exitCode;
-  if (pullExitCode != 0) {
-    throw GitGmException('Failed to pull updates', exitCode: pullExitCode);
+  final exitCode = await process.exitCode;
+  if (exitCode != 0) {
+    throw GitGmException(errorMessage, exitCode: exitCode);
   }
 }
 
