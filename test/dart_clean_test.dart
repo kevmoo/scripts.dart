@@ -1,4 +1,4 @@
-import 'package:kevmoo_scripts/src/dart_clean.dart';
+import 'package:kevmoo_scripts/src/process_utils.dart';
 import 'package:test/test.dart';
 
 void main() {
