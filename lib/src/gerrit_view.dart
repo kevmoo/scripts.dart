@@ -458,7 +458,6 @@ $urlLine    $conflatedLabel
       print('');
     }
 
-    // Mismatched Change-Ids
     for (final entry in mismatchedChangeIdBranches.entries) {
       final branch = entry.key;
       final (remote, details) = entry.value;
@@ -468,6 +467,7 @@ $urlLine    $conflatedLabel
     URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
     Local ID:   ${details.changeId}
     Remote ID:  ${remote.changeId}
+    To Push:    git commit --amend (set Change-Id to: ${remote.changeId}) && git cl upload
 ''');
     }
   }
