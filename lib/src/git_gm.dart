@@ -53,6 +53,11 @@ Future<void> gitGm({String? workingDirectory}) async {
     statusMessage: 'Pulling updates...',
     errorMessage: 'Failed to pull updates',
   );
+
+  print(
+    green.wrap('Successfully updated $defaultBranch.') ??
+        'Successfully updated $defaultBranch.',
+  );
 }
 
 Future<void> _runGit(

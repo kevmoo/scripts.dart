@@ -36,12 +36,20 @@ void main() {
     // Keep this as a full integration test
     final defaultBranch = await getDefaultBranch(localGitDir);
 
-    await expectLater(() async {
-      final exitCode = await wrappedForTesting(
-        () => gitGm(workingDirectory: localPath),
-      );
-      expect(exitCode, 0);
-    }, prints(contains('Default branch: $defaultBranch')));
+    await expectLater(
+      () async {
+        final exitCode = await wrappedForTesting(
+          () => gitGm(workingDirectory: localPath),
+        );
+        expect(exitCode, 0);
+      },
+      prints(
+        allOf(
+          contains('Default branch: $defaultBranch'),
+          contains('Successfully updated $defaultBranch.'),
+        ),
+      ),
+    );
   });
 
   test('getDefaultBranch fails when origin/HEAD is missing', () async {
