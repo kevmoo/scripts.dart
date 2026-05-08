@@ -170,6 +170,54 @@ Future<void> runGerritView({String? gerritRepo}) async {
     }
   }
 
+  // 4b. Detect default branch
+  final defaultBranch = await _getDefaultBranch(actualRepoRoot);
+
+  // 4c. Batch query closed/abandoned CL statuses
+  final closedIssues = localBranchIssues.values
+      .where((issue) => !remoteCLs.containsKey(issue))
+      .toSet()
+      .toList();
+  final closedStatuses = await _fetchRemoteCLStatuses(
+    actualRepoRoot,
+    closedIssues,
+  );
+
+  // 4d. Concurrent batch shadow fetch
+  final fetchRefs = <String>[];
+  for (final branch in localBranchIssues.keys) {
+    final issue = localBranchIssues[branch]!;
+    final details = branchDetails[branch];
+    final remote = remoteCLs[issue];
+
+    if (details != null &&
+        remote != null &&
+        details.sha != remote.currentRevision) {
+      final lastTwo = (remote.number % 100).toString().padLeft(2, '0');
+      final ref =
+          'refs/changes/$lastTwo/${remote.number}/${remote.currentRevisionNumber}';
+      fetchRefs.add(ref);
+    }
+  }
+
+  if (fetchRefs.isNotEmpty) {
+    print(styleDim.wrap('Fetching remote changes from Gerrit...')!);
+    final fetchResult = await Process.start(
+      'git',
+      ['fetch', 'origin', ...fetchRefs],
+      workingDirectory: actualRepoRoot,
+      mode: ProcessStartMode.inheritStdio,
+    );
+    final exitCode = await fetchResult.exitCode;
+    if (exitCode != 0) {
+      print(
+        yellow.wrap(
+          'Warning: Batch fetch failed. Alignment checks will use local cache.',
+        )!,
+      );
+    }
+  }
+
   // 5. Grouping of branches
   final alignedBranches = <String, (RemoteCL, CommitDetails, String)>{};
   final closedClBranches = <String, (int, CommitDetails, String)>{};
@@ -195,8 +243,7 @@ Future<void> runGerritView({String? gerritRepo}) async {
 
     final remote = remoteCLs[issue];
     if (remote == null) {
-      // Query status of this closed/abandoned remote CL
-      final clDetail = await _fetchRemoteCLStatus(actualRepoRoot, issue);
+      final clDetail = closedStatuses[issue] ?? 'UNKNOWN';
       closedClBranches[branch] = (issue, details, clDetail);
       continue;
     }
@@ -373,23 +420,28 @@ $urlLine    $conflatedLabel
       final branch = entry.key;
       final (issue, details, status) = entry.value;
 
-      final safety = await _checkCleanupSafety(actualRepoRoot, branch);
+      final safety = await _checkCleanupSafety(
+        actualRepoRoot,
+        branch,
+        defaultBranch,
+      );
 
       final String safetyStatus;
       final String actionText;
 
       if (safety.isSafe) {
         safetyStatus = green.wrap(
-          '✅ Safe to delete (All changes exist in origin/main)',
+          '✅ Safe to delete (All changes exist in origin/$defaultBranch)',
         )!;
         actionText = '    Run:        git branch -D $branch';
       } else {
         final count = safety.unmergedShas.length;
         safetyStatus = red.wrap(
-          '⚠️  Warning: Has $count unmerged commit(s) not in origin/main!',
+          '⚠️  Warning: Has $count unmerged commit(s) not in '
+          'origin/$defaultBranch!',
         )!;
         actionText =
-            '    Inspect:    git diff origin/main..$branch\n'
+            '    Inspect:    git diff origin/$defaultBranch..$branch\n'
             '    Run:        git branch -D $branch (Force discard)\n'
             '    Archive:    git config --unset branch.$branch.gerritissue';
       }
@@ -446,20 +498,38 @@ Future<CommitDetails?> _fetchCommitDetails(
   );
 }
 
-Future<String> _fetchRemoteCLStatus(String repoPath, int clNumber) async {
+Future<Map<int, String>> _fetchRemoteCLStatuses(
+  String repoPath,
+  List<int> clNumbers,
+) async {
+  final statuses = <int, String>{};
+  if (clNumbers.isEmpty) return statuses;
+
+  final query = clNumbers.map((n) => 'change:$n').join('+OR+');
   final result = await Process.run('gob-curl', [
-    'https://dart-review.googlesource.com/changes/$clNumber/detail',
+    'https://dart-review.googlesource.com/changes/?q=$query',
   ], workingDirectory: repoPath);
-  if (result.exitCode != 0) return 'UNKNOWN (Query failed)';
+
+  if (result.exitCode != 0) return statuses;
 
   final rawJson = (result.stdout as String).trim();
   final cleanedJson = rawJson.replaceFirst(")]}'", '').trim();
+
   try {
-    final map = jsonDecode(cleanedJson) as Map<String, dynamic>;
-    return map['status'] as String? ?? 'UNKNOWN';
+    final list = jsonDecode(cleanedJson) as List<dynamic>;
+    for (final item in list) {
+      if (item case {
+        '_number': final int number,
+        'status': final String status,
+      }) {
+        statuses[number] = status;
+      }
+    }
   } catch (_) {
-    return 'UNKNOWN';
+    // Fallback
   }
+
+  return statuses;
 }
 
 Future<String> _calculateAlignment(
@@ -472,26 +542,17 @@ Future<String> _calculateAlignment(
     return green.wrap('✅ IN SYNC (Commit perfectly matches Gerrit latest)')!;
   }
 
-  // Perform shadow fetch of remote patchset commit
-  final lastTwo = (remote.number % 100).toString().padLeft(2, '0');
-  final ref =
-      'refs/changes/$lastTwo/${remote.number}/${remote.currentRevisionNumber}';
-
-  final fetchResult = await Process.run('git', [
-    'fetch',
-    'origin',
-    ref,
-  ], workingDirectory: repoPath);
-
-  if (fetchResult.exitCode != 0) {
-    return yellow.wrap('⚠️ DIVERGED (Commit differs; shadow fetch failed)')!;
-  }
-
-  // Read remote tree hash
+  // Check if remote commit exists locally after batch fetch
   final remoteTreeResult = await Process.run('git', [
     'rev-parse',
-    'FETCH_HEAD^{tree}',
+    '--verify',
+    '--quiet',
+    '${remote.currentRevision}^{tree}',
   ], workingDirectory: repoPath);
+
+  if (remoteTreeResult.exitCode != 0) {
+    return yellow.wrap('⚠️ DIVERGED (Commit differs; shadow fetch failed)')!;
+  }
 
   // Read local tree hash
   final localTreeResult = await Process.run('git', [
@@ -521,10 +582,11 @@ typedef CleanupSafety = ({bool isSafe, List<String> unmergedShas});
 Future<CleanupSafety> _checkCleanupSafety(
   String repoPath,
   String branchName,
+  String defaultBranch,
 ) async {
   final result = await Process.run('git', [
     'cherry',
-    'origin/main',
+    'origin/$defaultBranch',
     branchName,
   ], workingDirectory: repoPath);
 
@@ -546,4 +608,35 @@ Future<CleanupSafety> _checkCleanupSafety(
   }
 
   return (isSafe: unmerged.isEmpty, unmergedShas: unmerged);
+}
+
+Future<String> _getDefaultBranch(String repoPath) async {
+  final result = await Process.run('git', [
+    'rev-parse',
+    '--abbrev-ref',
+    'origin/HEAD',
+  ], workingDirectory: repoPath);
+
+  if (result.exitCode == 0) {
+    final output = (result.stdout as String).trim();
+    if (output.startsWith('origin/')) {
+      return output.substring('origin/'.length);
+    }
+    return output;
+  }
+
+  // Sniff fallback
+  for (final branch in ['main', 'master']) {
+    final check = await Process.run('git', [
+      'show-ref',
+      '--verify',
+      '--quiet',
+      'refs/remotes/origin/$branch',
+    ], workingDirectory: repoPath);
+    if (check.exitCode == 0) {
+      return branch;
+    }
+  }
+
+  return 'main';
 }
