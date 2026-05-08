@@ -35,6 +35,24 @@ enum AlignmentState { inSync, contentIdentical, diverged }
 
 typedef AlignmentResult = ({AlignmentState state, String display});
 
+enum ClStatus {
+  newCl('NEW'),
+  merged('MERGED'),
+  abandoned('ABANDONED'),
+  unknown('UNKNOWN');
+
+  final String value;
+  const ClStatus(this.value);
+
+  static ClStatus parse(String raw) {
+    final normalized = raw.toUpperCase();
+    return ClStatus.values.firstWhere(
+      (s) => s.value == normalized,
+      orElse: () => ClStatus.unknown,
+    );
+  }
+}
+
 Future<void> runGerritView({String? gerritRepo}) async {
   final repoPath = gerritRepo == null
       ? Directory.current.absolute.path
@@ -294,7 +312,7 @@ Future<void> runGerritView({String? gerritRepo}) async {
   // 5. Grouping of branches
   final alignedBranches =
       <String, (RemoteCL, CommitDetails, AlignmentResult)>{};
-  final closedClBranches = <String, (int, CommitDetails, String)>{};
+  final closedClBranches = <String, (int, CommitDetails, ClStatus)>{};
   final conflatedBranches = <int, List<String>>{};
   final mismatchedChangeIdBranches = <String, (RemoteCL, CommitDetails)>{};
 
@@ -317,7 +335,7 @@ Future<void> runGerritView({String? gerritRepo}) async {
 
     final remote = remoteCLs[issue];
     if (remote == null) {
-      final clDetail = closedStatuses[issue] ?? 'UNKNOWN';
+      final clDetail = closedStatuses[issue] ?? ClStatus.unknown;
       closedClBranches[branch] = (issue, details, clDetail);
       continue;
     }
@@ -523,10 +541,11 @@ $urlLine    $conflatedLabel
             '    Archive:    git config --unset branch.$branch.gerritissue';
       }
 
-      final styledStatus = switch (status.toUpperCase()) {
-        'MERGED' => green.wrap(status) ?? status,
-        'ABANDONED' => yellow.wrap(status) ?? status,
-        _ => styleBold.wrap(status) ?? status,
+      final styledStatus = switch (status) {
+        ClStatus.merged => green.wrap(status.value)!,
+        ClStatus.abandoned => yellow.wrap(status.value)!,
+        ClStatus.newCl => styleBold.wrap(status.value)!,
+        ClStatus.unknown => styleDim.wrap(status.value)!,
       };
 
       print('''
@@ -580,12 +599,12 @@ CommitDetails? _fetchCommitDetails(String repoPath, String branchName) {
   return null;
 }
 
-Map<int, String> _fetchRemoteCLStatuses(
+Map<int, ClStatus> _fetchRemoteCLStatuses(
   String repoPath,
   List<int> clNumbers,
   String gerritHost,
 ) {
-  final statuses = <int, String>{};
+  final statuses = <int, ClStatus>{};
   if (clNumbers.isEmpty) return statuses;
 
   final query = clNumbers.map((n) => 'change:$n').join('+OR+');
@@ -605,7 +624,7 @@ Map<int, String> _fetchRemoteCLStatuses(
         '_number': final int number,
         'status': final String status,
       }) {
-        statuses[number] = status;
+        statuses[number] = ClStatus.parse(status);
       }
     }
   } catch (_) {
