@@ -60,7 +60,38 @@ Future<void> runGerritView({String? gerritRepo}) async {
       gerritHostResult.exitCode == 0 &&
       (gerritHostResult.stdout as String).trim().isNotEmpty;
 
-  if (!isGerrit) {
+  String? gerritHost;
+
+  // Try resolving from branch gerritserver config first
+  final serverResult = await Process.run('git', [
+    'config',
+    '--get-regexp',
+    r'branch\..*\.gerritserver',
+  ], workingDirectory: actualRepoRoot);
+  if (serverResult.exitCode == 0) {
+    final lines = (serverResult.stdout as String).trim().split('\n');
+    for (final line in lines) {
+      if (line.isEmpty) continue;
+      final lastSpace = line.lastIndexOf(' ');
+      if (lastSpace != -1) {
+        final url = line.substring(lastSpace + 1).trim();
+        final uri = Uri.tryParse(url);
+        if (uri != null && uri.host.isNotEmpty) {
+          gerritHost = uri.host;
+          break;
+        }
+      }
+    }
+  }
+
+  if (gerritHost == null && isGerrit) {
+    final val = (gerritHostResult.stdout as String).trim();
+    if (val.toLowerCase() != 'true') {
+      gerritHost = val;
+    }
+  }
+
+  if (gerritHost == null) {
     final remoteUrlResult = await Process.run('git', [
       'config',
       '--get',
@@ -71,6 +102,10 @@ Future<void> runGerritView({String? gerritRepo}) async {
       if (remoteUrl.contains('googlesource.com') ||
           remoteUrl.contains('review.chrome')) {
         isGerrit = true;
+        final uri = Uri.tryParse(remoteUrl);
+        if (uri != null && uri.host.isNotEmpty) {
+          gerritHost = uri.host;
+        }
       }
     }
   }
@@ -84,10 +119,19 @@ Future<void> runGerritView({String? gerritRepo}) async {
     );
   }
 
+  gerritHost ??= 'dart-review.googlesource.com';
+  if (gerritHost.endsWith('.googlesource.com') &&
+      !gerritHost.endsWith('-review.googlesource.com')) {
+    gerritHost = gerritHost.replaceFirst(
+      '.googlesource.com',
+      '-review.googlesource.com',
+    );
+  }
+
   // 2. Query open CLs owned by self
   print(styleDim.wrap('Querying active CLs from Gerrit...')!);
   final gobResult = await Process.run('gob-curl', [
-    'https://dart-review.googlesource.com/changes/?q=owner:self+status:open',
+    'https://$gerritHost/changes/?q=owner:self+status:open&o=CURRENT_REVISION',
   ], workingDirectory: actualRepoRoot);
 
   if (gobResult.exitCode != 0) {
@@ -118,10 +162,13 @@ Future<void> runGerritView({String? gerritRepo}) async {
       'change_id': final String changeId,
       'subject': final String subject,
       'status': final String status,
+      'current_revision': final String currentRevision,
+      'revisions': final Map<String, dynamic> revisions,
     }) {
-      final currentRevision = item['current_revision'] as String? ?? '';
       final currentRevisionNumber =
-          item['current_revision_number'] as int? ?? 1;
+          (revisions[currentRevision] as Map<String, dynamic>?)?['_number']
+              as int? ??
+          1;
 
       remoteCLs[number] = (
         number: number,
@@ -146,10 +193,10 @@ Future<void> runGerritView({String? gerritRepo}) async {
     final lines = (configResult.stdout as String).trim().split('\n');
     for (final line in lines) {
       if (line.isEmpty) continue;
-      final parts = line.split(' ');
-      if (parts.length >= 2) {
-        final key = parts[0];
-        final issueVal = int.tryParse(parts[1]);
+      final lastSpace = line.lastIndexOf(' ');
+      if (lastSpace != -1) {
+        final key = line.substring(0, lastSpace);
+        final issueVal = int.tryParse(line.substring(lastSpace + 1));
         if (issueVal != null) {
           final match = RegExp(r'^branch\.(.*)\.gerritissue$').firstMatch(key);
           if (match != null) {
@@ -474,28 +521,30 @@ Future<CommitDetails?> _fetchCommitDetails(
   if (!output.startsWith('COMMIT_METADATA_START\n')) return null;
 
   final lines = output.substring('COMMIT_METADATA_START\n'.length).split('\n');
-  if (lines.length < 2) return null;
+  if (lines case [final String rawSha, final String rawRelativeDate, ...]) {
+    final sha = rawSha.trim();
+    final relativeDate = rawRelativeDate.trim();
+    final rawBody = lines.sublist(2).join('\n');
 
-  final sha = lines[0].trim();
-  final relativeDate = lines[1].trim();
-  final rawBody = lines.sublist(2).join('\n');
+    var changeId = '';
+    final changeIdMatch = RegExp(
+      r'^Change-Id:\s+(I[a-fA-F0-9]+)\s*$',
+      multiLine: true,
+      caseSensitive: false,
+    ).firstMatch(rawBody);
+    if (changeIdMatch != null) {
+      changeId = changeIdMatch.group(1)!;
+    }
 
-  var changeId = '';
-  final changeIdMatch = RegExp(
-    r'^Change-Id:\s+(I[a-fA-F0-9]+)\s*$',
-    multiLine: true,
-    caseSensitive: false,
-  ).firstMatch(rawBody);
-  if (changeIdMatch != null) {
-    changeId = changeIdMatch.group(1)!;
+    return (
+      sha: sha,
+      relativeDate: relativeDate,
+      changeId: changeId,
+      rawBody: rawBody,
+    );
   }
 
-  return (
-    sha: sha,
-    relativeDate: relativeDate,
-    changeId: changeId,
-    rawBody: rawBody,
-  );
+  return null;
 }
 
 Future<Map<int, String>> _fetchRemoteCLStatuses(
