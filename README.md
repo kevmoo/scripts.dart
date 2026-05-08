@@ -1,4 +1,11 @@
 This repository contains various scripts and utilities for development.
+I don't plan on publishing this as a package (at least not any time soon).
+
+To activate these scripts globally, run:
+
+```shell
+dart pub global activate --source git https://github.com/kevmoo/scripts.dart
+```
 
 ## Summary
 
