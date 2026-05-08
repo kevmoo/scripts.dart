@@ -518,8 +518,14 @@ $urlLine    $conflatedLabel
             '    Archive:    git config --unset branch.$branch.gerritissue';
       }
 
+      final styledStatus = switch (status.toUpperCase()) {
+        'MERGED' => green.wrap(status) ?? status,
+        'ABANDONED' => yellow.wrap(status) ?? status,
+        _ => styleBold.wrap(status) ?? status,
+      };
+
       print('''
-  • ${styleBold.wrap(branch)} ➔ CL $issue [${styleBold.wrap(status)}]
+  • ${styleBold.wrap(branch)} ➔ CL $issue [$styledStatus]
     URL:        https://$gerritHost/c/$gerritProject/+/$issue
     Last Touch: ${details.relativeDate}
     Safety:     $safetyStatus
