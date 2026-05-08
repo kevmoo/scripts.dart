@@ -476,7 +476,14 @@ $urlLine    $conflatedLabel
       final String safetyStatus;
       final String actionText;
 
-      if (safety.isSafe) {
+      if (branch == defaultBranch) {
+        safetyStatus = yellow.wrap(
+          '⚠️  Protected Default Branch (Do NOT delete this branch!)',
+        )!;
+        actionText =
+            '    Archive:    git config --unset '
+            'branch.$branch.gerritissue';
+      } else if (safety.isSafe) {
         safetyStatus = green.wrap(
           '✅ Safe to delete (All changes exist in origin/$defaultBranch)',
         )!;
