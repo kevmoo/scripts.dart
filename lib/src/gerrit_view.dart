@@ -31,6 +31,10 @@ typedef RemoteCL = ({
   int currentRevisionNumber,
 });
 
+enum AlignmentState { inSync, contentIdentical, diverged }
+
+typedef AlignmentResult = ({AlignmentState state, String display});
+
 Future<void> runGerritView({String? gerritRepo}) async {
   final repoPath = gerritRepo == null
       ? Directory.current.absolute.path
@@ -288,7 +292,8 @@ Future<void> runGerritView({String? gerritRepo}) async {
   }
 
   // 5. Grouping of branches
-  final alignedBranches = <String, (RemoteCL, CommitDetails, String)>{};
+  final alignedBranches =
+      <String, (RemoteCL, CommitDetails, AlignmentResult)>{};
   final closedClBranches = <String, (int, CommitDetails, String)>{};
   final conflatedBranches = <int, List<String>>{};
   final mismatchedChangeIdBranches = <String, (RemoteCL, CommitDetails)>{};
@@ -366,7 +371,7 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
       print('''
   • ${styleBold.wrap(branch)} ➔ CL ${remote.number} (${styleDim.wrap(remote.subject)})
     URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
-    Alignment:  $alignment
+    Alignment:  ${alignment.display}
     Last Touch: ${details.relativeDate}
 ''');
     }
@@ -439,10 +444,10 @@ $urlLine    $conflatedLabel
             details,
             remote,
           );
-          if (alignment.contains('IN SYNC')) {
+          if (alignment.state == AlignmentState.inSync) {
             shaStatus = '✅ SYNCED';
             treeStatus = '✅ IDENTICAL';
-          } else if (alignment.contains('CONTENT IDENTICAL')) {
+          } else if (alignment.state == AlignmentState.contentIdentical) {
             shaStatus = '❌ OUT OF SYNC';
             treeStatus = '✅ IDENTICAL';
           }
@@ -610,14 +615,19 @@ Map<int, String> _fetchRemoteCLStatuses(
   return statuses;
 }
 
-String _calculateAlignment(
+AlignmentResult _calculateAlignment(
   String repoPath,
   String branchName,
   CommitDetails local,
   RemoteCL remote,
 ) {
   if (local.sha == remote.currentRevision) {
-    return green.wrap('✅ IN SYNC (Commit perfectly matches Gerrit latest)')!;
+    return (
+      state: AlignmentState.inSync,
+      display: green.wrap(
+        '✅ IN SYNC (Commit perfectly matches Gerrit latest)',
+      )!,
+    );
   }
 
   // Check if remote commit exists locally after batch fetch
@@ -629,7 +639,12 @@ String _calculateAlignment(
   ], workingDirectory: repoPath);
 
   if (remoteTreeResult.exitCode != 0) {
-    return yellow.wrap('⚠️ DIVERGED (Commit differs; shadow fetch failed)')!;
+    return (
+      state: AlignmentState.diverged,
+      display: yellow.wrap(
+        '⚠️ DIVERGED (Commit differs; shadow fetch failed)',
+      )!,
+    );
   }
 
   // Read local tree hash
@@ -643,16 +658,22 @@ String _calculateAlignment(
     final localTree = (localTreeResult.stdout as String).trim();
 
     if (remoteTree == localTree) {
-      return green.wrap(
-        '✅ CONTENT IDENTICAL (Commits differ, but file content matches '
-        'Gerrit)',
-      )!;
+      return (
+        state: AlignmentState.contentIdentical,
+        display: green.wrap(
+          '✅ CONTENT IDENTICAL (Commits differ, but file content matches '
+          'Gerrit)',
+        )!,
+      );
     }
   }
 
-  return yellow.wrap(
-    '⚠️ DIVERGED (Commits and file contents both differ from Gerrit)',
-  )!;
+  return (
+    state: AlignmentState.diverged,
+    display: yellow.wrap(
+      '⚠️ DIVERGED (Commits and file contents both differ from Gerrit)',
+    )!,
+  );
 }
 
 typedef CleanupSafety = ({bool isSafe, List<String> unmergedShas});

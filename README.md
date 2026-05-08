@@ -34,6 +34,9 @@ dart-clean
 ### `gerrit-view`
 Complete overview of your active work on Gerrit.
 
+**Requirements:**
+This tool requires the `gob-curl` command-line utility (e.g. `/usr/local/bin/gob-curl`) to be installed and authenticated in your `PATH`.
+
 **Usage:**
 ```shell
 gerrit-view [options]
