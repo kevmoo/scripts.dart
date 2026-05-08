@@ -37,7 +37,7 @@ Future<void> runGerritView({String? gerritRepo}) async {
       : Directory(gerritRepo).absolute.path;
 
   // 1. Validate git repository
-  final checkResult = await Process.run('git', [
+  final checkResult = Process.runSync('git', [
     'rev-parse',
     '--show-toplevel',
   ], workingDirectory: repoPath);
@@ -51,7 +51,7 @@ Future<void> runGerritView({String? gerritRepo}) async {
   final actualRepoRoot = (checkResult.stdout as String).trim();
 
   // 1b. Validate it is a Gerrit repository
-  final gerritHostResult = await Process.run('git', [
+  final gerritHostResult = Process.runSync('git', [
     'config',
     '--get',
     'gerrit.host',
@@ -61,9 +61,23 @@ Future<void> runGerritView({String? gerritRepo}) async {
       (gerritHostResult.stdout as String).trim().isNotEmpty;
 
   String? gerritHost;
+  if (isGerrit) {
+    gerritHost = (gerritHostResult.stdout as String).trim();
+  }
+
+  String? gerritProject;
+  final projectResult = Process.runSync('git', [
+    'config',
+    '--get',
+    'gerrit.project',
+  ], workingDirectory: actualRepoRoot);
+  if (projectResult.exitCode == 0 &&
+      (projectResult.stdout as String).trim().isNotEmpty) {
+    gerritProject = (projectResult.stdout as String).trim();
+  }
 
   // Try resolving from branch gerritserver config first
-  final serverResult = await Process.run('git', [
+  final serverResult = Process.runSync('git', [
     'config',
     '--get-regexp',
     r'branch\..*\.gerritserver',
@@ -91,8 +105,8 @@ Future<void> runGerritView({String? gerritRepo}) async {
     }
   }
 
-  if (gerritHost == null) {
-    final remoteUrlResult = await Process.run('git', [
+  if (gerritHost == null || gerritProject == null) {
+    final remoteUrlResult = Process.runSync('git', [
       'config',
       '--get',
       'remote.origin.url',
@@ -104,7 +118,13 @@ Future<void> runGerritView({String? gerritRepo}) async {
         isGerrit = true;
         final uri = Uri.tryParse(remoteUrl);
         if (uri != null && uri.host.isNotEmpty) {
-          gerritHost = uri.host;
+          gerritHost ??= uri.host;
+          if (uri.pathSegments.isNotEmpty) {
+            final lastSeg = uri.pathSegments.last;
+            gerritProject ??= lastSeg.endsWith('.git')
+                ? lastSeg.substring(0, lastSeg.length - 4)
+                : lastSeg;
+          }
         }
       }
     }
@@ -127,10 +147,11 @@ Future<void> runGerritView({String? gerritRepo}) async {
       '-review.googlesource.com',
     );
   }
+  gerritProject ??= 'sdk';
 
   // 2. Query open CLs owned by self
   print(styleDim.wrap('Querying active CLs from Gerrit...')!);
-  final gobResult = await Process.run('gob-curl', [
+  final gobResult = Process.runSync('gob-curl', [
     'https://$gerritHost/changes/?q=owner:self+status:open&o=CURRENT_REVISION',
   ], workingDirectory: actualRepoRoot);
 
@@ -182,7 +203,7 @@ Future<void> runGerritView({String? gerritRepo}) async {
   }
 
   // 3. Retrieve local branches configured with gerritissue
-  final configResult = await Process.run('git', [
+  final configResult = Process.runSync('git', [
     'config',
     '--get-regexp',
     r'branch\..*\.gerritissue',
@@ -211,23 +232,24 @@ Future<void> runGerritView({String? gerritRepo}) async {
   // 4. Fetch local details for configured branches
   final branchDetails = <String, CommitDetails>{};
   for (final branch in localBranchIssues.keys) {
-    final details = await _fetchCommitDetails(actualRepoRoot, branch);
+    final details = _fetchCommitDetails(actualRepoRoot, branch);
     if (details != null) {
       branchDetails[branch] = details;
     }
   }
 
   // 4b. Detect default branch
-  final defaultBranch = await _getDefaultBranch(actualRepoRoot);
+  final defaultBranch = _getDefaultBranch(actualRepoRoot);
 
   // 4c. Batch query closed/abandoned CL statuses
   final closedIssues = localBranchIssues.values
       .where((issue) => !remoteCLs.containsKey(issue))
       .toSet()
       .toList();
-  final closedStatuses = await _fetchRemoteCLStatuses(
+  final closedStatuses = _fetchRemoteCLStatuses(
     actualRepoRoot,
     closedIssues,
+    gerritHost,
   );
 
   // 4d. Concurrent batch shadow fetch
@@ -307,7 +329,7 @@ Future<void> runGerritView({String? gerritRepo}) async {
     }
 
     // Tree and SHA alignment check using shadow fetch
-    final alignmentStr = await _calculateAlignment(
+    final alignmentStr = _calculateAlignment(
       actualRepoRoot,
       branch,
       details,
@@ -343,7 +365,7 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
       final (remote, details, alignment) = entry.value;
       print('''
   • ${styleBold.wrap(branch)} ➔ CL ${remote.number} (${styleDim.wrap(remote.subject)})
-    URL:        https://dart-review.googlesource.com/c/sdk/+/${remote.number}
+    URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
     Alignment:  $alignment
     Last Touch: ${details.relativeDate}
 ''');
@@ -362,7 +384,7 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
     for (final cl in remoteOnlyCLs.values) {
       print('''
   • CL ${cl.number}: ${cl.subject}
-    URL:        https://dart-review.googlesource.com/c/sdk/+/${cl.number}
+    URL:        https://$gerritHost/c/$gerritProject/+/${cl.number}
 ''');
     }
   }
@@ -386,7 +408,7 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
       final subject = remote?.subject ?? 'Unknown CL';
 
       final urlLine = remote != null
-          ? '    URL:        https://dart-review.googlesource.com/c/sdk/+/$issue\n'
+          ? '    URL:        https://$gerritHost/c/$gerritProject/+/$issue\n'
           : '';
       final conflatedLabel = styleDim.wrap(
         'The following ${branchesList.length} branches target this CL:',
@@ -411,7 +433,7 @@ $urlLine    $conflatedLabel
             changeIdStatus = '⚠️ OTHER CL';
           }
 
-          final alignment = await _calculateAlignment(
+          final alignment = _calculateAlignment(
             actualRepoRoot,
             branch,
             details,
@@ -443,7 +465,7 @@ $urlLine    $conflatedLabel
       print('''
   ${red.wrap('• MISMATCHED CHANGE-ID:')} ${styleBold.wrap(branch)}
     Target CL:  ${remote.number} (${remote.subject})
-    URL:        https://dart-review.googlesource.com/c/sdk/+/${remote.number}
+    URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
     Local ID:   ${details.changeId}
     Remote ID:  ${remote.changeId}
 ''');
@@ -467,11 +489,7 @@ $urlLine    $conflatedLabel
       final branch = entry.key;
       final (issue, details, status) = entry.value;
 
-      final safety = await _checkCleanupSafety(
-        actualRepoRoot,
-        branch,
-        defaultBranch,
-      );
+      final safety = _checkCleanupSafety(actualRepoRoot, branch, defaultBranch);
 
       final String safetyStatus;
       final String actionText;
@@ -502,7 +520,7 @@ $urlLine    $conflatedLabel
 
       print('''
   • ${styleBold.wrap(branch)} ➔ CL $issue [${styleBold.wrap(status)}]
-    URL:        https://dart-review.googlesource.com/c/sdk/+/$issue
+    URL:        https://$gerritHost/c/$gerritProject/+/$issue
     Last Touch: ${details.relativeDate}
     Safety:     $safetyStatus
 $actionText
@@ -511,11 +529,8 @@ $actionText
   }
 }
 
-Future<CommitDetails?> _fetchCommitDetails(
-  String repoPath,
-  String branchName,
-) async {
-  final result = await Process.run('git', [
+CommitDetails? _fetchCommitDetails(String repoPath, String branchName) {
+  final result = Process.runSync('git', [
     'log',
     '-n',
     '1',
@@ -554,16 +569,17 @@ Future<CommitDetails?> _fetchCommitDetails(
   return null;
 }
 
-Future<Map<int, String>> _fetchRemoteCLStatuses(
+Map<int, String> _fetchRemoteCLStatuses(
   String repoPath,
   List<int> clNumbers,
-) async {
+  String gerritHost,
+) {
   final statuses = <int, String>{};
   if (clNumbers.isEmpty) return statuses;
 
   final query = clNumbers.map((n) => 'change:$n').join('+OR+');
-  final result = await Process.run('gob-curl', [
-    'https://dart-review.googlesource.com/changes/?q=$query',
+  final result = Process.runSync('gob-curl', [
+    'https://$gerritHost/changes/?q=$query',
   ], workingDirectory: repoPath);
 
   if (result.exitCode != 0) return statuses;
@@ -588,18 +604,18 @@ Future<Map<int, String>> _fetchRemoteCLStatuses(
   return statuses;
 }
 
-Future<String> _calculateAlignment(
+String _calculateAlignment(
   String repoPath,
   String branchName,
   CommitDetails local,
   RemoteCL remote,
-) async {
+) {
   if (local.sha == remote.currentRevision) {
     return green.wrap('✅ IN SYNC (Commit perfectly matches Gerrit latest)')!;
   }
 
   // Check if remote commit exists locally after batch fetch
-  final remoteTreeResult = await Process.run('git', [
+  final remoteTreeResult = Process.runSync('git', [
     'rev-parse',
     '--verify',
     '--quiet',
@@ -611,7 +627,7 @@ Future<String> _calculateAlignment(
   }
 
   // Read local tree hash
-  final localTreeResult = await Process.run('git', [
+  final localTreeResult = Process.runSync('git', [
     'rev-parse',
     '$branchName^{tree}',
   ], workingDirectory: repoPath);
@@ -635,12 +651,12 @@ Future<String> _calculateAlignment(
 
 typedef CleanupSafety = ({bool isSafe, List<String> unmergedShas});
 
-Future<CleanupSafety> _checkCleanupSafety(
+CleanupSafety _checkCleanupSafety(
   String repoPath,
   String branchName,
   String defaultBranch,
-) async {
-  final result = await Process.run('git', [
+) {
+  final result = Process.runSync('git', [
     'cherry',
     'origin/$defaultBranch',
     branchName,
@@ -666,8 +682,8 @@ Future<CleanupSafety> _checkCleanupSafety(
   return (isSafe: unmerged.isEmpty, unmergedShas: unmerged);
 }
 
-Future<String> _getDefaultBranch(String repoPath) async {
-  final result = await Process.run('git', [
+String _getDefaultBranch(String repoPath) {
+  final result = Process.runSync('git', [
     'rev-parse',
     '--abbrev-ref',
     'origin/HEAD',
@@ -683,7 +699,7 @@ Future<String> _getDefaultBranch(String repoPath) async {
 
   // Sniff fallback
   for (final branch in ['main', 'master']) {
-    final check = await Process.run('git', [
+    final check = Process.runSync('git', [
       'show-ref',
       '--verify',
       '--quiet',
