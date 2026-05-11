@@ -260,8 +260,9 @@ Future<void> runGerritView({String? gerritRepo}) async {
     }
   }
 
-  // 4b. Detect default branch
+  // 4b. Detect default branch and current branch
   final defaultBranch = _getDefaultBranch(actualRepoRoot);
+  final currentBranch = _getCurrentBranch(actualRepoRoot);
 
   // 4c. Batch query closed/abandoned CL statuses
   final closedIssues = localBranchIssues.values
@@ -387,7 +388,7 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
       final branch = entry.key;
       final (remote, details, alignment) = entry.value;
       print('''
-  • ${styleBold.wrap(branch)} ➔ CL ${remote.number} (${styleDim.wrap(remote.subject)})
+  ${branch == currentBranch ? '⭐' : '•'} ${styleBold.wrap(branch)} ➔ CL ${remote.number} (${styleDim.wrap(remote.subject)})
     URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
     Alignment:  ${alignment.display}
     Last Touch: ${details.relativeDate}
@@ -471,7 +472,8 @@ $urlLine    $conflatedLabel
           }
         }
 
-        final branchCol = branch.padRight(25);
+        final branchCol = (branch == currentBranch ? '⭐ $branch' : branch)
+            .padRight(25);
         final changeIdCol = changeIdStatus.padRight(12);
         final shaCol = shaStatus.padRight(12);
         final treeCol = treeStatus.padRight(15);
@@ -485,7 +487,7 @@ $urlLine    $conflatedLabel
       final branch = entry.key;
       final (remote, details) = entry.value;
       print('''
-  ${red.wrap('• MISMATCHED CHANGE-ID:')} ${styleBold.wrap(branch)}
+  ${branch == currentBranch ? '⭐' : red.wrap('•')} ${red.wrap('MISMATCHED CHANGE-ID:')} ${styleBold.wrap(branch)}
     Target CL:  ${remote.number} (${remote.subject})
     URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
     Local ID:   ${details.changeId}
@@ -549,7 +551,7 @@ $urlLine    $conflatedLabel
       };
 
       print('''
-  • ${styleBold.wrap(branch)} ➔ CL $issue [$styledStatus]
+  ${branch == currentBranch ? '⭐' : '•'} ${styleBold.wrap(branch)} ➔ CL $issue [$styledStatus]
     URL:        https://$gerritHost/c/$gerritProject/+/$issue
     Last Touch: ${details.relativeDate}
     Safety:     $safetyStatus
@@ -757,4 +759,20 @@ String _getDefaultBranch(String repoPath) {
   }
 
   return 'main';
+}
+
+String? _getCurrentBranch(String repoPath) {
+  final result = Process.runSync('git', [
+    'rev-parse',
+    '--abbrev-ref',
+    'HEAD',
+  ], workingDirectory: repoPath);
+
+  if (result.exitCode == 0) {
+    final output = (result.stdout as String).trim();
+    if (output.isNotEmpty && output != 'HEAD') {
+      return output;
+    }
+  }
+  return null;
 }
