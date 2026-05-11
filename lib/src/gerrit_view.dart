@@ -473,7 +473,7 @@ $urlLine    $conflatedLabel
         }
 
         final branchCol = (branch == currentBranch ? '⭐ $branch' : branch)
-            .padRight(25);
+            .padRight(branch == currentBranch ? 24 : 25);
         final changeIdCol = changeIdStatus.padRight(12);
         final shaCol = shaStatus.padRight(12);
         final treeCol = treeStatus.padRight(15);
