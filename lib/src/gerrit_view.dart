@@ -387,9 +387,19 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
     for (final entry in alignedBranches.entries) {
       final branch = entry.key;
       final (remote, details, alignment) = entry.value;
+      final String shaLine;
+      if (alignment.state == AlignmentState.inSync) {
+        shaLine = '    SHA:        ${remote.currentRevision}';
+      } else {
+        shaLine =
+            '''
+    Local SHA:  ${details.sha}
+    Remote SHA: ${remote.currentRevision}''';
+      }
       print('''
   ${branch == currentBranch ? '⭐' : '•'} ${styleBold.wrap(branch)} ➔ CL ${remote.number} (${styleDim.wrap(remote.subject)})
     URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
+$shaLine
     Alignment:  ${alignment.display}
     Last Touch: ${details.relativeDate}
 ''');
@@ -409,6 +419,7 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
       print('''
   • CL ${cl.number}: ${cl.subject}
     URL:        https://$gerritHost/c/$gerritProject/+/${cl.number}
+    Remote SHA: ${cl.currentRevision}
 ''');
     }
   }
@@ -434,12 +445,15 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
       final urlLine = remote != null
           ? '    URL:        https://$gerritHost/c/$gerritProject/+/$issue\n'
           : '';
+      final shaLine = remote != null
+          ? '    Remote SHA: ${remote.currentRevision}\n'
+          : '';
       final conflatedLabel = styleDim.wrap(
         'The following ${branchesList.length} branches target this CL:',
       );
       print('''
   ${red.wrap('• CONFLATED CL:')} $issue ($subject)
-$urlLine    $conflatedLabel
+$urlLine$shaLine    $conflatedLabel
     ${'Branch'.padRight(25)} ${'Change-Id'.padRight(12)} ${'Commit SHA'.padRight(12)} ${'Tree (Content)'.padRight(15)} ${'Last Commit'.padRight(15)}
     --------------------------------------------------------------------''');
       for (final branch in branchesList) {
@@ -490,6 +504,8 @@ $urlLine    $conflatedLabel
   ${branch == currentBranch ? '⭐' : red.wrap('•')} ${red.wrap('MISMATCHED CHANGE-ID:')} ${styleBold.wrap(branch)}
     Target CL:  ${remote.number} (${remote.subject})
     URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
+    Local SHA:  ${details.sha}
+    Remote SHA: ${remote.currentRevision}
     Local ID:   ${details.changeId}
     Remote ID:  ${remote.changeId}
     To Push:    git commit --amend (set Change-Id to: ${remote.changeId}) && git cl upload
