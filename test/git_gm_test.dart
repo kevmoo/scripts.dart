@@ -57,7 +57,7 @@ void main() {
     await localGitDir.runCommand([
       'config',
       'git-gm.post',
-      'echo "hook run" > hook_out.txt',
+      'echo hook_run>hook_out.txt',
     ]);
 
     await expectLater(
@@ -71,14 +71,14 @@ void main() {
         allOf(
           contains('Default branch: $defaultBranch'),
           contains('Successfully updated $defaultBranch.'),
-          contains('Running post-command: echo "hook run" > hook_out.txt'),
+          contains('Running post-command: echo hook_run>hook_out.txt'),
         ),
       ),
     );
 
     final file = File(p.join(localPath, 'hook_out.txt'));
     expect(file.existsSync(), isTrue);
-    expect(file.readAsStringSync().trim(), 'hook run');
+    expect(file.readAsStringSync().trim(), 'hook_run');
   });
 
   test('Failure case with failing git-gm.post hook', () async {
