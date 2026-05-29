@@ -60,6 +60,22 @@ Safely switch to and update the default branch of a Git repository.
 git-gm [--verbose | -v] [--help | -h]
 ```
 
+**Post-Update Hook (`git-gm.post`):**
+
+You can configure a custom shell command that runs automatically after `git-gm` successfully updates the repository. This is useful for triggering automated builds, running package installations (e.g., `dart pub get`), running code generation, or starting workspace bootstraps.
+
+* **Local configuration** (runs only for the current repository):
+  ```shell
+  git config git-gm.post "dart pub get"
+  ```
+
+* **Global configuration** (runs for all repositories where you run `git-gm`):
+  ```shell
+  git config --global git-gm.post "git status"
+  ```
+
+If the post-command returns a non-zero exit code, `git-gm` will abort and exit with that same exit code.
+
 ### `git-goma`
 Clean up local git branches that have been merged or deleted on the remote.
 

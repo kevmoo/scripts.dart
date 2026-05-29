@@ -52,6 +52,64 @@ void main() {
     );
   });
 
+  test('Success case with git-gm.post hook', () async {
+    final defaultBranch = await getDefaultBranch(localGitDir);
+    await localGitDir.runCommand([
+      'config',
+      'git-gm.post',
+      'echo "hook run" > hook_out.txt',
+    ]);
+
+    await expectLater(
+      () async {
+        final exitCode = await wrappedForTesting(
+          () => gitGm(workingDirectory: localPath),
+        );
+        expect(exitCode, 0);
+      },
+      prints(
+        allOf(
+          contains('Default branch: $defaultBranch'),
+          contains('Successfully updated $defaultBranch.'),
+          contains('Running post-command: echo "hook run" > hook_out.txt'),
+        ),
+      ),
+    );
+
+    final file = File(p.join(localPath, 'hook_out.txt'));
+    expect(file.existsSync(), isTrue);
+    expect(file.readAsStringSync().trim(), 'hook run');
+  });
+
+  test('Failure case with failing git-gm.post hook', () async {
+    final defaultBranch = await getDefaultBranch(localGitDir);
+    await localGitDir.runCommand(['config', 'git-gm.post', 'exit 42']);
+
+    await expectLater(
+      () async {
+        await expectLater(
+          () => wrappedForTesting(() => gitGm(workingDirectory: localPath)),
+          throwsA(
+            isA<GitGmException>()
+                .having((e) => e.exitCode, 'exitCode', 42)
+                .having(
+                  (e) => e.message,
+                  'message',
+                  contains('Post-command failed with exit code 42: exit 42'),
+                ),
+          ),
+        );
+      },
+      prints(
+        allOf(
+          contains('Default branch: $defaultBranch'),
+          contains('Successfully updated $defaultBranch.'),
+          contains('Running post-command: exit 42'),
+        ),
+      ),
+    );
+  });
+
   test('getDefaultBranch fails when origin/HEAD is missing', () async {
     // Delete origin/HEAD in the clone
     await localGitDir.runCommand(['remote', 'set-head', 'origin', '-d']);

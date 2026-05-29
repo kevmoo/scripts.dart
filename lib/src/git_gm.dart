@@ -58,6 +58,8 @@ Future<void> gitGm({String? workingDirectory}) async {
     green.wrap('Successfully updated $defaultBranch.') ??
         'Successfully updated $defaultBranch.',
   );
+
+  await _runPostCommand(gitDir);
 }
 
 Future<void> _runGit(
@@ -234,6 +236,46 @@ void _printUpstreamFixSuggestion(String defaultBranch) {
   printError(
     '  git branch --set-upstream-to=origin/$defaultBranch $defaultBranch',
   );
+}
+
+Future<void> _runPostCommand(GitDir gitDir) async {
+  final configResult = await gitDir.runCommand([
+    'config',
+    '--get',
+    'git-gm.post',
+  ], throwOnError: false);
+
+  if (configResult.exitCode != 0) {
+    return;
+  }
+
+  final command = (configResult.stdout as String).trim();
+  if (command.isEmpty) {
+    return;
+  }
+
+  print(
+    styleDim.wrap('Running post-command: $command') ??
+        'Running post-command: $command',
+  );
+
+  final shell = Platform.isWindows ? 'cmd.exe' : 'sh';
+  final shellArgs = Platform.isWindows ? ['/c', command] : ['-c', command];
+
+  final process = await Process.start(
+    shell,
+    shellArgs,
+    workingDirectory: gitDir.path,
+    mode: ProcessStartMode.inheritStdio,
+  );
+
+  final exitCode = await process.exitCode;
+  if (exitCode != 0) {
+    throw GitGmException(
+      'Post-command failed with exit code $exitCode: $command',
+      exitCode: exitCode,
+    );
+  }
 }
 
 /// Exception thrown by `git-gm` operations.
