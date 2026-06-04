@@ -40,20 +40,21 @@ Future<void> gitClean(GitDir gitDir) async {
   final branchesToDelete = <String, String>{};
   var currentIsGone = false;
 
-  branchesStatus.forEach((branchName, status) {
-    if (status.isUpstreamGone) {
+  for (final MapEntry(key: branchName, value: (:sha, :isUpstreamGone))
+      in branchesStatus.entries) {
+    if (isUpstreamGone) {
       if (branchName == 'master' || branchName == 'main') {
         print('Skipping $branchName despite it being marked as [gone].');
-        return;
+        continue;
       }
 
       if (branchName == currentBranch) {
         currentIsGone = true;
       }
 
-      branchesToDelete[branchName] = status.sha;
+      branchesToDelete[branchName] = sha;
     }
-  });
+  }
 
   if (currentIsGone) {
     if (primaryBranch != null) {
