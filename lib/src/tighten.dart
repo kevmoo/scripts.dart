@@ -253,10 +253,7 @@ Future<void> _revertConstraint(
   await file.writeAsString(editor.toString());
 }
 
-class TightenException implements Exception {
-  final String message;
-  TightenException(this.message);
-
+class TightenException(final String message) implements Exception {
   @override
   String toString() => 'TightenException: $message';
 }

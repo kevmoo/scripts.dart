@@ -112,34 +112,21 @@ String get dartCleanOptionsUsage => _$parserForDartCleanOptions.usage;
 
 ArgParser get dartCleanOptionsParser => _$parserForDartCleanOptions;
 
-class DartCleanException implements Exception {
-  final String message;
-
-  DartCleanException(this.message);
-
+class DartCleanException(final String message) implements Exception {
   @override
   String toString() => message;
 }
 
-class _ProcessNode {
-  final int pid;
-  final String cmdline;
-  final int? parentPid;
-  final String? parentName;
-  final String? cwd;
-  final String reason;
-  final bool isDart;
+class _ProcessNode({
+  required final int pid,
+  required final String cmdline,
+  final int? parentPid,
+  final String? parentName,
+  final String? cwd,
+  required final String reason,
+  final bool isDart = true,
+}) {
   final List<_ProcessNode> children = [];
-
-  _ProcessNode({
-    required this.pid,
-    required this.cmdline,
-    this.parentPid,
-    this.parentName,
-    this.cwd,
-    required this.reason,
-    this.isDart = true,
-  });
 
   void printNode(String indent) {
     var reasonStr = reason.isNotEmpty ? ' ($reason)' : '';
@@ -158,29 +145,17 @@ class _ProcessNode {
   }
 }
 
-class DartProcess {
-  final int pid;
-  final String cmdline;
-  final int? ppid;
-  final String? parentName;
-  final String? cwd;
-  final String reason;
-  final bool isDart;
-  final List<({int pid, String command})> ancestry;
-  final int? ownerPid;
-
-  DartProcess({
-    required this.pid,
-    required this.cmdline,
-    this.ppid,
-    this.parentName,
-    this.cwd,
-    required this.reason,
-    this.isDart = true,
-    required this.ancestry,
-    this.ownerPid,
-  });
-}
+class DartProcess({
+  required final int pid,
+  required final String cmdline,
+  final int? ppid,
+  final String? parentName,
+  final String? cwd,
+  required final String reason,
+  final bool isDart = true,
+  required final List<({int pid, String command})> ancestry,
+  final int? ownerPid,
+});
 
 Future<DartProcess?> _checkProcess(int p, Set<int> protectedPids) async {
   if (protectedPids.contains(p)) {

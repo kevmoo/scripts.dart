@@ -142,9 +142,7 @@ Future<void> gitClean(GitDir gitDir) async {
   }
 }
 
-class GitCleanException implements Exception {
-  final String message;
-  GitCleanException(this.message);
+class GitCleanException(final String message) implements Exception {
   @override
   String toString() => message;
 }

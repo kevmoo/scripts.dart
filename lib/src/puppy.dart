@@ -51,11 +51,7 @@ Future<void> runPuppy(RunArgs args, {String? cwd}) async {
   }
 }
 
-class PuppyException implements Exception {
-  final String message;
-
-  PuppyException(this.message);
-
+class PuppyException(final String message) implements Exception {
   @override
   String toString() => message;
 }

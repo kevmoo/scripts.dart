@@ -56,12 +56,10 @@ Future<void> lintCleanup({
   }
 }
 
-class _LintBundle {
-  _LintBundle({required this.explicit, required this.included});
-
-  final Set<String> explicit;
-  final Set<String> included;
-
+class _LintBundle({
+  required final Set<String> explicit,
+  required final Set<String> included,
+}) {
   Set<String> get allLints => explicit.union(included);
 }
 
@@ -150,9 +148,10 @@ YamlMap _openYamlMap(String path) {
 
   final analysisOptionsContent = analysisOptionsFile.readAsStringSync();
 
-  final aoYaml =
-      loadYaml(analysisOptionsContent, sourceUrl: analysisOptionsFile.uri)
-          as YamlMap;
+  final aoYaml = loadYaml(
+    analysisOptionsContent,
+    sourceUrl: analysisOptionsFile.uri,
+  ) as YamlMap;
 
   return aoYaml;
 }
