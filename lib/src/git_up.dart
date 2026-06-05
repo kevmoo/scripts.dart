@@ -243,9 +243,7 @@ Future<void> _runPostCommand(GitDir gitDir) async {
 }
 
 Future<void> _cleanBranches(GitDir gitDir, String defaultBranch) async {
-  print(
-    styleDim.wrap('Fetching and pruning...') ?? 'Fetching and pruning...',
-  );
+  print(styleDim.wrap('Fetching and pruning...') ?? 'Fetching and pruning...');
   try {
     await gitDir.fetch(prune: true);
   } catch (e) {
@@ -258,7 +256,9 @@ Future<void> _cleanBranches(GitDir gitDir, String defaultBranch) async {
   for (final MapEntry(key: branchName, value: (:sha, :isUpstreamGone))
       in branchesStatus.entries) {
     if (isUpstreamGone) {
-      if (branchName == 'master' || branchName == 'main') {
+      if (branchName == 'master' ||
+          branchName == 'main' ||
+          branchName == defaultBranch) {
         continue;
       }
       goneBranches[branchName] = sha;
@@ -276,7 +276,7 @@ Future<void> _cleanBranches(GitDir gitDir, String defaultBranch) async {
           'gone upstreams...',
         ) ??
         'Checking safety of ${goneBranches.length} branches with '
-        'gone upstreams...',
+            'gone upstreams...',
   );
 
   final ghAvailable = await gitDir.isGitHubCliAvailable();
