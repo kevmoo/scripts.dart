@@ -16,7 +16,6 @@ dart pub global activate --source git https://github.com/kevmoo/scripts.dart
 | [`git-up`](#git-up) | `bin/git_up.dart` | Safely switch to and update the default branch. |
 | [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
 | [`puppy`](#puppy) | `bin/puppy.dart` | Run a command in all package directories. |
-| [`skill-link`](#skill-link) | `bin/skill_link.dart` | Manage agent skill symlinks. |
 | [`tighten`](#tighten) | `bin/tighten.dart` | Tighten workspace dependencies. |
 
 ## Scripts
@@ -97,33 +96,6 @@ puppy [arguments] <command to invoke>
 
 -d, --[no-]deep    Keep looking for "nested" pubspec files.
 -h, --help         Print this usage information.
-```
-
-### `skill-link`
-Manages agent skill symlinks in a specified target directory.
-
-Reads a YAML configuration file (`~/.config/skill-link.yaml` by default)
-that declares a list of `sources` and `targets`. It discovers agent skill
-directories (folders containing a `SKILL.md` file nested inside specific `.agent`
-or `_agent` folders) within the sources, and creates or maintains symlinks for
-these skills inside the target directories.
-
-**Sample `skill-link.yaml`**
-
-```yaml
-sources:
-  - /git/dart_skills
-  - /git/team_skills
-targets:
-  - /Users/my_name/.gemini/agent-skills
-```
-
-**Usage:**
-```shell
-skill-link [options]
-
--c, --config    Path to the configuration file
--h, --help      Print this usage information.
 ```
 
 ### `tighten`

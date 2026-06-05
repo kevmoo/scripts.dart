@@ -32,5 +32,4 @@ executables:
   git-up: git_up
   lint-cleanup: lint_cleanup
   puppy:
-  skill-link: skill_link
   tighten:
