@@ -243,12 +243,8 @@ Future<void> _runPostCommand(GitDir gitDir) async {
 /// Exception thrown by `git-gm` operations.
 ///
 /// Contains a user-friendly [message] and an suggested [exitCode].
-class GitGmException implements Exception {
-  final String message;
-  final int exitCode;
-
-  GitGmException(this.message, {this.exitCode = 1});
-
+class GitGmException(final String message, {final int exitCode = 1})
+    implements Exception {
   @override
   String toString() => message;
 }

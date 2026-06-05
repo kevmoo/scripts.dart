@@ -5,12 +5,8 @@ import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 
 /// Exception thrown by Gerrit View tool operations.
-class GerritViewException implements Exception {
-  final String message;
-  final int exitCode;
-
-  GerritViewException(this.message, {this.exitCode = 1});
-
+class GerritViewException(final String message, {final int exitCode = 1})
+    implements Exception {
   @override
   String toString() => message;
 }
