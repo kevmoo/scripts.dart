@@ -140,7 +140,7 @@ class TightenOptions {
   @CliOption(abbr: 'h', negatable: false, help: 'Print this usage information.')
   final bool help;
 
-  TightenOptions({this.workspace = false, this.help = false});
+  new({this.workspace = false, this.help = false});
 }
 
 String get tightenUsage => _$parserForTightenOptions.usage;
