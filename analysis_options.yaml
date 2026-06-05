@@ -23,4 +23,6 @@ linter:
     - prefer_expression_function_bodies
     - prefer_final_locals
     - unnecessary_await_in_return
+    - unnecessary_const_in_enum_constructor
+    - unnecessary_type_name_in_constructor
     - use_string_buffers

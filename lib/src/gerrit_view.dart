@@ -38,7 +38,7 @@ enum ClStatus {
   unknown('UNKNOWN');
 
   final String value;
-  const ClStatus(this.value);
+  new(this.value);
 
   static ClStatus parse(String raw) {
     final normalized = raw.toUpperCase();

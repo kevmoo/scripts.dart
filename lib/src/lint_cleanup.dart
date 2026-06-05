@@ -205,11 +205,7 @@ class LintCleanupOptions {
   @CliOption(abbr: 'h', negatable: false, help: 'Prints out usage and exits')
   final bool help;
 
-  LintCleanupOptions({
-    this.packageDir,
-    this.rewrite = false,
-    this.help = false,
-  });
+  new({this.packageDir, this.rewrite = false, this.help = false});
 }
 
 String get lintCleanupUsage => _$parserForLintCleanupOptions.usage;

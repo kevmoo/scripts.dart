@@ -105,7 +105,7 @@ class DartCleanOptions {
   @CliOption(abbr: 'h', negatable: false, help: 'Print this usage information.')
   final bool help;
 
-  DartCleanOptions({this.force = false, this.list = false, this.help = false});
+  new({this.force = false, this.list = false, this.help = false});
 }
 
 String get dartCleanOptionsUsage => _$parserForDartCleanOptions.usage;

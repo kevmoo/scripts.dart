@@ -66,7 +66,7 @@ class RunArgs {
 
   final List<String> rest;
 
-  RunArgs({this.deep = false, this.help = false, required this.rest}) {
+  new({this.deep = false, this.help = false, required this.rest}) {
     if (!help && rest.isEmpty) {
       throw UsageException(
         'Missing command to invoke!',
