@@ -2,7 +2,7 @@ class WitrData({
   required final ProcessData process,
   required final SourceData source,
 }) {
-  factory WitrData.fromJson(Map<String, dynamic> json) {
+  factory fromJson(Map<String, dynamic> json) {
     final processJson = switch (json['Process']) {
       final Map<String, dynamic> v => v,
       _ => throw const FormatException(
@@ -17,7 +17,7 @@ class WitrData({
       ),
     };
 
-    return WitrData(
+    return .new(
       process: ProcessData.fromJson(processJson),
       source: SourceData.fromJson(sourceJson),
     );
@@ -25,8 +25,8 @@ class WitrData({
 }
 
 class SourceData({required final String type}) {
-  factory SourceData.fromJson(Map<String, dynamic> json) =>
-      SourceData(type: json['Type'] as String? ?? '<unknown>');
+  factory fromJson(Map<String, dynamic> json) =>
+      .new(type: json['Type'] as String? ?? '<unknown>');
 }
 
 class ProcessData({
@@ -34,7 +34,7 @@ class ProcessData({
   final List<String>? env,
   final int? ppid,
 }) {
-  factory ProcessData.fromJson(Map<String, dynamic> json) => ProcessData(
+  factory fromJson(Map<String, dynamic> json) => .new(
     cmdline: json['Cmdline'] as String? ?? '<unknown>',
     env: (json['Env'] as List<dynamic>? ?? []).map((e) => e as String).toList(),
     ppid: json['PPID'] as int?,
