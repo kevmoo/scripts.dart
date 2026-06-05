@@ -29,8 +29,7 @@ dev_dependencies:
 executables:
   dart-clean: dart_clean
   gerrit-view: gerrit_view
-  git-gm: git_gm
-  git-goma: git_clean
+  git-up: git_up
   lint-cleanup: lint_cleanup
   puppy:
   skill-link: skill_link

@@ -2,22 +2,22 @@
 
 import 'dart:io';
 import 'package:io/io.dart';
-import 'package:kevmoo_scripts/src/git_gm.dart';
+import 'package:kevmoo_scripts/src/git_up.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 
 Future<void> main(List<String> arguments) async {
   final help = arguments.contains('--help') || arguments.contains('-h');
   if (help) {
     print('Safely switch to and update the default branch.');
-    print('Usage: git-gm [--verbose | -v] [--help | -h]');
+    print('Usage: git-up [--verbose | -v] [--help | -h]');
     return;
   }
 
   final verbose = arguments.contains('--verbose') || arguments.contains('-v');
 
   try {
-    await gitGm();
-  } on GitGmException catch (e, stack) {
+    await gitUp();
+  } on GitUpException catch (e, stack) {
     setError(
       message: e.message,
       exitCode: e.exitCode,

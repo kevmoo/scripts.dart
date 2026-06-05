@@ -155,6 +155,157 @@ extension GitDirExtensions on GitDir {
     return status;
   }
 
+  /// Checks if [branchName] is merged into [targetBranch].
+  ///
+  /// A branch is merged if:
+  /// 1. It is an ancestor of [targetBranch] (i.e. standard merge or rebase).
+  /// 2. Or, a three-way merge of [branchName] into [targetBranch] results in a
+  ///    tree identical to [targetBranch] (i.e. squash merge).
+  Future<bool> isMergedInto(String branchName, String targetBranch) async {
+    // 1. Fast ancestor check
+    final ancestorResult = await runCommand([
+      'merge-base',
+      '--is-ancestor',
+      branchName,
+      targetBranch,
+    ], throwOnError: false);
+    if (ancestorResult.exitCode == 0) {
+      return true;
+    }
+
+    // 2. Squash merge check using git merge-tree
+    try {
+      final targetTreeResult = await runCommand([
+        'rev-parse',
+        '$targetBranch^{tree}',
+      ]);
+      final targetTree = (targetTreeResult.stdout as String).trim();
+
+      final mergeTreeResult = await runCommand([
+        'merge-tree',
+        targetBranch,
+        branchName,
+      ], throwOnError: false);
+
+      if (mergeTreeResult.exitCode == 0) {
+        final mergeTree = (mergeTreeResult.stdout as String)
+            .split('\n')
+            .first
+            .trim();
+        return mergeTree == targetTree;
+      }
+    } catch (_) {
+      // Fallback to false for safety
+    }
+    return false;
+  }
+
+  /// Checks if the `gh` CLI is available and authenticated.
+  Future<bool> isGitHubCliAvailable() async {
+    try {
+      final result = await Process.run('gh', ['auth', 'status']);
+      return result.exitCode == 0;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Gets the PR number stored in the local git config for [branchName], if
+  /// any.
+  Future<int?> getLocalPrNumber(String branchName) async {
+    final result = await runCommand([
+      'config',
+      '--get',
+      'branch.$branchName.gh-pr-number',
+    ], throwOnError: false);
+
+    if (result.exitCode != 0) return null;
+    final output = (result.stdout as String).trim();
+    return int.tryParse(output);
+  }
+
+  /// Queries the GitHub API for the state of a PR by its number.
+  ///
+  /// Returns the PR state (e.g. 'MERGED', 'CLOSED', 'OPEN') or null if not
+  /// found.
+  Future<String?> getPrStateByNumber(int prNumber) async {
+    try {
+      final result = await Process.run('gh', [
+        'pr',
+        'view',
+        prNumber.toString(),
+        '--json',
+        'state',
+      ]);
+      if (result.exitCode == 0) {
+        final data =
+            jsonDecode(result.stdout as String) as Map<String, dynamic>;
+        return data['state'] as String?;
+      }
+    } catch (_) {
+      // Ignore and return null
+    }
+    return null;
+  }
+
+  /// Queries the GitHub API for the state of a PR by branch name.
+  ///
+  /// Returns the PR state (e.g. 'MERGED', 'CLOSED', 'OPEN') or null if not
+  /// found.
+  Future<String?> getPrStateByBranch(String branchName) async {
+    try {
+      final result = await Process.run('gh', [
+        'pr',
+        'view',
+        branchName,
+        '--json',
+        'state',
+      ]);
+      if (result.exitCode == 0) {
+        final data =
+            jsonDecode(result.stdout as String) as Map<String, dynamic>;
+        return data['state'] as String?;
+      }
+    } catch (_) {
+      // Ignore and return null
+    }
+    return null;
+  }
+
+  /// Retrieves the state of recent PRs in the repository.
+  ///
+  /// Returns a map of head branch names to their PR state.
+  Future<Map<String, String>> getRecentPrsState({int limit = 100}) async {
+    final prStates = <String, String>{};
+    try {
+      final result = await Process.run('gh', [
+        'pr',
+        'list',
+        '--state',
+        'all',
+        '--limit',
+        limit.toString(),
+        '--json',
+        'headRefName,state',
+      ]);
+      if (result.exitCode == 0) {
+        final list = jsonDecode(result.stdout as String) as List<dynamic>;
+        for (final item in list) {
+          if (item is Map<String, dynamic>) {
+            final head = item['headRefName'] as String?;
+            final state = item['state'] as String?;
+            if (head != null && state != null) {
+              prStates[head] = state;
+            }
+          }
+        }
+      }
+    } catch (_) {
+      // Ignore and return empty map
+    }
+    return prStates;
+  }
+
   /// Configures a standard test identity for the repository.
   ///
   /// This is useful in tests to prevent dirty working trees on Windows/CI.
