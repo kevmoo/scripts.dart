@@ -13,8 +13,7 @@ dart pub global activate --source git https://github.com/kevmoo/scripts.dart
 |---|---|---|
 | [`dart-clean`](#dart-clean) | `bin/dart_clean.dart` | Find and kill orphaned Dart processes. |
 | [`gerrit-view`](#gerrit-view) | `bin/gerrit_view.dart` | Complete overview of your active work on Gerrit. |
-| [`git-gm`](#git-gm) | `bin/git_gm.dart` | Safely switch to and update the default branch. |
-| [`git-goma`](#git-goma) | `bin/git_clean.dart` | Clean up local git branches that have been merged or deleted on the remote. |
+| [`git-up`](#git-up) | `bin/git_up.dart` | Safely switch to and update the default branch. |
 | [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
 | [`puppy`](#puppy) | `bin/puppy.dart` | Run a command in all package directories. |
 | [`skill-link`](#skill-link) | `bin/skill_link.dart` | Manage agent skill symlinks. |
@@ -52,37 +51,29 @@ gerrit-view [options]
 -h, --help                   Print this usage information.
 ```
 
-### `git-gm`
+### `git-up`
 Safely switch to and update the default branch of a Git repository.
 
 **Usage:**
 ```shell
-git-gm [--verbose | -v] [--help | -h]
+git-up [--verbose | -v] [--help | -h]
 ```
 
-**Post-Update Hook (`git-gm.post`):**
+**Post-Update Hook (`git-up.post`):**
 
-You can configure a custom shell command that runs automatically after `git-gm` successfully updates the repository. This is useful for triggering automated builds, running package installations (e.g., `dart pub get`), running code generation, or starting workspace bootstraps.
+You can configure a custom shell command that runs automatically after `git-up` successfully updates the repository. This is useful for triggering automated builds, running package installations (e.g., `dart pub get`), running code generation, or starting workspace bootstraps.
 
 * **Local configuration** (runs only for the current repository):
   ```shell
-  git config git-gm.post "dart pub get"
+  git config git-up.post "dart pub get"
   ```
 
-* **Global configuration** (runs for all repositories where you run `git-gm`):
+* **Global configuration** (runs for all repositories where you run `git-up`):
   ```shell
-  git config --global git-gm.post "git status"
+  git config --global git-up.post "git status"
   ```
 
-If the post-command returns a non-zero exit code, `git-gm` will abort and exit with that same exit code.
-
-### `git-goma`
-Clean up local git branches that have been merged or deleted on the remote.
-
-**Usage:**
-```shell
-git-goma
-```
+If the post-command returns a non-zero exit code, `git-up` will abort and exit with that same exit code.
 
 ### `lint-cleanup`
 Clean up `analysis_options.yaml` files.

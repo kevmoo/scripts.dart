@@ -3,7 +3,7 @@ import 'dart:io';
 import 'package:git/git.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/git_extensions.dart';
-import 'package:kevmoo_scripts/src/git_gm.dart';
+import 'package:kevmoo_scripts/src/git_up.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -41,7 +41,7 @@ void main() {
     await expectLater(
       () async {
         final exitCode = await wrappedForTesting(
-          () => gitGm(workingDirectory: localPath),
+          () => gitUp(workingDirectory: localPath),
         );
         expect(exitCode, 0);
       },
@@ -54,18 +54,18 @@ void main() {
     );
   });
 
-  test('Success case with git-gm.post hook', () async {
+  test('Success case with git-up.post hook', () async {
     final defaultBranch = await getDefaultBranch(localGitDir);
     await localGitDir.runCommand([
       'config',
-      'git-gm.post',
+      'git-up.post',
       'echo hook_run>hook_out.txt',
     ]);
 
     await expectLater(
       () async {
         final exitCode = await wrappedForTesting(
-          () => gitGm(workingDirectory: localPath),
+          () => gitUp(workingDirectory: localPath),
         );
         expect(exitCode, 0);
       },
@@ -83,16 +83,16 @@ void main() {
     expect(file.readAsStringSync().trim(), 'hook_run');
   });
 
-  test('Failure case with failing git-gm.post hook', () async {
+  test('Failure case with failing git-up.post hook', () async {
     final defaultBranch = await getDefaultBranch(localGitDir);
-    await localGitDir.runCommand(['config', 'git-gm.post', 'exit 42']);
+    await localGitDir.runCommand(['config', 'git-up.post', 'exit 42']);
 
     await expectLater(
       () async {
         await expectLater(
-          () => wrappedForTesting(() => gitGm(workingDirectory: localPath)),
+          () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
           throwsA(
-            isA<GitGmException>()
+            isA<GitUpException>()
                 .having((e) => e.exitCode, 'exitCode', 42)
                 .having(
                   (e) => e.message,
@@ -120,7 +120,7 @@ void main() {
       await expectLater(
         () => wrappedForTesting(() => getDefaultBranch(localGitDir)),
         throwsA(
-          isA<GitGmException>().having(
+          isA<GitUpException>().having(
             (e) => e.exitCode,
             'exitCode',
             ExitCode.config.code,
@@ -143,7 +143,7 @@ void main() {
             () => verifyAlignment(localGitDir, defaultBranch),
           ),
           throwsA(
-            isA<GitGmException>().having(
+            isA<GitUpException>().having(
               (e) => e.exitCode,
               'exitCode',
               ExitCode.config.code,
@@ -185,7 +185,7 @@ void main() {
               () => verifyAlignment(localGitDir, defaultBranch),
             ),
             throwsA(
-              isA<GitGmException>().having(
+              isA<GitUpException>().having(
                 (e) => e.exitCode,
                 'exitCode',
                 ExitCode.config.code,
@@ -200,7 +200,7 @@ void main() {
     },
   );
 
-  test('gitGm fails when working tree is dirty and conflicts', () async {
+  test('gitUp fails when working tree is dirty and conflicts', () async {
     final filePath = p.join(localPath, 'conflict.txt');
     File(filePath).writeAsStringSync('content A');
     await localGitDir.runCommand(['add', 'conflict.txt']);
@@ -215,8 +215,123 @@ void main() {
     File(filePath).writeAsStringSync('content C');
 
     await expectLater(
-      () => wrappedForTesting(() => gitGm(workingDirectory: localPath)),
-      throwsA(isA<GitGmException>()),
+      () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+      throwsA(isA<GitUpException>()),
+    );
+  });
+
+  test('gitUp cleans up standard-merged gone branches', () async {
+    // 1. Create and push feature-merged
+    await localGitDir.runCommand(['checkout', '-b', 'feature-merged']);
+    await localGitDir.runCommand(['push', '-u', 'origin', 'feature-merged']);
+
+    // 2. Switch back to main locally
+    await localGitDir.runCommand(['checkout', 'main']);
+
+    // 3. Delete remote branch
+    final remoteGitDir = await GitDir.fromExisting(p.join(d.sandbox, 'remote'));
+    await remoteGitDir.runCommand(['branch', '-D', 'feature-merged']);
+
+    // 4. Run gitUp
+    await expectLater(
+      () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+      prints(
+        allOf(
+          contains('Fetching and pruning...'),
+          contains('Checking safety of 1 branches with gone upstreams...'),
+          contains('Deleting feature-merged...'),
+        ),
+      ),
+    );
+
+    // Verify it was deleted
+    final branches = await localGitDir.branches();
+    expect(
+      branches.map((b) => b.branchName),
+      isNot(contains('feature-merged')),
+    );
+  });
+
+  test('gitUp does NOT delete unmerged gone branches', () async {
+    // 1. Create and commit to feature-unmerged
+    await localGitDir.runCommand(['checkout', '-b', 'feature-unmerged']);
+    final filePath = p.join(localPath, 'unmerged.txt');
+    File(filePath).writeAsStringSync('unmerged content');
+    await localGitDir.runCommand(['add', 'unmerged.txt']);
+    await localGitDir.runCommand(['commit', '-m', 'Unmerged commit']);
+    final sha = await localGitDir.getShortSha();
+
+    // 2. Push to remote
+    await localGitDir.runCommand(['push', '-u', 'origin', 'feature-unmerged']);
+
+    // 3. Switch to main
+    await localGitDir.runCommand(['checkout', 'main']);
+
+    // 4. Delete remote branch
+    final remoteGitDir = await GitDir.fromExisting(p.join(d.sandbox, 'remote'));
+    await remoteGitDir.runCommand(['branch', '-D', 'feature-unmerged']);
+
+    // 5. Run gitUp - should skip deletion and print a warning
+    await expectLater(
+      () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+      prints(
+        allOf(
+          contains('Checking safety of 1 branches with gone upstreams...'),
+          contains(
+            'Warning: Branch "feature-unmerged" ($sha) has a gone upstream '
+            'but contains unmerged commits. Skipping deletion.',
+          ),
+        ),
+      ),
+    );
+
+    // Verify it was NOT deleted
+    final branches = await localGitDir.branches();
+    expect(branches.map((b) => b.branchName), contains('feature-unmerged'));
+  });
+
+  test('gitUp cleans up squash-merged gone branches', () async {
+    // 1. Create and commit to feature-squash
+    await localGitDir.runCommand(['checkout', '-b', 'feature-squash']);
+    final filePath = p.join(localPath, 'squash.txt');
+    File(filePath).writeAsStringSync('squash content');
+    await localGitDir.runCommand(['add', 'squash.txt']);
+    await localGitDir.runCommand(['commit', '-m', 'Squash commit']);
+
+    // 2. Push to remote
+    await localGitDir.runCommand(['push', '-u', 'origin', 'feature-squash']);
+
+    // 3. Switch to main
+    await localGitDir.runCommand(['checkout', 'main']);
+
+    // 4. Simulate squash merge on remote
+    final remoteGitDir = await GitDir.fromExisting(p.join(d.sandbox, 'remote'));
+    final remoteFilePath = p.join(d.sandbox, 'remote', 'squash.txt');
+    File(remoteFilePath).writeAsStringSync('squash content');
+    await remoteGitDir.runCommand(['add', 'squash.txt']);
+    await remoteGitDir.runCommand(['commit', '-m', 'Squashed PR commit (#1)']);
+
+    // 5. Delete remote branch feature-squash
+    await remoteGitDir.runCommand(['branch', '-D', 'feature-squash']);
+
+    // 6. Run gitUp - should pull squashed main and clean up feature-squash
+    await expectLater(
+      () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+      prints(
+        allOf(
+          contains('Successfully updated main.'),
+          contains('Checking safety of 1 branches with gone upstreams...'),
+          contains('Deleting feature-squash...'),
+        ),
+      ),
+    );
+
+    // Verify it was deleted
+    final branches = await localGitDir.branches();
+    expect(
+      branches.map((b) => b.branchName),
+      isNot(contains('feature-squash')),
     );
   });
 }
+

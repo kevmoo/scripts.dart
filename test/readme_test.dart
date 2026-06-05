@@ -35,8 +35,8 @@ void main() {
 
     for (final line in tableLines) {
       final columns = line.split('|').map((e) => e.trim()).toList();
-      // Line: | `git-goma` | `bin/git_clean.dart` | Clean up... |
-      // columns: ['', '`git-goma`', '`bin/git_clean.dart`', 'Clean up...', '']
+      // Line: | `git-up` | `bin/git_up.dart` | Safely switch to... |
+      // columns: ['', '`git-up`', '`bin/git_up.dart`', 'Safely switch to...', '']
       expect(columns.length, 5);
 
       var exeCol = columns[1].replaceAll('`', '');
