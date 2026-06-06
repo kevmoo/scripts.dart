@@ -22,10 +22,15 @@ import 'testable_print.dart';
 ///
 /// [workingDirectory] specifies the directory to start searching for the
 /// Git root. Defaults to [Directory.current]`.path`.
-Future<void> gitUp({String? workingDirectory}) async {
+Future<void> gitUp({String? workingDirectory, bool check = false}) async {
   workingDirectory ??= Directory.current.path;
 
   final gitDir = await getGitDir(workingDirectory);
+
+  if (await gitDir.isDirty()) {
+    printError('Please commit or stash your changes and try again.');
+    throw GitUpException('Working tree is dirty.');
+  }
 
   // 1. Determine Default Branch
   final defaultBranch = await getDefaultBranch(gitDir);
@@ -60,7 +65,7 @@ Future<void> gitUp({String? workingDirectory}) async {
         'Successfully updated $defaultBranch.',
   );
 
-  await _cleanBranches(gitDir, defaultBranch);
+  await _cleanBranches(gitDir, defaultBranch, check: check);
 
   await _runPostCommand(gitDir);
 }
@@ -242,126 +247,192 @@ Future<void> _runPostCommand(GitDir gitDir) async {
   }
 }
 
-Future<void> _cleanBranches(GitDir gitDir, String defaultBranch) async {
+Future<void> _cleanBranches(
+  GitDir gitDir,
+  String defaultBranch, {
+  bool check = false,
+}) async {
   print(styleDim.wrap('Fetching and pruning...') ?? 'Fetching and pruning...');
   try {
-    await gitDir.fetch(prune: true);
+    await gitDir.fetch(prune: true, all: true);
   } catch (e) {
     printError('Warning: failed to fetch and prune: $e');
   }
 
   final branchesStatus = await gitDir.getBranchesStatus();
   final goneBranches = <String, String>{}; // name -> sha
+  final activeRemoteBranches = <String>[]; // name
 
-  for (final MapEntry(key: branchName, value: (:sha, :isUpstreamGone))
+  for (final MapEntry(
+        key: branchName,
+        value: (:sha, :upstream, :isUpstreamGone),
+      )
       in branchesStatus.entries) {
-    if (isUpstreamGone) {
-      if (branchName == 'master' ||
-          branchName == 'main' ||
-          branchName == defaultBranch) {
-        continue;
-      }
-      goneBranches[branchName] = sha;
+    if (branchName == 'master' ||
+        branchName == 'main' ||
+        branchName == defaultBranch) {
+      continue;
     }
+
+    if (isUpstreamGone) {
+      goneBranches[branchName] = sha;
+    } else if (upstream.isNotEmpty) {
+      activeRemoteBranches.add(branchName);
+    }
+  }
+
+  // Only check gh if we actually need to (either we have gone branches, or
+  // check is enabled).
+  final needGh =
+      goneBranches.isNotEmpty || (check && activeRemoteBranches.isNotEmpty);
+
+  final ghAvailable = needGh && await gitDir.isGitHubCliAvailable();
+  Map<String, ({String state, String url, int number})>? recentPrs;
+  if (ghAvailable) {
+    recentPrs = await gitDir.getRecentPrsInfo();
   }
 
   if (goneBranches.isEmpty) {
     print('No local branches found with deleted upstreams.');
-    return;
-  }
-
-  print(
-    styleDim.wrap(
-          'Checking safety of ${goneBranches.length} branches with '
-          'gone upstreams...',
-        ) ??
-        'Checking safety of ${goneBranches.length} branches with '
+  } else {
+    print(
+      styleDim.wrap(
+            'Checking safety of ${goneBranches.length} branches with '
             'gone upstreams...',
-  );
+          ) ??
+          'Checking safety of ${goneBranches.length} branches with '
+              'gone upstreams...',
+    );
 
-  final ghAvailable = await gitDir.isGitHubCliAvailable();
-  Map<String, String>? recentPrs;
-  if (ghAvailable) {
-    recentPrs = await gitDir.getRecentPrsState();
-  }
+    final toDelete = <String>[];
 
-  final toDelete = <String>[];
+    for (final entry in goneBranches.entries) {
+      final branch = entry.key;
+      final sha = entry.value;
 
-  for (final entry in goneBranches.entries) {
-    final branch = entry.key;
-    final sha = entry.value;
-
-    // Tier 1: Local Checks
-    if (await gitDir.isMergedInto(branch, defaultBranch)) {
-      toDelete.add(branch);
-      continue;
-    }
-
-    // Tier 2 & 3: GitHub Checks (if available)
-    if (ghAvailable) {
-      String? prState;
-      final prNumber = await gitDir.getLocalPrNumber(branch);
-      if (prNumber != null) {
-        prState = await gitDir.getPrStateByNumber(prNumber);
-      } else {
-        prState = recentPrs?[branch];
-        prState ??= await gitDir.getPrStateByBranch(branch);
-      }
-
-      if (prState == 'MERGED') {
-        // PR is merged, but we have unmerged local commits!
-        if (stdin.hasTerminal) {
-          stdout.write(
-            yellow.wrap(
-                  'Branch "$branch" has a merged PR but contains unmerged local commits. Delete anyway? [y/N]: ',
-                ) ??
-                'Branch "$branch" has a merged PR but contains unmerged local commits. Delete anyway? [y/N]: ',
-          );
-          final response = stdin.readLineSync()?.trim().toLowerCase();
-          if (response == 'y' || response == 'yes') {
-            toDelete.add(branch);
-          } else {
-            print(
-              styleDim.wrap('Skipping deletion of "$branch".') ??
-                  'Skipping deletion of "$branch".',
-            );
-          }
-        } else {
-          printError(
-            'Warning: Branch "$branch" has a merged PR but contains '
-            'unmerged local commits. Skipping deletion.',
-          );
-        }
+      // Tier 1: Local Checks
+      if (await gitDir.isMergedInto(branch, defaultBranch)) {
+        toDelete.add(branch);
         continue;
       }
+
+      // Tier 2 & 3: GitHub Checks (if available)
+      if (ghAvailable) {
+        String? prState;
+        final prNumber = await gitDir.getLocalPrNumber(branch);
+        if (prNumber != null) {
+          prState = await gitDir.getPrStateByNumber(prNumber);
+        } else {
+          prState = recentPrs?[branch]?.state;
+          prState ??= await gitDir.getPrStateByBranch(branch);
+        }
+
+        if (prState == 'MERGED') {
+          // PR is merged, but we have unmerged local commits!
+          if (stdin.hasTerminal) {
+            stdout.write(
+              yellow.wrap(
+                    'Branch "$branch" has a merged PR but contains unmerged local commits. Delete anyway? [y/N]: ',
+                  ) ??
+                  'Branch "$branch" has a merged PR but contains unmerged local commits. Delete anyway? [y/N]: ',
+            );
+            final response = stdin.readLineSync()?.trim().toLowerCase();
+            if (response == 'y' || response == 'yes') {
+              toDelete.add(branch);
+            } else {
+              print(
+                styleDim.wrap('Skipping deletion of "$branch".') ??
+                    'Skipping deletion of "$branch".',
+              );
+            }
+          } else {
+            printError(
+              'Warning: Branch "$branch" has a merged PR but contains '
+              'unmerged local commits. Skipping deletion.',
+            );
+          }
+          continue;
+        }
+      }
+
+      // If we reach here, it's not merged and not approved for deletion
+      printError(
+        'Warning: Branch "$branch" ($sha) has a gone upstream but contains '
+        'unmerged commits. Skipping deletion.',
+      );
     }
 
-    // If we reach here, it's not merged and not approved for deletion
-    printError(
-      'Warning: Branch "$branch" ($sha) has a gone upstream but contains '
-      'unmerged commits. Skipping deletion.',
-    );
+    if (toDelete.isNotEmpty) {
+      print('Found ${toDelete.length} branches to delete:');
+      for (final branch in toDelete) {
+        print('  $branch (${goneBranches[branch]})');
+      }
+
+      for (final branch in toDelete) {
+        print('Deleting $branch...');
+        try {
+          await gitDir.deleteBranch(branch, force: true);
+          print('  Done!');
+        } catch (e) {
+          printError('Failed to delete $branch: $e');
+        }
+      }
+    }
   }
 
-  if (toDelete.isEmpty) {
-    return;
-  }
+  // Check active remote branches for closed PRs (only if check is enabled!)
+  if (check) {
+    if (activeRemoteBranches.isEmpty) {
+      print('No active remote branches to check.');
+    } else if (ghAvailable && recentPrs != null) {
+      var headingPrinted = false;
 
-  print('Found ${toDelete.length} branches to delete:');
-  for (final branch in toDelete) {
-    print('  $branch (${goneBranches[branch]})');
-  }
+      for (final branch in activeRemoteBranches) {
+        // Optimize: Only check branches present in the cached recent PRs map.
+        // This avoids making slow, sequential network calls for old/unrelated branches.
+        final prInfo = recentPrs[branch];
 
-  for (final branch in toDelete) {
-    print('Deleting $branch...');
-    try {
-      await gitDir.deleteBranch(branch, force: true);
-      print('  Done!');
-    } catch (e) {
-      printError('Failed to delete $branch: $e');
+        if (prInfo != null &&
+            (prInfo.state == 'MERGED' || prInfo.state == 'CLOSED')) {
+          if (!headingPrinted) {
+            print('');
+            print(
+              styleDim.wrap(
+                    'Checking active remote branches for closed PRs...',
+                  ) ??
+                  'Checking active remote branches for closed PRs...',
+            );
+            headingPrinted = true;
+          }
+
+          final prLabel = '#${prInfo.number}';
+          final branchLabel = styleBold.wrap(branch) ?? branch;
+          final link = _hyperlink(prInfo.url, 'Click here');
+          print(
+            'PR $prLabel for branch "$branchLabel" is closed, '
+            'but the remote branch still exists.\n'
+            '  $link to delete it: ${prInfo.url}',
+          );
+        }
+      }
+    }
+  } else {
+    // Print a subtle tip to remind the user about the feature!
+    if (activeRemoteBranches.isNotEmpty) {
+      print(
+        styleDim.wrap(
+              'Tip: Run with --check to inspect active remote branches '
+              'for closed PRs.',
+            ) ??
+            'Tip: Run with --check to inspect active remote branches '
+                'for closed PRs.',
+      );
     }
   }
 }
+
+String _hyperlink(String url, String text) =>
+    '\x1B]8;;$url\x1B\\$text\x1B]8;;\x1B\\';
 
 /// Exception thrown by `git-up` operations.
 ///

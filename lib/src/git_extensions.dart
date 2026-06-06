@@ -93,8 +93,9 @@ extension GitDirExtensions on GitDir {
 
   /// Fetches from remote, optionally pruning remote-tracking branches that no
   /// longer exist.
-  Future<void> fetch({bool prune = false}) async {
+  Future<void> fetch({bool prune = false, bool all = false}) async {
     final args = ['fetch'];
+    if (all) args.add('--all');
     if (prune) args.add('--prune');
     final result = await runCommand(args, throwOnError: false);
     if (result.exitCode != 0) {
@@ -128,28 +129,32 @@ extension GitDirExtensions on GitDir {
   /// Gets all local branches along with their upstream tracking status.
   ///
   /// Returns a map where the key is the branch name and the value is a record
-  /// containing the SHA and whether the upstream is 'gone'.
-  Future<Map<String, ({String sha, bool isUpstreamGone})>>
+  /// containing the SHA, upstream branch name (if any), and whether the
+  /// upstream is 'gone'.
+  Future<Map<String, ({String sha, String upstream, bool isUpstreamGone})>>
   getBranchesStatus() async {
-    final result = await runCommand([
-      'for-each-ref',
-      '--format=%(refname:short) %(upstream:track) %(objectname:short)',
-      'refs/heads',
-    ]);
+    const format =
+        '--format=%(refname:short)|%(upstream)|'
+        '%(upstream:track)|%(objectname:short)';
+    final result = await runCommand(['for-each-ref', format, 'refs/heads']);
 
-    final status = <String, ({String sha, bool isUpstreamGone})>{};
+    final status =
+        <String, ({String sha, String upstream, bool isUpstreamGone})>{};
     final lines = LineSplitter.split(result.stdout as String);
 
     for (final line in lines) {
-      final firstSpace = line.indexOf(' ');
-      final lastSpace = line.lastIndexOf(' ');
+      final parts = line.split('|');
+      if (parts.length == 4) {
+        final branchName = parts[0];
+        final upstream = parts[1];
+        final track = parts[2];
+        final sha = parts[3];
 
-      if (firstSpace != -1 && lastSpace > firstSpace) {
-        final branchName = line.substring(0, firstSpace);
-        final track = line.substring(firstSpace + 1, lastSpace).trim();
-        final sha = line.substring(lastSpace + 1);
-
-        status[branchName] = (sha: sha, isUpstreamGone: track == '[gone]');
+        status[branchName] = (
+          sha: sha,
+          upstream: upstream,
+          isUpstreamGone: track == '[gone]',
+        );
       }
     }
     return status;
@@ -272,21 +277,82 @@ extension GitDirExtensions on GitDir {
     return null;
   }
 
-  /// Retrieves the state of recent PRs in the repository.
+  /// Queries the GitHub API for the details of a PR by its number.
   ///
-  /// Returns a map of head branch names to their PR state.
-  Future<Map<String, String>> getRecentPrsState({int limit = 100}) async {
-    final prStates = <String, String>{};
+  /// Returns the PR details or null if not found.
+  Future<({String state, String url, int number})?> getPrInfoByNumber(
+    int prNumber,
+  ) async {
+    try {
+      final result = await Process.run('gh', [
+        'pr',
+        'view',
+        prNumber.toString(),
+        '--json',
+        'state,url,number',
+      ]);
+      if (result.exitCode == 0) {
+        final data =
+            jsonDecode(result.stdout as String) as Map<String, dynamic>;
+        return (
+          state: data['state'] as String,
+          url: data['url'] as String,
+          number: data['number'] as int,
+        );
+      }
+    } catch (_) {
+      // Ignore and return null
+    }
+    return null;
+  }
+
+  /// Queries the GitHub API for the details of a PR by branch name.
+  ///
+  /// Returns the PR details or null if not found.
+  Future<({String state, String url, int number})?> getPrInfoByBranch(
+    String branchName,
+  ) async {
+    try {
+      final result = await Process.run('gh', [
+        'pr',
+        'view',
+        branchName,
+        '--json',
+        'state,url,number',
+      ]);
+      if (result.exitCode == 0) {
+        final data =
+            jsonDecode(result.stdout as String) as Map<String, dynamic>;
+        return (
+          state: data['state'] as String,
+          url: data['url'] as String,
+          number: data['number'] as int,
+        );
+      }
+    } catch (_) {
+      // Ignore and return null
+    }
+    return null;
+  }
+
+  /// Retrieves the details of recent PRs in the repository.
+  ///
+  /// Returns a map of head branch names to their PR details.
+  Future<Map<String, ({String state, String url, int number})>>
+  getRecentPrsInfo({int limit = 100}) async {
+    final prs = <String, ({String state, String url, int number})>{};
     try {
       final result = await Process.run('gh', [
         'pr',
         'list',
         '--state',
         'all',
+        '--author',
+        '@me',
         '--limit',
         limit.toString(),
         '--json',
-        'headRefName,state',
+        'headRefName,state,url,number',
       ]);
       if (result.exitCode == 0) {
         final list = jsonDecode(result.stdout as String) as List<dynamic>;
@@ -294,8 +360,13 @@ extension GitDirExtensions on GitDir {
           if (item is Map<String, dynamic>) {
             final head = item['headRefName'] as String?;
             final state = item['state'] as String?;
-            if (head != null && state != null) {
-              prStates[head] = state;
+            final url = item['url'] as String?;
+            final number = item['number'] as int?;
+            if (head != null &&
+                state != null &&
+                url != null &&
+                number != null) {
+              prs[head] = (state: state, url: url, number: number);
             }
           }
         }
@@ -303,7 +374,16 @@ extension GitDirExtensions on GitDir {
     } catch (_) {
       // Ignore and return empty map
     }
-    return prStates;
+    return prs;
+  }
+
+  /// Checks if the working tree is dirty (has modified or staged tracked
+  /// files).
+  ///
+  /// Ignores untracked files.
+  Future<bool> isDirty() async {
+    final result = await runCommand(['status', '--porcelain', '-uno']);
+    return (result.stdout as String).trim().isNotEmpty;
   }
 
   /// Configures a standard test identity for the repository.
