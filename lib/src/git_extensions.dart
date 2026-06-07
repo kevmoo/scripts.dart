@@ -181,7 +181,36 @@ extension GitDirExtensions on GitDir {
       return true;
     }
 
-    // 2. Squash merge check using git merge-tree
+    // 2. Tree history match check (fast squash-merge check)
+    try {
+      final branchTreeResult = await runCommand([
+        'rev-parse',
+        '$branchName^{tree}',
+      ], throwOnError: false);
+      if (branchTreeResult.exitCode == 0) {
+        final branchTree = (branchTreeResult.stdout as String).trim();
+
+        // Get tree hashes of the last 1000 commits in targetBranch's history.
+        final targetTreesResult = await runCommand([
+          'log',
+          targetBranch,
+          '--format=%T',
+          '-n',
+          '1000',
+        ], throwOnError: false);
+
+        if (targetTreesResult.exitCode == 0) {
+          final targetTrees = (targetTreesResult.stdout as String).split('\n');
+          if (targetTrees.contains(branchTree)) {
+            return true;
+          }
+        }
+      }
+    } catch (_) {
+      // Fallback to next check
+    }
+
+    // 3. Squash merge check using git merge-tree
     try {
       final targetTreeResult = await runCommand([
         'rev-parse',
