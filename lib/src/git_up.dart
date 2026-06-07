@@ -254,7 +254,7 @@ Future<void> _cleanBranches(
 }) async {
   print(styleDim.wrap('Fetching and pruning...') ?? 'Fetching and pruning...');
   try {
-    await gitDir.fetch(prune: true, all: true);
+    await gitDir.fetch(prune: true);
   } catch (e) {
     printError('Warning: failed to fetch and prune: $e');
   }
@@ -384,7 +384,12 @@ Future<void> _cleanBranches(
   if (check) {
     if (activeRemoteBranches.isEmpty) {
       print('No active remote branches to check.');
-    } else if (ghAvailable && recentPrs != null) {
+    } else if (!ghAvailable) {
+      printError(
+        'Warning: GitHub CLI (gh) is not available or authenticated. '
+        'Skipping active remote branch checks.',
+      );
+    } else if (recentPrs != null) {
       var headingPrinted = false;
 
       for (final branch in activeRemoteBranches) {

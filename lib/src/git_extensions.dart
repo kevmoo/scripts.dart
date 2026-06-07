@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:git/git.dart';
 
+bool mockGhUnavailableForTesting = false;
+
 /// Extensions on [GitDir] to provide high-level operations used in this
 /// package.
 ///
@@ -134,8 +136,8 @@ extension GitDirExtensions on GitDir {
   Future<Map<String, ({String sha, String upstream, bool isUpstreamGone})>>
   getBranchesStatus() async {
     const format =
-        '--format=%(refname:short)|%(upstream)|'
-        '%(upstream:track)|%(objectname:short)';
+        '--format=%(refname:short)\t%(upstream)\t'
+        '%(upstream:track)\t%(objectname:short)';
     final result = await runCommand(['for-each-ref', format, 'refs/heads']);
 
     final status =
@@ -143,7 +145,7 @@ extension GitDirExtensions on GitDir {
     final lines = LineSplitter.split(result.stdout as String);
 
     for (final line in lines) {
-      final parts = line.split('|');
+      final parts = line.split('\t');
       if (parts.length == 4) {
         final branchName = parts[0];
         final upstream = parts[1];
@@ -207,6 +209,9 @@ extension GitDirExtensions on GitDir {
 
   /// Checks if the `gh` CLI is available and authenticated.
   Future<bool> isGitHubCliAvailable() async {
+    if (mockGhUnavailableForTesting) {
+      return false;
+    }
     try {
       final result = await Process.run('gh', ['auth', 'status']);
       return result.exitCode == 0;
@@ -270,64 +275,6 @@ extension GitDirExtensions on GitDir {
         final data =
             jsonDecode(result.stdout as String) as Map<String, dynamic>;
         return data['state'] as String?;
-      }
-    } catch (_) {
-      // Ignore and return null
-    }
-    return null;
-  }
-
-  /// Queries the GitHub API for the details of a PR by its number.
-  ///
-  /// Returns the PR details or null if not found.
-  Future<({String state, String url, int number})?> getPrInfoByNumber(
-    int prNumber,
-  ) async {
-    try {
-      final result = await Process.run('gh', [
-        'pr',
-        'view',
-        prNumber.toString(),
-        '--json',
-        'state,url,number',
-      ]);
-      if (result.exitCode == 0) {
-        final data =
-            jsonDecode(result.stdout as String) as Map<String, dynamic>;
-        return (
-          state: data['state'] as String,
-          url: data['url'] as String,
-          number: data['number'] as int,
-        );
-      }
-    } catch (_) {
-      // Ignore and return null
-    }
-    return null;
-  }
-
-  /// Queries the GitHub API for the details of a PR by branch name.
-  ///
-  /// Returns the PR details or null if not found.
-  Future<({String state, String url, int number})?> getPrInfoByBranch(
-    String branchName,
-  ) async {
-    try {
-      final result = await Process.run('gh', [
-        'pr',
-        'view',
-        branchName,
-        '--json',
-        'state,url,number',
-      ]);
-      if (result.exitCode == 0) {
-        final data =
-            jsonDecode(result.stdout as String) as Map<String, dynamic>;
-        return (
-          state: data['state'] as String,
-          url: data['url'] as String,
-          number: data['number'] as int,
-        );
       }
     } catch (_) {
       // Ignore and return null

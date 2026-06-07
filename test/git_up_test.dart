@@ -386,4 +386,46 @@ void main() {
       expect(goneUpstream!.isUpstreamGone, isTrue);
     },
   );
+
+  test(
+    'getBranchesStatus handles branch names containing pipe character',
+    () async {
+      const branchName = 'feature|pipe-branch';
+      await localGitDir.runCommand(['checkout', '-b', branchName]);
+      await localGitDir.runCommand(['push', '-u', 'origin', branchName]);
+
+      final status = await localGitDir.getBranchesStatus();
+      final branchStatus = status[branchName];
+      expect(branchStatus, isNotNull);
+      expect(
+        branchStatus!.upstream,
+        contains('refs/remotes/origin/$branchName'),
+      );
+      expect(branchStatus.isUpstreamGone, isFalse);
+    },
+  );
+
+  test('gitUp with check: true warns if GitHub CLI is unavailable', () async {
+    mockGhUnavailableForTesting = true;
+    addTearDown(() => mockGhUnavailableForTesting = false);
+
+    await localGitDir.runCommand(['checkout', '-b', 'feature-active']);
+    await localGitDir.runCommand(['push', '-u', 'origin', 'feature-active']);
+
+    await localGitDir.runCommand(['checkout', 'main']);
+
+    await expectLater(
+      () => wrappedForTesting(
+        () => gitUp(workingDirectory: localPath, check: true),
+      ),
+      prints(
+        allOf(
+          contains(
+            'Warning: GitHub CLI (gh) is not available or authenticated.',
+          ),
+          contains('Skipping active remote branch checks.'),
+        ),
+      ),
+    );
+  });
 }
