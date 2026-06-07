@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:git/git.dart';
 
 bool mockGhUnavailableForTesting = false;
+Map<String, ({String state, String url, int number})>? mockRecentPrsForTesting;
 
 /// Extensions on [GitDir] to provide high-level operations used in this
 /// package.
@@ -220,6 +221,16 @@ extension GitDirExtensions on GitDir {
     }
   }
 
+  /// Checks if a remote-tracking branch named [branchName] exists for `origin`.
+  Future<bool> hasRemoteBranch(String branchName) async {
+    final result = await runCommand([
+      'show-ref',
+      '--verify',
+      'refs/remotes/origin/$branchName',
+    ], throwOnError: false);
+    return result.exitCode == 0;
+  }
+
   /// Gets the PR number stored in the local git config for [branchName], if
   /// any.
   Future<int?> getLocalPrNumber(String branchName) async {
@@ -287,6 +298,9 @@ extension GitDirExtensions on GitDir {
   /// Returns a map of head branch names to their PR details.
   Future<Map<String, ({String state, String url, int number})>>
   getRecentPrsInfo({int limit = 100}) async {
+    if (mockRecentPrsForTesting != null) {
+      return mockRecentPrsForTesting!;
+    }
     final prs = <String, ({String state, String url, int number})>{};
     try {
       final result = await Process.run('gh', [

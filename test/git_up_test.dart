@@ -428,4 +428,131 @@ void main() {
       ),
     );
   });
+
+  test('gitUp with check: true warns if remote branch still exists', () async {
+    mockGhUnavailableForTesting = false;
+    mockRecentPrsForTesting = {
+      'feature-check': (
+        state: 'CLOSED',
+        url: 'https://github.com/kevmoo/scripts/pull/123',
+        number: 123,
+      ),
+    };
+    addTearDown(() {
+      mockRecentPrsForTesting = null;
+    });
+
+    await localGitDir.runCommand(['checkout', '-b', 'feature-check']);
+    await localGitDir.runCommand(['push', '-u', 'origin', 'feature-check']);
+
+    await localGitDir.runCommand(['checkout', 'main']);
+
+    await expectLater(
+      () => wrappedForTesting(
+        () => gitUp(workingDirectory: localPath, check: true),
+      ),
+      prints(
+        allOf(
+          contains('Checking active remote branches for closed PRs...'),
+          contains('PR #123 for branch "feature-check" is closed,'),
+          contains('but the remote branch still exists.'),
+        ),
+      ),
+    );
+  });
+
+  test(
+    'gitUp with check: true does NOT warn if remote branch is deleted/pruned',
+    () async {
+      mockGhUnavailableForTesting = false;
+      mockRecentPrsForTesting = {
+        'feature-check-deleted': (
+          state: 'CLOSED',
+          url: 'https://github.com/kevmoo/scripts/pull/123',
+          number: 123,
+        ),
+      };
+      addTearDown(() {
+        mockRecentPrsForTesting = null;
+      });
+
+      // 1. Create and push branch
+      await localGitDir.runCommand(['checkout', '-b', 'feature-check-deleted']);
+      await localGitDir.runCommand([
+        'push',
+        '-u',
+        'origin',
+        'feature-check-deleted',
+      ]);
+
+      // 2. Switch to main
+      await localGitDir.runCommand(['checkout', 'main']);
+
+      // 3. Delete remote branch on the "remote" repo
+      final remoteGitDir = await GitDir.fromExisting(
+        p.join(d.sandbox, 'remote'),
+      );
+      await remoteGitDir.runCommand(['branch', '-D', 'feature-check-deleted']);
+
+      // 4. Run gitUp - this will fetch and prune, deleting origin/feature-check-deleted locally,
+      // so the warning should NOT be printed!
+      await expectLater(
+        () => wrappedForTesting(
+          () => gitUp(workingDirectory: localPath, check: true),
+        ),
+        prints(
+          isNot(
+            contains('PR #123 for branch "feature-check-deleted" is closed'),
+          ),
+        ),
+      );
+    },
+  );
+
+  test('gitUp cleans up local branches that have merged PRs '
+      'even if their upstream is not gone', () async {
+    mockGhUnavailableForTesting = false;
+    mockRecentPrsForTesting = {
+      'feature-merged-active': (
+        state: 'MERGED',
+        url: 'https://github.com/kevmoo/scripts/pull/123',
+        number: 123,
+      ),
+    };
+    addTearDown(() {
+      mockRecentPrsForTesting = null;
+    });
+
+    // 1. Create a branch and push it (active upstream)
+    await localGitDir.runCommand(['checkout', '-b', 'feature-merged-active']);
+    await localGitDir.runCommand([
+      'push',
+      '-u',
+      'origin',
+      'feature-merged-active',
+    ]);
+
+    // 2. Switch back to main
+    await localGitDir.runCommand(['checkout', 'main']);
+
+    // 3. Run gitUp - should detect the merged PR and clean up the branch
+    // locally, even though the remote branch is NOT deleted (since we did
+    // not delete it on remote)!
+    await expectLater(
+      () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+      prints(
+        allOf(
+          contains('Checking safety of 1 branches with gone upstreams...'),
+          contains('Deleting feature-merged-active...'),
+        ),
+      ),
+    );
+
+    // Verify it was deleted
+    final branches = await localGitDir.branches();
+    expect(
+      branches.map((b) => b.branchName),
+      isNot(contains('feature-merged-active')),
+    );
+  });
 }

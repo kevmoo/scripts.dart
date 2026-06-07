@@ -282,14 +282,26 @@ Future<void> _cleanBranches(
   }
 
   // Only check gh if we actually need to (either we have gone branches, or
-  // check is enabled).
-  final needGh =
-      goneBranches.isNotEmpty || (check && activeRemoteBranches.isNotEmpty);
+  // we have active remote branches that might have been merged).
+  final needGh = goneBranches.isNotEmpty || activeRemoteBranches.isNotEmpty;
 
   final ghAvailable = needGh && await gitDir.isGitHubCliAvailable();
   Map<String, ({String state, String url, int number})>? recentPrs;
   if (ghAvailable) {
     recentPrs = await gitDir.getRecentPrsInfo();
+
+    final toMove = <String>[];
+    for (final branch in activeRemoteBranches) {
+      final prInfo = recentPrs[branch];
+      if (prInfo != null && prInfo.state == 'MERGED') {
+        toMove.add(branch);
+      }
+    }
+
+    for (final branch in toMove) {
+      activeRemoteBranches.remove(branch);
+      goneBranches[branch] = branchesStatus[branch]!.sha;
+    }
   }
 
   if (goneBranches.isEmpty) {
@@ -399,25 +411,27 @@ Future<void> _cleanBranches(
 
         if (prInfo != null &&
             (prInfo.state == 'MERGED' || prInfo.state == 'CLOSED')) {
-          if (!headingPrinted) {
-            print('');
-            print(
-              styleDim.wrap(
+          if (await gitDir.hasRemoteBranch(branch)) {
+            if (!headingPrinted) {
+              print('');
+              print(
+                styleDim.wrap(
+                      'Checking active remote branches for closed PRs...',
+                    ) ??
                     'Checking active remote branches for closed PRs...',
-                  ) ??
-                  'Checking active remote branches for closed PRs...',
-            );
-            headingPrinted = true;
-          }
+              );
+              headingPrinted = true;
+            }
 
-          final prLabel = '#${prInfo.number}';
-          final branchLabel = styleBold.wrap(branch) ?? branch;
-          final link = _hyperlink(prInfo.url, 'Click here');
-          print(
-            'PR $prLabel for branch "$branchLabel" is closed, '
-            'but the remote branch still exists.\n'
-            '  $link to delete it: ${prInfo.url}',
-          );
+            final prLabel = '#${prInfo.number}';
+            final branchLabel = styleBold.wrap(branch) ?? branch;
+            final link = _hyperlink(prInfo.url, 'Click here');
+            print(
+              'PR $prLabel for branch "$branchLabel" is closed, '
+              'but the remote branch still exists.\n'
+              '  $link to delete it: ${prInfo.url}',
+            );
+          }
         }
       }
     }
