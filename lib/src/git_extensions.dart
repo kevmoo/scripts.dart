@@ -210,30 +210,6 @@ extension GitDirExtensions on GitDir {
       // Fallback to next check
     }
 
-    // 3. Squash merge check using git merge-tree
-    try {
-      final targetTreeResult = await runCommand([
-        'rev-parse',
-        '$targetBranch^{tree}',
-      ]);
-      final targetTree = (targetTreeResult.stdout as String).trim();
-
-      final mergeTreeResult = await runCommand([
-        'merge-tree',
-        targetBranch,
-        branchName,
-      ], throwOnError: false);
-
-      if (mergeTreeResult.exitCode == 0) {
-        final mergeTree = (mergeTreeResult.stdout as String)
-            .split('\n')
-            .first
-            .trim();
-        return mergeTree == targetTree;
-      }
-    } catch (_) {
-      // Fallback to false for safety
-    }
     return false;
   }
 
