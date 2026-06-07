@@ -9,14 +9,15 @@ Future<void> main(List<String> arguments) async {
   final help = arguments.contains('--help') || arguments.contains('-h');
   if (help) {
     print('Safely switch to and update the default branch.');
-    print('Usage: git-up [--verbose | -v] [--help | -h]');
+    print('Usage: git-up [--check | -c] [--verbose | -v] [--help | -h]');
     return;
   }
 
   final verbose = arguments.contains('--verbose') || arguments.contains('-v');
+  final check = arguments.contains('--check') || arguments.contains('-c');
 
   try {
-    await gitUp();
+    await gitUp(check: check);
   } on GitUpException catch (e, stack) {
     setError(
       message: e.message,

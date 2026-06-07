@@ -200,24 +200,27 @@ void main() {
     },
   );
 
-  test('gitUp fails when working tree is dirty and conflicts', () async {
-    final filePath = p.join(localPath, 'conflict.txt');
+  test('gitUp fails immediately when working tree is dirty', () async {
+    final filePath = p.join(localPath, 'dirty.txt');
     File(filePath).writeAsStringSync('content A');
-    await localGitDir.runCommand(['add', 'conflict.txt']);
-    await localGitDir.runCommand(['commit', '-m', 'add conflict.txt']);
+    await localGitDir.runCommand(['add', 'dirty.txt']);
+    await localGitDir.runCommand(['commit', '-m', 'add dirty.txt']);
 
-    await localGitDir.runCommand(['checkout', '-b', 'feature']);
-
+    // Make it dirty
     File(filePath).writeAsStringSync('content B');
-    await localGitDir.runCommand(['add', 'conflict.txt']);
-    await localGitDir.runCommand(['commit', '-m', 'update conflict.txt']);
 
-    File(filePath).writeAsStringSync('content C');
-
-    await expectLater(
-      () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-      throwsA(isA<GitUpException>()),
-    );
+    await expectLater(() async {
+      await expectLater(
+        () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+        throwsA(
+          isA<GitUpException>().having(
+            (e) => e.message,
+            'message',
+            contains('Working tree is dirty.'),
+          ),
+        ),
+      );
+    }, prints(contains('Please commit or stash your changes and try again.')));
   });
 
   test('gitUp cleans up standard-merged gone branches', () async {
@@ -331,6 +334,98 @@ void main() {
     expect(
       branches.map((b) => b.branchName),
       isNot(contains('feature-squash')),
+    );
+  });
+
+  test(
+    'getBranchesStatus returns correct upstream and isUpstreamGone',
+    () async {
+      // 1. Create a branch with no upstream
+      await localGitDir.runCommand(['checkout', '-b', 'branch-no-upstream']);
+
+      // 2. Create a branch with active upstream
+      await localGitDir.runCommand(['checkout', '-b', 'branch-with-upstream']);
+      await localGitDir.runCommand([
+        'push',
+        '-u',
+        'origin',
+        'branch-with-upstream',
+      ]);
+
+      // 3. Create a branch with gone upstream
+      await localGitDir.runCommand(['checkout', '-b', 'branch-gone-upstream']);
+      await localGitDir.runCommand([
+        'push',
+        '-u',
+        'origin',
+        'branch-gone-upstream',
+      ]);
+      final remoteGitDir = await GitDir.fromExisting(
+        p.join(d.sandbox, 'remote'),
+      );
+      await remoteGitDir.runCommand(['branch', '-D', 'branch-gone-upstream']);
+      await localGitDir.runCommand(['fetch', '--prune']);
+
+      final status = await localGitDir.getBranchesStatus();
+
+      final noUpstream = status['branch-no-upstream'];
+      expect(noUpstream, isNotNull);
+      expect(noUpstream!.upstream, isEmpty);
+      expect(noUpstream.isUpstreamGone, isFalse);
+
+      final withUpstream = status['branch-with-upstream'];
+      expect(withUpstream, isNotNull);
+      expect(
+        withUpstream!.upstream,
+        contains('refs/remotes/origin/branch-with-upstream'),
+      );
+      expect(withUpstream.isUpstreamGone, isFalse);
+
+      final goneUpstream = status['branch-gone-upstream'];
+      expect(goneUpstream, isNotNull);
+      expect(goneUpstream!.isUpstreamGone, isTrue);
+    },
+  );
+
+  test(
+    'getBranchesStatus handles branch names containing pipe character',
+    () async {
+      const branchName = 'feature|pipe-branch';
+      await localGitDir.runCommand(['checkout', '-b', branchName]);
+      await localGitDir.runCommand(['push', '-u', 'origin', branchName]);
+
+      final status = await localGitDir.getBranchesStatus();
+      final branchStatus = status[branchName];
+      expect(branchStatus, isNotNull);
+      expect(
+        branchStatus!.upstream,
+        contains('refs/remotes/origin/$branchName'),
+      );
+      expect(branchStatus.isUpstreamGone, isFalse);
+    },
+  );
+
+  test('gitUp with check: true warns if GitHub CLI is unavailable', () async {
+    mockGhUnavailableForTesting = true;
+    addTearDown(() => mockGhUnavailableForTesting = false);
+
+    await localGitDir.runCommand(['checkout', '-b', 'feature-active']);
+    await localGitDir.runCommand(['push', '-u', 'origin', 'feature-active']);
+
+    await localGitDir.runCommand(['checkout', 'main']);
+
+    await expectLater(
+      () => wrappedForTesting(
+        () => gitUp(workingDirectory: localPath, check: true),
+      ),
+      prints(
+        allOf(
+          contains(
+            'Warning: GitHub CLI (gh) is not available or authenticated.',
+          ),
+          contains('Skipping active remote branch checks.'),
+        ),
+      ),
     );
   });
 }
