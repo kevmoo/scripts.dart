@@ -282,7 +282,8 @@ void main() {
           contains('Checking safety of 1 branches with gone upstreams...'),
           contains(
             'Warning: Branch "feature-unmerged" ($sha) has a gone upstream '
-            'but contains unmerged commits. Skipping deletion.',
+            'but contains unmerged commits (relative to main). '
+            'Skipping deletion.',
           ),
         ),
       ),
@@ -336,6 +337,87 @@ void main() {
       isNot(contains('feature-squash')),
     );
   });
+
+  test(
+    'gitUp cleans up squash-merged gone branches even when main has progressed',
+    () async {
+      // 1. Create and commit to feature-squash-progressed
+      await localGitDir.runCommand([
+        'checkout',
+        '-b',
+        'feature-squash-progressed',
+      ]);
+      final filePath = p.join(localPath, 'squash_prog.txt');
+      File(filePath).writeAsStringSync('squash progressed content');
+      await localGitDir.runCommand(['add', 'squash_prog.txt']);
+      await localGitDir.runCommand([
+        'commit',
+        '-m',
+        'Squash progressed commit',
+      ]);
+
+      // 2. Push to remote
+      await localGitDir.runCommand([
+        'push',
+        '-u',
+        'origin',
+        'feature-squash-progressed',
+      ]);
+
+      // 3. Switch to main
+      await localGitDir.runCommand(['checkout', 'main']);
+
+      // 4. Simulate an unrelated commit on remote main
+      final remoteGitDir = await GitDir.fromExisting(
+        p.join(d.sandbox, 'remote'),
+      );
+      final remoteUnrelatedPath = p.join(d.sandbox, 'remote', 'unrelated.txt');
+      File(remoteUnrelatedPath).writeAsStringSync('unrelated content');
+      await remoteGitDir.runCommand(['add', 'unrelated.txt']);
+      await remoteGitDir.runCommand([
+        'commit',
+        '-m',
+        'Unrelated commit on main',
+      ]);
+
+      // 5. Simulate squash merge on remote main
+      final remoteFilePath = p.join(d.sandbox, 'remote', 'squash_prog.txt');
+      File(remoteFilePath).writeAsStringSync('squash progressed content');
+      await remoteGitDir.runCommand(['add', 'squash_prog.txt']);
+      await remoteGitDir.runCommand([
+        'commit',
+        '-m',
+        'Squashed PR progressed commit (#2)',
+      ]);
+
+      // 6. Delete remote branch feature-squash-progressed
+      await remoteGitDir.runCommand([
+        'branch',
+        '-D',
+        'feature-squash-progressed',
+      ]);
+
+      // 7. Run gitUp - should pull squashed main (with both commits) and
+      //    clean up feature-squash-progressed
+      await expectLater(
+        () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+        prints(
+          allOf(
+            contains('Successfully updated main.'),
+            contains('Checking safety of 1 branches with gone upstreams...'),
+            contains('Deleting feature-squash-progressed...'),
+          ),
+        ),
+      );
+
+      // Verify it was deleted
+      final branches = await localGitDir.branches();
+      expect(
+        branches.map((b) => b.branchName),
+        isNot(contains('feature-squash-progressed')),
+      );
+    },
+  );
 
   test(
     'getBranchesStatus returns correct upstream and isUpstreamGone',
@@ -430,15 +512,18 @@ void main() {
   });
 
   test('gitUp with check: true warns if remote branch still exists', () async {
+    mockGhAvailableForTesting = true;
     mockGhUnavailableForTesting = false;
     mockRecentPrsForTesting = {
       'feature-check': (
         state: 'CLOSED',
         url: 'https://github.com/kevmoo/scripts/pull/123',
         number: 123,
+        baseBranch: 'main',
       ),
     };
     addTearDown(() {
+      mockGhAvailableForTesting = false;
       mockRecentPrsForTesting = null;
     });
 
@@ -464,15 +549,18 @@ void main() {
   test(
     'gitUp with check: true does NOT warn if remote branch is deleted/pruned',
     () async {
+      mockGhAvailableForTesting = true;
       mockGhUnavailableForTesting = false;
       mockRecentPrsForTesting = {
         'feature-check-deleted': (
           state: 'CLOSED',
           url: 'https://github.com/kevmoo/scripts/pull/123',
           number: 123,
+          baseBranch: 'main',
         ),
       };
       addTearDown(() {
+        mockGhAvailableForTesting = false;
         mockRecentPrsForTesting = null;
       });
 
@@ -511,15 +599,18 @@ void main() {
 
   test('gitUp cleans up local branches that have merged PRs '
       'even if their upstream is not gone', () async {
+    mockGhAvailableForTesting = true;
     mockGhUnavailableForTesting = false;
     mockRecentPrsForTesting = {
       'feature-merged-active': (
         state: 'MERGED',
         url: 'https://github.com/kevmoo/scripts/pull/123',
         number: 123,
+        baseBranch: 'main',
       ),
     };
     addTearDown(() {
+      mockGhAvailableForTesting = false;
       mockRecentPrsForTesting = null;
     });
 
@@ -555,4 +646,170 @@ void main() {
       isNot(contains('feature-merged-active')),
     );
   });
+
+  test(
+    'gitUp cleans up gone branches merged into a non-default branch',
+    () async {
+      mockGhAvailableForTesting = true;
+      mockGhUnavailableForTesting = false;
+      mockRecentPrsForTesting = {
+        'feature-merged-non-default': (
+          state: 'MERGED',
+          url: 'https://github.com/kevmoo/scripts/pull/124',
+          number: 124,
+          baseBranch: 'feature-base',
+        ),
+      };
+      addTearDown(() {
+        mockGhAvailableForTesting = false;
+        mockRecentPrsForTesting = null;
+      });
+
+      // 1. Create the base branch 'feature-base'
+      await localGitDir.runCommand(['checkout', '-b', 'feature-base']);
+      await localGitDir.runCommand(['push', '-u', 'origin', 'feature-base']);
+
+      // 2. Create the feature branch 'feature-merged-non-default' from
+      //    'feature-base'
+      await localGitDir.runCommand([
+        'checkout',
+        '-b',
+        'feature-merged-non-default',
+      ]);
+      final filePath = p.join(localPath, 'feature.txt');
+      File(filePath).writeAsStringSync('feature content');
+      await localGitDir.runCommand(['add', 'feature.txt']);
+      await localGitDir.runCommand(['commit', '-m', 'Feature commit']);
+
+      // 3. Push feature branch
+      await localGitDir.runCommand([
+        'push',
+        '-u',
+        'origin',
+        'feature-merged-non-default',
+      ]);
+
+      // 4. Switch back to main
+      await localGitDir.runCommand(['checkout', 'main']);
+
+      // Delete the local base branch so it ONLY exists as origin/feature-base remote-tracking!
+      await localGitDir.runCommand(['branch', '-D', 'feature-base']);
+
+      // 5. Simulate merge of feature branch into 'feature-base' on remote
+      final remoteGitDir = await GitDir.fromExisting(
+        p.join(d.sandbox, 'remote'),
+      );
+      await remoteGitDir.runCommand(['checkout', 'feature-base']);
+      final remoteFilePath = p.join(d.sandbox, 'remote', 'feature.txt');
+      File(remoteFilePath).writeAsStringSync('feature content');
+      await remoteGitDir.runCommand(['add', 'feature.txt']);
+      await remoteGitDir.runCommand(['commit', '-m', 'Merged feature (#124)']);
+
+      // 6. Delete remote feature branch
+      await remoteGitDir.runCommand([
+        'branch',
+        '-D',
+        'feature-merged-non-default',
+      ]);
+
+      // 7. Run gitUp - should fetch and prune, then detect that
+      //    feature-merged-non-default is merged into origin/feature-base
+      //    (since we resolve lookups and check origin/feature-base!).
+      //    It should delete feature-merged-non-default silently.
+      await expectLater(
+        () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+        prints(
+          allOf(
+            contains('Checking safety of 1 branches with gone upstreams...'),
+            contains('Deleting feature-merged-non-default...'),
+          ),
+        ),
+      );
+
+      // Verify it was deleted
+      final branches = await localGitDir.branches();
+      expect(
+        branches.map((b) => b.branchName),
+        isNot(contains('feature-merged-non-default')),
+      );
+    },
+  );
+
+  test('resolveLookups returns empty set when branchName is empty', () async {
+    final refs = await localGitDir.resolveLookups('');
+    expect(refs, isEmpty);
+  });
+
+  test(
+    'gitUp falls back to default branch when PR baseBranch is empty',
+    () async {
+      mockGhAvailableForTesting = true;
+      mockGhUnavailableForTesting = false;
+      mockRecentPrsForTesting = {
+        'feature-empty-base': (
+          state: 'MERGED',
+          url: 'https://github.com/kevmoo/scripts/pull/125',
+          number: 125,
+          baseBranch: '', // Empty base branch!
+        ),
+      };
+      addTearDown(() {
+        mockGhAvailableForTesting = false;
+        mockRecentPrsForTesting = null;
+      });
+
+      // 1. Create and commit to feature-empty-base
+      await localGitDir.runCommand(['checkout', '-b', 'feature-empty-base']);
+      final filePath = p.join(localPath, 'empty_base.txt');
+      File(filePath).writeAsStringSync('empty base content');
+      await localGitDir.runCommand(['add', 'empty_base.txt']);
+      await localGitDir.runCommand(['commit', '-m', 'Empty base commit']);
+
+      // 2. Push to remote
+      await localGitDir.runCommand([
+        'push',
+        '-u',
+        'origin',
+        'feature-empty-base',
+      ]);
+
+      // 3. Switch to main
+      await localGitDir.runCommand(['checkout', 'main']);
+
+      // 4. Simulate squash merge on remote main
+      final remoteGitDir = await GitDir.fromExisting(
+        p.join(d.sandbox, 'remote'),
+      );
+      final remoteFilePath = p.join(d.sandbox, 'remote', 'empty_base.txt');
+      File(remoteFilePath).writeAsStringSync('empty base content');
+      await remoteGitDir.runCommand(['add', 'empty_base.txt']);
+      await remoteGitDir.runCommand([
+        'commit',
+        '-m',
+        'Squashed PR empty base commit (#125)',
+      ]);
+
+      // 5. Delete remote branch feature-empty-base
+      await remoteGitDir.runCommand(['branch', '-D', 'feature-empty-base']);
+
+      // 6. Run gitUp - should fall back to main and clean up feature-empty-base
+      await expectLater(
+        () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+        prints(
+          allOf(
+            contains('Successfully updated main.'),
+            contains('Checking safety of 1 branches with gone upstreams...'),
+            contains('Deleting feature-empty-base...'),
+          ),
+        ),
+      );
+
+      // Verify it was deleted
+      final branches = await localGitDir.branches();
+      expect(
+        branches.map((b) => b.branchName),
+        isNot(contains('feature-empty-base')),
+      );
+    },
+  );
 }
