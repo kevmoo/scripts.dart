@@ -444,6 +444,22 @@ extension GitDirExtensions on GitDir {
       refs.add((localResult.stdout as String).trim());
     }
 
+    // Try all remote-tracking branches matching the name across all remotes
+    final remotesResult = await runCommand([
+      'for-each-ref',
+      '--format=%(refname)',
+      'refs/remotes/*/$branchName',
+    ], throwOnError: false);
+    if (remotesResult.exitCode == 0) {
+      final lines = LineSplitter.split(remotesResult.stdout as String);
+      for (final line in lines) {
+        final ref = line.trim();
+        if (ref.isNotEmpty) {
+          refs.add(ref);
+        }
+      }
+    }
+
     return refs.toList();
   }
 }

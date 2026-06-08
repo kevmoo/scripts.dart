@@ -692,6 +692,9 @@ void main() {
       // 4. Switch back to main
       await localGitDir.runCommand(['checkout', 'main']);
 
+      // Delete the local base branch so it ONLY exists as origin/feature-base remote-tracking!
+      await localGitDir.runCommand(['branch', '-D', 'feature-base']);
+
       // 5. Simulate merge of feature branch into 'feature-base' on remote
       final remoteGitDir = await GitDir.fromExisting(
         p.join(d.sandbox, 'remote'),
