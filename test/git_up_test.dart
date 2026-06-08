@@ -735,7 +735,7 @@ void main() {
     },
   );
 
-  test('resolveLookups returns empty list when branchName is empty', () async {
+  test('resolveLookups returns empty set when branchName is empty', () async {
     final refs = await localGitDir.resolveLookups('');
     expect(refs, isEmpty);
   });

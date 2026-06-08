@@ -420,8 +420,8 @@ extension GitDirExtensions on GitDir {
   ///
   /// Returns a list of resolved full ref names (e.g.
   /// ['refs/remotes/origin/main', 'refs/heads/main']).
-  Future<List<String>> resolveLookups(String branchName) async {
-    if (branchName.isEmpty) return const [];
+  Future<Set<String>> resolveLookups(String branchName) async {
+    if (branchName.isEmpty) return const <String>{};
     final refs = <String>{};
 
     // Try upstream first (e.g. branchName@{u})
@@ -460,6 +460,6 @@ extension GitDirExtensions on GitDir {
       }
     }
 
-    return refs.toList();
+    return refs;
   }
 }
