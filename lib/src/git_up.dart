@@ -346,7 +346,9 @@ Future<void> _cleanBranches(
         }
       }
 
-      final targetBranch = baseBranch ?? defaultBranch;
+      final targetBranch = (baseBranch != null && baseBranch.isNotEmpty)
+          ? baseBranch
+          : defaultBranch;
 
       // Resolve lookups for the target branch (e.g. targetBranch@{u} and
       // targetBranch)

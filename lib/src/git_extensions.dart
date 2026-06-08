@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:git/git.dart';
 
+bool mockGhAvailableForTesting = false;
 bool mockGhUnavailableForTesting = false;
 Map<String, ({String state, String url, int number, String baseBranch})>?
 mockRecentPrsForTesting;
@@ -226,6 +227,7 @@ extension GitDirExtensions on GitDir {
 
         final mergeTreeResult = await runCommand([
           'merge-tree',
+          '--write-tree',
           targetBranch,
           branchName,
         ], throwOnError: false);
@@ -246,6 +248,9 @@ extension GitDirExtensions on GitDir {
 
   /// Checks if the `gh` CLI is available and authenticated.
   Future<bool> isGitHubCliAvailable() async {
+    if (mockGhAvailableForTesting) {
+      return true;
+    }
     if (mockGhUnavailableForTesting) {
       return false;
     }
@@ -416,7 +421,8 @@ extension GitDirExtensions on GitDir {
   /// Returns a list of resolved full ref names (e.g.
   /// ['refs/remotes/origin/main', 'refs/heads/main']).
   Future<List<String>> resolveLookups(String branchName) async {
-    final refs = <String>[];
+    if (branchName.isEmpty) return const [];
+    final refs = <String>{};
 
     // Try upstream first (e.g. branchName@{u})
     final upstreamResult = await runCommand([
@@ -438,6 +444,6 @@ extension GitDirExtensions on GitDir {
       refs.add((localResult.stdout as String).trim());
     }
 
-    return refs;
+    return refs.toList();
   }
 }
