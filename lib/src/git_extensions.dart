@@ -3,7 +3,8 @@ import 'dart:io';
 import 'package:git/git.dart';
 
 bool mockGhUnavailableForTesting = false;
-Map<String, ({String state, String url, int number})>? mockRecentPrsForTesting;
+Map<String, ({String state, String url, int number, String baseBranch})>?
+mockRecentPrsForTesting;
 
 /// Extensions on [GitDir] to provide high-level operations used in this
 /// package.
@@ -181,7 +182,8 @@ extension GitDirExtensions on GitDir {
       return true;
     }
 
-    // 2. Tree history match check (fast squash-merge check)
+    // 2. Tree history match check (fast squash-merge check when no other
+    //    changes)
     try {
       final branchTreeResult = await runCommand([
         'rev-parse',
@@ -208,6 +210,35 @@ extension GitDirExtensions on GitDir {
       }
     } catch (_) {
       // Fallback to next check
+    }
+
+    // 3. Trial merge check (using git merge-tree)
+    // Merges branchName into targetBranch in-memory.
+    // If the merge is clean (exit code 0) and the resulting tree is identical
+    // to targetBranch's tree, then branchName introduces no new changes.
+    try {
+      final targetTreeResult = await runCommand([
+        'rev-parse',
+        '$targetBranch^{tree}',
+      ], throwOnError: false);
+      if (targetTreeResult.exitCode == 0) {
+        final targetTree = (targetTreeResult.stdout as String).trim();
+
+        final mergeTreeResult = await runCommand([
+          'merge-tree',
+          targetBranch,
+          branchName,
+        ], throwOnError: false);
+
+        if (mergeTreeResult.exitCode == 0) {
+          final mergeTree = (mergeTreeResult.stdout as String).trim();
+          if (mergeTree == targetTree) {
+            return true;
+          }
+        }
+      }
+    } catch (_) {
+      // Fallback to returning false
     }
 
     return false;
@@ -250,23 +281,27 @@ extension GitDirExtensions on GitDir {
     return int.tryParse(output);
   }
 
-  /// Queries the GitHub API for the state of a PR by its number.
+  /// Queries the GitHub API for the PR info by its number.
   ///
-  /// Returns the PR state (e.g. 'MERGED', 'CLOSED', 'OPEN') or null if not
-  /// found.
-  Future<String?> getPrStateByNumber(int prNumber) async {
+  /// Returns the PR state and base branch, or null if not found.
+  Future<({String state, String baseBranch})?> getPrInfoByNumber(
+    int prNumber,
+  ) async {
     try {
       final result = await Process.run('gh', [
         'pr',
         'view',
         prNumber.toString(),
         '--json',
-        'state',
+        'state,baseRefName',
       ]);
       if (result.exitCode == 0) {
         final data =
             jsonDecode(result.stdout as String) as Map<String, dynamic>;
-        return data['state'] as String?;
+        return (
+          state: data['state'] as String? ?? '',
+          baseBranch: data['baseRefName'] as String? ?? '',
+        );
       }
     } catch (_) {
       // Ignore and return null
@@ -274,23 +309,27 @@ extension GitDirExtensions on GitDir {
     return null;
   }
 
-  /// Queries the GitHub API for the state of a PR by branch name.
+  /// Queries the GitHub API for the PR info by branch name.
   ///
-  /// Returns the PR state (e.g. 'MERGED', 'CLOSED', 'OPEN') or null if not
-  /// found.
-  Future<String?> getPrStateByBranch(String branchName) async {
+  /// Returns the PR state and base branch, or null if not found.
+  Future<({String state, String baseBranch})?> getPrInfoByBranch(
+    String branchName,
+  ) async {
     try {
       final result = await Process.run('gh', [
         'pr',
         'view',
         branchName,
         '--json',
-        'state',
+        'state,baseRefName',
       ]);
       if (result.exitCode == 0) {
         final data =
             jsonDecode(result.stdout as String) as Map<String, dynamic>;
-        return data['state'] as String?;
+        return (
+          state: data['state'] as String? ?? '',
+          baseBranch: data['baseRefName'] as String? ?? '',
+        );
       }
     } catch (_) {
       // Ignore and return null
@@ -301,12 +340,15 @@ extension GitDirExtensions on GitDir {
   /// Retrieves the details of recent PRs in the repository.
   ///
   /// Returns a map of head branch names to their PR details.
-  Future<Map<String, ({String state, String url, int number})>>
+  Future<
+    Map<String, ({String state, String url, int number, String baseBranch})>
+  >
   getRecentPrsInfo({int limit = 100}) async {
     if (mockRecentPrsForTesting != null) {
       return mockRecentPrsForTesting!;
     }
-    final prs = <String, ({String state, String url, int number})>{};
+    final prs =
+        <String, ({String state, String url, int number, String baseBranch})>{};
     try {
       final result = await Process.run('gh', [
         'pr',
@@ -318,7 +360,7 @@ extension GitDirExtensions on GitDir {
         '--limit',
         limit.toString(),
         '--json',
-        'headRefName,state,url,number',
+        'headRefName,state,url,number,baseRefName',
       ]);
       if (result.exitCode == 0) {
         final list = jsonDecode(result.stdout as String) as List<dynamic>;
@@ -328,11 +370,18 @@ extension GitDirExtensions on GitDir {
             final state = item['state'] as String?;
             final url = item['url'] as String?;
             final number = item['number'] as int?;
+            final baseBranch = item['baseRefName'] as String?;
             if (head != null &&
                 state != null &&
                 url != null &&
-                number != null) {
-              prs[head] = (state: state, url: url, number: number);
+                number != null &&
+                baseBranch != null) {
+              prs[head] = (
+                state: state,
+                url: url,
+                number: number,
+                baseBranch: baseBranch,
+              );
             }
           }
         }
@@ -359,5 +408,36 @@ extension GitDirExtensions on GitDir {
     await runCommand(['config', 'user.email', 'test@test.com']);
     await runCommand(['config', 'user.name', 'Tester']);
     await runCommand(['config', 'core.autocrlf', 'false']);
+  }
+
+  /// Resolves the given [branchName] to its local ref and/or its upstream ref if
+  /// they exist.
+  ///
+  /// Returns a list of resolved full ref names (e.g.
+  /// ['refs/remotes/origin/main', 'refs/heads/main']).
+  Future<List<String>> resolveLookups(String branchName) async {
+    final refs = <String>[];
+
+    // Try upstream first (e.g. branchName@{u})
+    final upstreamResult = await runCommand([
+      'rev-parse',
+      '--symbolic-full-name',
+      '$branchName@{u}',
+    ], throwOnError: false);
+    if (upstreamResult.exitCode == 0) {
+      refs.add((upstreamResult.stdout as String).trim());
+    }
+
+    // Try local branch
+    final localResult = await runCommand([
+      'rev-parse',
+      '--symbolic-full-name',
+      branchName,
+    ], throwOnError: false);
+    if (localResult.exitCode == 0) {
+      refs.add((localResult.stdout as String).trim());
+    }
+
+    return refs;
   }
 }

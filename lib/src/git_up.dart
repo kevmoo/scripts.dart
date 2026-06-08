@@ -286,7 +286,8 @@ Future<void> _cleanBranches(
   final needGh = goneBranches.isNotEmpty || activeRemoteBranches.isNotEmpty;
 
   final ghAvailable = needGh && await gitDir.isGitHubCliAvailable();
-  Map<String, ({String state, String url, int number})>? recentPrs;
+  Map<String, ({String state, String url, int number, String baseBranch})>?
+  recentPrs;
   if (ghAvailable) {
     recentPrs = await gitDir.getRecentPrsInfo();
 
@@ -322,32 +323,63 @@ Future<void> _cleanBranches(
       final branch = entry.key;
       final sha = entry.value;
 
-      // Tier 1: Local Checks
-      if (await gitDir.isMergedInto(branch, defaultBranch)) {
+      // Determine the PR info first if GH is available, so we know the target
+      // base branch!
+      String? prState;
+      String? baseBranch;
+      if (ghAvailable) {
+        final prNumber = await gitDir.getLocalPrNumber(branch);
+        if (prNumber != null) {
+          final prInfo = await gitDir.getPrInfoByNumber(prNumber);
+          prState = prInfo?.state;
+          baseBranch = prInfo?.baseBranch;
+        } else {
+          final cachedPr = recentPrs?[branch];
+          if (cachedPr != null) {
+            prState = cachedPr.state;
+            baseBranch = cachedPr.baseBranch;
+          } else {
+            final prInfo = await gitDir.getPrInfoByBranch(branch);
+            prState = prInfo?.state;
+            baseBranch = prInfo?.baseBranch;
+          }
+        }
+      }
+
+      final targetBranch = baseBranch ?? defaultBranch;
+
+      // Resolve lookups for the target branch (e.g. targetBranch@{u} and
+      // targetBranch)
+      final targetRefs = await gitDir.resolveLookups(targetBranch);
+      if (targetRefs.isEmpty) {
+        // If we can't resolve targetRefs (e.g. base branch doesn't exist locally/remotely),
+        // fallback to using targetBranch as-is (which will likely fail safely).
+        targetRefs.add(targetBranch);
+      }
+
+      // Check if merged into ANY of the target refs
+      var isMerged = false;
+      for (final ref in targetRefs) {
+        if (await gitDir.isMergedInto(branch, ref)) {
+          isMerged = true;
+          break;
+        }
+      }
+
+      if (isMerged) {
         toDelete.add(branch);
         continue;
       }
 
       // Tier 2 & 3: GitHub Checks (if available)
       if (ghAvailable) {
-        String? prState;
-        final prNumber = await gitDir.getLocalPrNumber(branch);
-        if (prNumber != null) {
-          prState = await gitDir.getPrStateByNumber(prNumber);
-        } else {
-          prState = recentPrs?[branch]?.state;
-          prState ??= await gitDir.getPrStateByBranch(branch);
-        }
-
         if (prState == 'MERGED') {
           // PR is merged, but we have unmerged local commits!
           if (stdin.hasTerminal) {
-            stdout.write(
-              yellow.wrap(
-                    'Branch "$branch" has a merged PR but contains unmerged local commits. Delete anyway? [y/N]: ',
-                  ) ??
-                  'Branch "$branch" has a merged PR but contains unmerged local commits. Delete anyway? [y/N]: ',
-            );
+            final prompt =
+                'Branch "$branch" has a merged PR but contains unmerged '
+                'local commits (relative to $targetBranch). Delete anyway? [y/N]: ';
+            stdout.write(yellow.wrap(prompt) ?? prompt);
             final response = stdin.readLineSync()?.trim().toLowerCase();
             if (response == 'y' || response == 'yes') {
               toDelete.add(branch);
@@ -360,7 +392,8 @@ Future<void> _cleanBranches(
           } else {
             printError(
               'Warning: Branch "$branch" has a merged PR but contains '
-              'unmerged local commits. Skipping deletion.',
+              'unmerged local commits (relative to $targetBranch). '
+              'Skipping deletion.',
             );
           }
           continue;
@@ -370,7 +403,7 @@ Future<void> _cleanBranches(
       // If we reach here, it's not merged and not approved for deletion
       printError(
         'Warning: Branch "$branch" ($sha) has a gone upstream but contains '
-        'unmerged commits. Skipping deletion.',
+        'unmerged commits (relative to $targetBranch). Skipping deletion.',
       );
     }
 
