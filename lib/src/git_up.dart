@@ -32,6 +32,8 @@ Future<void> gitUp({String? workingDirectory, bool check = false}) async {
     throw GitUpException('Working tree is dirty.');
   }
 
+  await _runHookCommand(gitDir, configKey: 'git-up.before', hookName: 'Before');
+
   // 1. Determine Default Branch
   final defaultBranch = await getDefaultBranch(gitDir);
 
@@ -67,7 +69,7 @@ Future<void> gitUp({String? workingDirectory, bool check = false}) async {
 
   await _cleanBranches(gitDir, defaultBranch, check: check);
 
-  await _runPostCommand(gitDir);
+  await _runHookCommand(gitDir, configKey: 'git-up.post', hookName: 'Post');
 }
 
 Future<void> _runGit(
@@ -207,11 +209,15 @@ void _printUpstreamFixSuggestion(String defaultBranch) {
   );
 }
 
-Future<void> _runPostCommand(GitDir gitDir) async {
+Future<void> _runHookCommand(
+  GitDir gitDir, {
+  required String configKey,
+  required String hookName,
+}) async {
   final configResult = await gitDir.runCommand([
     'config',
     '--get',
-    'git-up.post',
+    configKey,
   ], throwOnError: false);
 
   if (configResult.exitCode != 0) {
@@ -224,8 +230,8 @@ Future<void> _runPostCommand(GitDir gitDir) async {
   }
 
   print(
-    styleDim.wrap('Running post-command: $command') ??
-        'Running post-command: $command',
+    styleDim.wrap('Running ${hookName.toLowerCase()}-command: $command') ??
+        'Running ${hookName.toLowerCase()}-command: $command',
   );
 
   final shell = Platform.isWindows ? 'cmd.exe' : 'sh';
@@ -241,7 +247,8 @@ Future<void> _runPostCommand(GitDir gitDir) async {
   final exitCode = await process.exitCode;
   if (exitCode != 0) {
     throw GitUpException(
-      'Post-command failed with exit code $exitCode: $command',
+      '$hookName-command '
+      'failed with exit code $exitCode: $command',
       exitCode: exitCode,
     );
   }
