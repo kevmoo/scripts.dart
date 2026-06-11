@@ -58,6 +58,22 @@ Safely switch to and update the default branch of a Git repository.
 git-up [--verbose | -v] [--help | -h]
 ```
 
+**Pre-Update Hook (`git-up.before`):**
+
+You can configure a custom shell command that runs automatically before `git-up` starts updating the repository (right after the dirty-tree safety check). This is useful for renewing credentials (e.g., running `gcert` on the Dart SDK) or preparing the environment.
+
+* **Local configuration** (runs only for the current repository):
+  ```shell
+  git config git-up.before "gcert"
+  ```
+
+* **Global configuration** (runs for all repositories where you run `git-up`):
+  ```shell
+  git config --global git-up.before "gcert"
+  ```
+
+If the before-command returns a non-zero exit code, `git-up` will abort immediately and exit with that same exit code, preventing any branches from being updated.
+
 **Post-Update Hook (`git-up.post`):**
 
 You can configure a custom shell command that runs automatically after `git-up` successfully updates the repository. This is useful for triggering automated builds, running package installations (e.g., `dart pub get`), running code generation, or starting workspace bootstraps.

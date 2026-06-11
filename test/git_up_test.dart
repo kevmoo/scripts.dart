@@ -112,6 +112,63 @@ void main() {
     );
   });
 
+  test('Success case with git-up.before hook', () async {
+    final defaultBranch = await getDefaultBranch(localGitDir);
+    await localGitDir.runCommand([
+      'config',
+      'git-up.before',
+      'echo before_run>before_out.txt',
+    ]);
+
+    await expectLater(
+      () async {
+        final exitCode = await wrappedForTesting(
+          () => gitUp(workingDirectory: localPath),
+        );
+        expect(exitCode, 0);
+      },
+      prints(
+        allOf(
+          contains('Running before-command: echo before_run>before_out.txt'),
+          contains('Default branch: $defaultBranch'),
+          contains('Successfully updated $defaultBranch.'),
+        ),
+      ),
+    );
+
+    final file = File(p.join(localPath, 'before_out.txt'));
+    expect(file.existsSync(), isTrue);
+    expect(file.readAsStringSync().trim(), 'before_run');
+  });
+
+  test('Failure case with failing git-up.before hook', () async {
+    await localGitDir.runCommand(['config', 'git-up.before', 'exit 42']);
+
+    await expectLater(
+      () async {
+        await expectLater(
+          () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+          throwsA(
+            isA<GitUpException>()
+                .having((e) => e.exitCode, 'exitCode', 42)
+                .having(
+                  (e) => e.message,
+                  'message',
+                  contains('Before-command failed with exit code 42: exit 42'),
+                ),
+          ),
+        );
+      },
+      prints(
+        allOf(
+          contains('Running before-command: exit 42'),
+          isNot(contains('Default branch:')),
+          isNot(contains('Successfully updated')),
+        ),
+      ),
+    );
+  });
+
   test('getDefaultBranch fails when origin/HEAD is missing', () async {
     // Delete origin/HEAD in the clone
     await localGitDir.runCommand(['remote', 'set-head', 'origin', '-d']);
