@@ -269,6 +269,7 @@ Future<void> _cleanBranches(
   final branchesStatus = await gitDir.getBranchesStatus();
   final goneBranches = <String, String>{}; // name -> sha
   final activeRemoteBranches = <String>[]; // name
+  final noUpstreamBranches = <String>[]; // name
 
   for (final MapEntry(
         key: branchName,
@@ -285,12 +286,18 @@ Future<void> _cleanBranches(
       goneBranches[branchName] = sha;
     } else if (upstream.isNotEmpty) {
       activeRemoteBranches.add(branchName);
+    } else {
+      noUpstreamBranches.add(branchName);
     }
   }
 
-  // Only check gh if we actually need to (either we have gone branches, or
-  // we have active remote branches that might have been merged).
-  final needGh = goneBranches.isNotEmpty || activeRemoteBranches.isNotEmpty;
+  // Only check gh if we actually need to (either we have gone branches,
+  // we have active remote branches that might have been merged,
+  // or we have no-upstream branches that might have a merged/closed PR).
+  final needGh =
+      goneBranches.isNotEmpty ||
+      activeRemoteBranches.isNotEmpty ||
+      noUpstreamBranches.isNotEmpty;
 
   final ghAvailable = needGh && await gitDir.isGitHubCliAvailable();
   Map<String, ({String state, String url, int number, String baseBranch})>?
@@ -309,6 +316,14 @@ Future<void> _cleanBranches(
     for (final branch in toMove) {
       activeRemoteBranches.remove(branch);
       goneBranches[branch] = branchesStatus[branch]!.sha;
+    }
+
+    for (final branch in noUpstreamBranches) {
+      final prInfo = recentPrs[branch];
+      if (prInfo != null &&
+          (prInfo.state == 'MERGED' || prInfo.state == 'CLOSED')) {
+        goneBranches[branch] = branchesStatus[branch]!.sha;
+      }
     }
   }
 
