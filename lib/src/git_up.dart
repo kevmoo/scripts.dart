@@ -318,18 +318,12 @@ Future<void> _cleanBranches(
       goneBranches[branch] = branchesStatus[branch]!.sha;
     }
 
-    final toMoveNoUpstream = <String>[];
     for (final branch in noUpstreamBranches) {
       final prInfo = recentPrs[branch];
       if (prInfo != null &&
           (prInfo.state == 'MERGED' || prInfo.state == 'CLOSED')) {
-        toMoveNoUpstream.add(branch);
+        goneBranches[branch] = branchesStatus[branch]!.sha;
       }
-    }
-
-    for (final branch in toMoveNoUpstream) {
-      noUpstreamBranches.remove(branch);
-      goneBranches[branch] = branchesStatus[branch]!.sha;
     }
   }
 
