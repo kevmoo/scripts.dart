@@ -869,4 +869,70 @@ void main() {
       );
     },
   );
+
+  test('gitUp cleans up local branches with no upstream '
+      'that have merged PRs on GitHub', () async {
+    mockGhAvailableForTesting = true;
+    mockGhUnavailableForTesting = false;
+    mockRecentPrsForTesting = {
+      'feature-no-upstream-merged': (
+        state: 'MERGED',
+        url: 'https://github.com/kevmoo/scripts/pull/126',
+        number: 126,
+        baseBranch: 'main',
+      ),
+    };
+    addTearDown(() {
+      mockGhAvailableForTesting = false;
+      mockRecentPrsForTesting = null;
+    });
+
+    // 1. Create a branch locally, but do NOT push it (so it has no upstream)
+    await localGitDir.runCommand([
+      'checkout',
+      '-b',
+      'feature-no-upstream-merged',
+    ]);
+
+    // Write a file and commit it locally
+    final filePath = p.join(localPath, 'no_upstream.txt');
+    File(filePath).writeAsStringSync('no upstream content');
+    await localGitDir.runCommand(['add', 'no_upstream.txt']);
+    await localGitDir.runCommand(['commit', '-m', 'No upstream commit']);
+
+    // 2. Switch back to main
+    await localGitDir.runCommand(['checkout', 'main']);
+
+    // 3. Simulate squash merge on remote main
+    final remoteGitDir = await GitDir.fromExisting(p.join(d.sandbox, 'remote'));
+    final remoteFilePath = p.join(d.sandbox, 'remote', 'no_upstream.txt');
+    File(remoteFilePath).writeAsStringSync('no upstream content');
+    await remoteGitDir.runCommand(['add', 'no_upstream.txt']);
+    await remoteGitDir.runCommand([
+      'commit',
+      '-m',
+      'Squashed PR no upstream commit (#126)',
+    ]);
+
+    // 4. Run gitUp - should pull main (which now has the merged content),
+    //    detect the merged PR for the local branch with no upstream,
+    //    and clean it up!
+    await expectLater(
+      () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+      prints(
+        allOf(
+          contains('Successfully updated main.'),
+          contains('Checking safety of 1 branches with gone upstreams...'),
+          contains('Deleting feature-no-upstream-merged...'),
+        ),
+      ),
+    );
+
+    // Verify it was deleted
+    final branches = await localGitDir.branches();
+    expect(
+      branches.map((b) => b.branchName),
+      isNot(contains('feature-no-upstream-merged')),
+    );
+  });
 }
