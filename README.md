@@ -13,6 +13,7 @@ dart pub global activate --source git https://github.com/kevmoo/scripts.dart
 |---|---|---|
 | [`dart-clean`](#dart-clean) | `bin/dart_clean.dart` | Find and kill orphaned Dart processes. |
 | [`gerrit-view`](#gerrit-view) | `bin/gerrit_view.dart` | Complete overview of your active work on Gerrit. |
+| [`git-org-clean`](#git-org-clean) | `bin/git_org_clean.dart` | Analyze a GitHub organization for archive/delete candidates. |
 | [`git-up`](#git-up) | `bin/git_up.dart` | Safely switch to and update the default branch. |
 | [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
 | [`puppy`](#puppy) | `bin/puppy.dart` | Run a command in all package directories. |
@@ -48,6 +49,21 @@ gerrit-view [options]
 
 -p, --path-to-gerrit-repo    Path to a local gerrit repo. Defaults to CWD.
 -h, --help                   Print this usage information.
+```
+
+### `git-org-clean`
+Analyze a GitHub organization for archive/delete candidates.
+
+**Requirements:**
+This tool wraps the GitHub CLI (`gh`) and requires it to be installed and
+authenticated in your `PATH`.
+
+**Usage:**
+```shell
+git-org-clean [arguments]
+
+-o, --org     The target GitHub organization.
+-h, --help    Print this usage information.
 ```
 
 ### `git-up`
