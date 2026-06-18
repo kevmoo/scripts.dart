@@ -36,7 +36,8 @@ class CleanArgs {
 
 String get cleanArgsUsage => _$parserForCleanArgs.usage;
 
-Future<void> runGitOrgClean(CleanArgs args) async {
+Future<void> runGitOrgClean(CleanArgs args, {DateTime? now}) async {
+  final currentTime = now ?? DateTime.now();
   final org = args.org!;
 
   print('Scanning organization "$org" using gh...');
@@ -109,8 +110,6 @@ Future<void> runGitOrgClean(CleanArgs args) async {
   final active = <Map<String, dynamic>>[];
   final archived = <Map<String, dynamic>>[];
 
-  final now = DateTime.now();
-
   for (final repo in repos) {
     if (repo['isArchived'] == true) {
       archived.add(repo);
@@ -124,7 +123,8 @@ Future<void> runGitOrgClean(CleanArgs args) async {
     }
 
     final isFork = repo['isFork'] == true;
-    final isStale = pushedAt != null && now.difference(pushedAt).inDays > 365;
+    final isStale =
+        pushedAt != null && currentTime.difference(pushedAt).inDays > 365;
 
     if (isFork) {
       forks.add(repo);
@@ -191,7 +191,9 @@ Future<void> runGitOrgClean(CleanArgs args) async {
   // Generate Report in Markdown format
   final buffer = StringBuffer()
     ..writeln('# GitHub Org Cleanup Report: $org')
-    ..writeln('Generated on: ${now.toLocal().toString().split('.').first}')
+    ..writeln(
+      'Generated on: ${currentTime.toLocal().toString().split('.').first}',
+    )
     ..writeln()
     ..writeln('## Summary')
     ..writeln('- **Total Repositories**: ${repos.length}')
@@ -205,7 +207,7 @@ Future<void> runGitOrgClean(CleanArgs args) async {
     if (dateStr == null || dateStr.isEmpty) return 'never';
     final parsed = DateTime.tryParse(dateStr);
     if (parsed == null) return dateStr;
-    final diff = now.difference(parsed);
+    final diff = currentTime.difference(parsed);
     if (diff.inDays > 365) {
       final years = (diff.inDays / 365).floor();
       return "$years year${years > 1 ? 's' : ''} ago";
@@ -243,16 +245,9 @@ Future<void> runGitOrgClean(CleanArgs args) async {
       ..writeln('| Repository | Upstream | Last Push | Actionable? |')
       ..writeln('| :--- | :--- | :--- | :--- |');
     for (final repo in safeForks) {
-      final parent = repo['parent'] as Map<String, dynamic>?;
-      String? parentOwner;
-      String? parentName;
-      if (parent != null) {
-        parentOwner = (parent['owner'] as Map?)?['login'] as String?;
-        parentName = parent['name'] as String?;
-      }
-      final upstream = (parentOwner != null && parentName != null)
-          ? '$parentOwner/$parentName'
-          : 'Unknown';
+      final upstream =
+          _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
+          '(Inaccessible)';
       buffer.writeln(
         '| ${formatRepoName(repo)} | `$upstream` | '
         '${timeAgo(repo['pushedAt'] as String?)} | '
@@ -276,16 +271,9 @@ Future<void> runGitOrgClean(CleanArgs args) async {
       )
       ..writeln('| :--- | :--- | :--- | :--- | :--- |');
     for (final repo in unsafeForks) {
-      final parent = repo['parent'] as Map<String, dynamic>?;
-      String? parentOwner;
-      String? parentName;
-      if (parent != null) {
-        parentOwner = (parent['owner'] as Map?)?['login'] as String?;
-        parentName = parent['name'] as String?;
-      }
-      final upstream = (parentOwner != null && parentName != null)
-          ? '$parentOwner/$parentName'
-          : 'Unknown';
+      final upstream =
+          _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
+          '(Inaccessible)';
       final unsynced = repo['unsyncedStatus'] as String? ?? 'Not checked';
       buffer.writeln(
         '| ${formatRepoName(repo)} | `$upstream` | '
@@ -345,18 +333,21 @@ Future<void> runGitOrgClean(CleanArgs args) async {
   print(buffer.toString());
 }
 
+String? _upstreamRepo(Map<String, dynamic>? parent) => switch (parent) {
+  {'owner': {'login': final String owner}, 'name': final String name} =>
+    '$owner/$name',
+  _ => null,
+};
+
 Future<String> _checkForkSync(
   String org,
   String forkName,
   Map<String, dynamic> parent,
 ) async {
-  final parentOwner = (parent['owner'] as Map?)?['login'] as String?;
-  final parentName = parent['name'] as String?;
-  if (parentOwner == null || parentName == null) {
+  final upstreamRepo = _upstreamRepo(parent);
+  if (upstreamRepo == null) {
     return 'Unknown upstream';
   }
-
-  final upstreamRepo = '$parentOwner/$parentName';
 
   try {
     // 1. Get default branch of parent
