@@ -1,7 +1,8 @@
 import 'package:args/command_runner.dart';
+import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/puppy.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
-import 'package:test/test.dart';
+import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 
 void main() {
@@ -9,7 +10,7 @@ void main() {
     await d.dir('pkg_a', [d.file('pubspec.yaml', 'name: pkg_a')]).create();
 
     // parseRunArgs throws UsageException directly
-    expect(() => parseRunArgs([]), throwsA(isA<UsageException>()));
+    check(() => parseRunArgs([])).throws<UsageException>();
   });
 
   test('dart pub upgrade - success', () async {
@@ -26,10 +27,7 @@ void main() {
 
     await wrappedForTesting(() async {
       final args = parseRunArgs(['false']);
-      expect(
-        () => runPuppy(args, cwd: d.sandbox),
-        throwsA(isA<PuppyException>()),
-      );
+      await check(runPuppy(args, cwd: d.sandbox)).throws<PuppyException>();
     });
   });
 }

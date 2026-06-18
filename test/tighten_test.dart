@@ -1,15 +1,17 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/tighten.dart';
 import 'package:path/path.dart' as p;
-import 'package:test/test.dart';
+import 'package:test/scaffolding.dart';
+import 'package:test/test.dart' show fail;
 import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:yaml/yaml.dart';
 
 void main() {
   test('tightenUsage matches expected', () {
-    expect(tightenUsage, '''
+    check(tightenUsage).equals('''
 -w, --workspace    Tighten workspace dependencies
 -h, --help         Print this usage information.''');
   });
@@ -38,7 +40,8 @@ dependencies:
     ) as YamlMap;
 
     final pathConstraint = (pubspec['dependencies'] as Map)['path'] as String;
-    expect(pathConstraint, isNot('any')); // Should have tightened
+    // Should have tightened
+    check(pathConstraint).not((it) => it.equals('any'));
   });
 
   group('workspace', () {
@@ -98,13 +101,10 @@ dependencies:
 
       await zone.run(() => tighten(cwd: d.path('workspace_root')));
 
-      expect(
-        prints,
-        contains(
-          contains(
-            'WARNING: You are in a workspace but did NOT use the '
-            '--workspace flag',
-          ),
+      check(prints).any(
+        (e) => e.contains(
+          'WARNING: You are in a workspace but did NOT use the '
+          '--workspace flag',
         ),
       );
     });
@@ -121,7 +121,7 @@ dependencies:
       ) as YamlMap;
 
       // Should still be 'any' because it was reverted
-      expect((pkgBPubspec['dependencies'] as Map)['pkg_a'], 'any');
+      check((pkgBPubspec['dependencies'] as Map)['pkg_a']).equals('any');
     });
 
     test('reverts changes with --workspace in sub-package', () async {
@@ -136,7 +136,7 @@ dependencies:
       ) as YamlMap;
 
       // Should still be 'any' because it was reverted
-      expect((pkgBPubspec['dependencies'] as Map)['pkg_a'], 'any');
+      check((pkgBPubspec['dependencies'] as Map)['pkg_a']).equals('any');
     });
   });
 }

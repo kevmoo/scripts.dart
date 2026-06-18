@@ -1,7 +1,8 @@
 import 'dart:io';
 
+import 'package:checks/checks.dart';
 import 'package:path/path.dart' as p;
-import 'package:test/test.dart';
+import 'package:test/scaffolding.dart';
 import 'package:yaml/yaml.dart';
 
 void main() {
@@ -17,7 +18,7 @@ void main() {
         .where((line) => line.contains('| `bin/') && line.trim().endsWith('|'))
         .toList();
 
-    expect(tableLines, isNotEmpty, reason: 'Should find table rows in README');
+    check(tableLines, because: 'Should find table rows in README').isNotEmpty();
 
     // Make sure every item in `executables` is in the table
     final mappedExecutables = <String, String>{};
@@ -27,17 +28,16 @@ void main() {
       mappedExecutables[key] = value;
     }
 
-    expect(
+    check(
+      because: 'Table should have one row for each executable',
       tableLines,
-      hasLength(mappedExecutables.length),
-      reason: 'Table should have one row for each executable',
-    );
+    ).length.equals(mappedExecutables.length);
 
     for (final line in tableLines) {
       final columns = line.split('|').map((e) => e.trim()).toList();
       // Line: | `git-up` | `bin/git_up.dart` | Safely switch to... |
       // columns: ['', '`git-up`', '`bin/git_up.dart`', 'Safely switch to...', '']
-      expect(columns.length, 5);
+      check(columns).length.equals(5);
 
       var exeCol = columns[1].replaceAll('`', '');
       // Strip markdown link if present: [name](#anchor) -> name
@@ -49,51 +49,45 @@ void main() {
       final binCol = columns[2].replaceAll('`', '');
       final helpCol = columns[3];
 
-      expect(
+      check(
+        because: 'Column 1 should be a bin/ script',
         binCol,
-        startsWith('bin/'),
-        reason: 'Column 1 should be a bin/ script',
-      );
-      expect(binCol, endsWith('.dart'), reason: 'Column 1 should end in .dart');
+      ).startsWith('bin/');
+      check(because: 'Column 1 should end in .dart', binCol).endsWith('.dart');
 
       final binName = p.basenameWithoutExtension(binCol);
 
       // Verify executable name matches what's in pubspec.yaml
-      expect(
-        mappedExecutables.containsKey(exeCol),
-        isTrue,
-        reason: 'Executable \$exeCol is not in pubspec.yaml',
-      );
-      expect(
+      check(
+        because: 'Executable $exeCol is not in pubspec.yaml',
+        mappedExecutables,
+      ).containsKey(exeCol);
+      check(
+        because: 'pubspec executable $exeCol should point to $binName',
         mappedExecutables[exeCol],
-        binName,
-        reason: 'pubspec executable \$exeCol should point to \$binName',
-      );
+      ).equals(binName);
 
       // Verify the help text matches running the command
       final result = Process.runSync(Platform.executable, [binCol, '--help']);
-      expect(
-        result.exitCode,
-        0,
-        reason:
+      check(
+        because:
             'Running $binCol --help should exit 0. Stderr: ${result.stderr}',
-      );
+        result.exitCode,
+      ).equals(0);
 
       final helpLines = (result.stdout as String).trim().split('\n');
-      expect(
+      check(
+        because: 'Help output for $binCol should not be empty',
         helpLines,
-        isNotEmpty,
-        reason: 'Help output for $binCol should not be empty',
-      );
+      ).isNotEmpty();
 
       final description = helpLines.first.trim();
-      expect(
-        helpCol,
-        description,
-        reason:
+      check(
+        because:
             'README description for $exeCol does not match '
             '`--help` output of $binCol',
-      );
+        helpCol,
+      ).equals(description);
     }
   });
 }
