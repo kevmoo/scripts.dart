@@ -1,13 +1,16 @@
 import 'dart:io';
 
+import 'package:checks/checks.dart';
 import 'package:git/git.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/git_extensions.dart';
 import 'package:kevmoo_scripts/src/git_up.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
-import 'package:test/test.dart';
+import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
+
+import 'test_helpers.dart';
 
 void main() {
   late String localPath;
@@ -38,20 +41,16 @@ void main() {
     // Keep this as a full integration test
     final defaultBranch = await getDefaultBranch(localGitDir);
 
-    await expectLater(
-      () async {
-        final exitCode = await wrappedForTesting(
-          () => gitUp(workingDirectory: localPath),
-        );
-        expect(exitCode, 0);
-      },
-      prints(
-        allOf(
-          contains('Default branch: $defaultBranch'),
-          contains('Successfully updated $defaultBranch.'),
-        ),
-      ),
-    );
+    final prints = await capturePrints(() async {
+      final exitCode = await wrappedForTesting(
+        () => gitUp(workingDirectory: localPath),
+      );
+      check(exitCode).equals(0);
+    });
+
+    check(prints.join('\n'))
+      ..contains('Default branch: $defaultBranch')
+      ..contains('Successfully updated $defaultBranch.');
   });
 
   test('Success case with git-up.post hook', () async {
@@ -62,54 +61,44 @@ void main() {
       'echo hook_run>hook_out.txt',
     ]);
 
-    await expectLater(
-      () async {
-        final exitCode = await wrappedForTesting(
-          () => gitUp(workingDirectory: localPath),
-        );
-        expect(exitCode, 0);
-      },
-      prints(
-        allOf(
-          contains('Default branch: $defaultBranch'),
-          contains('Successfully updated $defaultBranch.'),
-          contains('Running post-command: echo hook_run>hook_out.txt'),
-        ),
-      ),
-    );
+    final prints = await capturePrints(() async {
+      final exitCode = await wrappedForTesting(
+        () => gitUp(workingDirectory: localPath),
+      );
+      check(exitCode).equals(0);
+    });
+
+    check(prints.join('\n'))
+      ..contains('Default branch: $defaultBranch')
+      ..contains('Successfully updated $defaultBranch.')
+      ..contains('Running post-command: echo hook_run>hook_out.txt');
 
     final file = File(p.join(localPath, 'hook_out.txt'));
-    expect(file.existsSync(), isTrue);
-    expect(file.readAsStringSync().trim(), 'hook_run');
+    check(file.existsSync()).isTrue();
+    check(file.readAsStringSync().trim()).equals('hook_run');
   });
 
   test('Failure case with failing git-up.post hook', () async {
     final defaultBranch = await getDefaultBranch(localGitDir);
     await localGitDir.runCommand(['config', 'git-up.post', 'exit 42']);
 
-    await expectLater(
-      () async {
-        await expectLater(
-          () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-          throwsA(
-            isA<GitUpException>()
-                .having((e) => e.exitCode, 'exitCode', 42)
-                .having(
-                  (e) => e.message,
-                  'message',
-                  contains('Post-command failed with exit code 42: exit 42'),
-                ),
-          ),
-        );
-      },
-      prints(
-        allOf(
-          contains('Default branch: $defaultBranch'),
-          contains('Successfully updated $defaultBranch.'),
-          contains('Running post-command: exit 42'),
-        ),
-      ),
-    );
+    final prints = await capturePrints(() async {
+      await check(
+        wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+      ).throws<GitUpException>(
+        (it) => it
+          ..has((e) => e.exitCode, 'exitCode').equals(42)
+          ..has(
+            (e) => e.message,
+            'message',
+          ).contains('Post-command failed with exit code 42: exit 42'),
+      );
+    });
+
+    check(prints.join('\n'))
+      ..contains('Default branch: $defaultBranch')
+      ..contains('Successfully updated $defaultBranch.')
+      ..contains('Running post-command: exit 42');
   });
 
   test('Success case with git-up.before hook', () async {
@@ -120,71 +109,61 @@ void main() {
       'echo before_run>before_out.txt',
     ]);
 
-    await expectLater(
-      () async {
-        final exitCode = await wrappedForTesting(
-          () => gitUp(workingDirectory: localPath),
-        );
-        expect(exitCode, 0);
-      },
-      prints(
-        allOf(
-          contains('Running before-command: echo before_run>before_out.txt'),
-          contains('Default branch: $defaultBranch'),
-          contains('Successfully updated $defaultBranch.'),
-        ),
-      ),
-    );
+    final prints = await capturePrints(() async {
+      final exitCode = await wrappedForTesting(
+        () => gitUp(workingDirectory: localPath),
+      );
+      check(exitCode).equals(0);
+    });
+
+    check(prints.join('\n'))
+      ..contains('Running before-command: echo before_run>before_out.txt')
+      ..contains('Default branch: $defaultBranch')
+      ..contains('Successfully updated $defaultBranch.');
 
     final file = File(p.join(localPath, 'before_out.txt'));
-    expect(file.existsSync(), isTrue);
-    expect(file.readAsStringSync().trim(), 'before_run');
+    check(file.existsSync()).isTrue();
+    check(file.readAsStringSync().trim()).equals('before_run');
   });
 
   test('Failure case with failing git-up.before hook', () async {
     await localGitDir.runCommand(['config', 'git-up.before', 'exit 42']);
 
-    await expectLater(
-      () async {
-        await expectLater(
-          () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-          throwsA(
-            isA<GitUpException>()
-                .having((e) => e.exitCode, 'exitCode', 42)
-                .having(
-                  (e) => e.message,
-                  'message',
-                  contains('Before-command failed with exit code 42: exit 42'),
-                ),
-          ),
-        );
-      },
-      prints(
-        allOf(
-          contains('Running before-command: exit 42'),
-          isNot(contains('Default branch:')),
-          isNot(contains('Successfully updated')),
-        ),
-      ),
-    );
+    final prints = await capturePrints(() async {
+      await check(
+        wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+      ).throws<GitUpException>(
+        (it) => it
+          ..has((e) => e.exitCode, 'exitCode').equals(42)
+          ..has(
+            (e) => e.message,
+            'message',
+          ).contains('Before-command failed with exit code 42: exit 42'),
+      );
+    });
+
+    check(prints.join('\n'))
+      ..contains('Running before-command: exit 42')
+      ..not((it) => it.contains('Default branch:'))
+      ..not((it) => it.contains('Successfully updated'));
   });
 
   test('getDefaultBranch fails when origin/HEAD is missing', () async {
     // Delete origin/HEAD in the clone
     await localGitDir.runCommand(['remote', 'set-head', 'origin', '-d']);
 
-    await expectLater(() async {
-      await expectLater(
-        () => wrappedForTesting(() => getDefaultBranch(localGitDir)),
-        throwsA(
-          isA<GitUpException>().having(
-            (e) => e.exitCode,
-            'exitCode',
-            ExitCode.config.code,
-          ),
-        ),
+    final prints = await capturePrints(() async {
+      await check(
+        wrappedForTesting(() => getDefaultBranch(localGitDir)),
+      ).throws<GitUpException>(
+        (it) =>
+            it..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code),
       );
-    }, prints(contains('Error: origin/HEAD is not set for this repository.')));
+    });
+
+    check(
+      prints.join('\n'),
+    ).contains('Error: origin/HEAD is not set for this repository.');
   });
 
   test('verifyAlignment fails when local branch has no upstream', () async {
@@ -193,26 +172,17 @@ void main() {
     // Unset the upstream for the default branch in the clone
     await localGitDir.runCommand(['branch', '--unset-upstream', defaultBranch]);
 
-    await expectLater(
-      () async {
-        await expectLater(
-          () => wrappedForTesting(
-            () => verifyAlignment(localGitDir, defaultBranch),
-          ),
-          throwsA(
-            isA<GitUpException>().having(
-              (e) => e.exitCode,
-              'exitCode',
-              ExitCode.config.code,
-            ),
-          ),
-        );
-      },
-      prints(
-        contains(
-          'Error: Local branch "$defaultBranch" has no upstream configured.',
-        ),
-      ),
+    final prints = await capturePrints(() async {
+      await check(
+        wrappedForTesting(() => verifyAlignment(localGitDir, defaultBranch)),
+      ).throws<GitUpException>(
+        (it) =>
+            it..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code),
+      );
+    });
+
+    check(prints.join('\n')).contains(
+      'Error: Local branch "$defaultBranch" has no upstream configured.',
     );
   });
 
@@ -235,25 +205,18 @@ void main() {
         defaultBranch,
       ]);
 
-      await expectLater(
-        () async {
-          await expectLater(
-            () => wrappedForTesting(
-              () => verifyAlignment(localGitDir, defaultBranch),
-            ),
-            throwsA(
-              isA<GitUpException>().having(
-                (e) => e.exitCode,
-                'exitCode',
-                ExitCode.config.code,
-              ),
-            ),
-          );
-        },
-        prints(
-          contains(' tracks "origin/feature", not "origin/$defaultBranch".'),
-        ),
-      );
+      final prints = await capturePrints(() async {
+        await check(
+          wrappedForTesting(() => verifyAlignment(localGitDir, defaultBranch)),
+        ).throws<GitUpException>(
+          (it) => it
+            ..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code),
+        );
+      });
+
+      check(
+        prints.join('\n'),
+      ).contains(' tracks "origin/feature", not "origin/$defaultBranch".');
     },
   );
 
@@ -266,18 +229,18 @@ void main() {
     // Make it dirty
     File(filePath).writeAsStringSync('content B');
 
-    await expectLater(() async {
-      await expectLater(
-        () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-        throwsA(
-          isA<GitUpException>().having(
-            (e) => e.message,
-            'message',
-            contains('Working tree is dirty.'),
-          ),
-        ),
+    final prints = await capturePrints(() async {
+      await check(
+        wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+      ).throws<GitUpException>(
+        (it) => it
+          ..has((e) => e.message, 'message').contains('Working tree is dirty.'),
       );
-    }, prints(contains('Please commit or stash your changes and try again.')));
+    });
+
+    check(
+      prints.join('\n'),
+    ).contains('Please commit or stash your changes and try again.');
   });
 
   test('gitUp cleans up standard-merged gone branches', () async {
@@ -293,23 +256,20 @@ void main() {
     await remoteGitDir.runCommand(['branch', '-D', 'feature-merged']);
 
     // 4. Run gitUp
-    await expectLater(
+    final prints = await capturePrints(
       () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-      prints(
-        allOf(
-          contains('Fetching and pruning...'),
-          contains('Checking safety of 1 branches with gone upstreams...'),
-          contains('Deleting feature-merged...'),
-        ),
-      ),
     );
+
+    check(prints.join('\n'))
+      ..contains('Fetching and pruning...')
+      ..contains('Checking safety of 1 branches with gone upstreams...')
+      ..contains('Deleting feature-merged...');
 
     // Verify it was deleted
     final branches = await localGitDir.branches();
-    expect(
+    check(
       branches.map((b) => b.branchName),
-      isNot(contains('feature-merged')),
-    );
+    ).not((it) => it.contains('feature-merged'));
   });
 
   test('gitUp does NOT delete unmerged gone branches', () async {
@@ -332,23 +292,21 @@ void main() {
     await remoteGitDir.runCommand(['branch', '-D', 'feature-unmerged']);
 
     // 5. Run gitUp - should skip deletion and print a warning
-    await expectLater(
+    final prints = await capturePrints(
       () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-      prints(
-        allOf(
-          contains('Checking safety of 1 branches with gone upstreams...'),
-          contains(
-            'Warning: Branch "feature-unmerged" ($sha) has a gone upstream '
-            'but contains unmerged commits (relative to main). '
-            'Skipping deletion.',
-          ),
-        ),
-      ),
     );
+
+    check(prints.join('\n'))
+      ..contains('Checking safety of 1 branches with gone upstreams...')
+      ..contains(
+        'Warning: Branch "feature-unmerged" ($sha) has a gone upstream '
+        'but contains unmerged commits (relative to main). '
+        'Skipping deletion.',
+      );
 
     // Verify it was NOT deleted
     final branches = await localGitDir.branches();
-    expect(branches.map((b) => b.branchName), contains('feature-unmerged'));
+    check(branches.map((b) => b.branchName)).contains('feature-unmerged');
   });
 
   test('gitUp cleans up squash-merged gone branches', () async {
@@ -376,23 +334,20 @@ void main() {
     await remoteGitDir.runCommand(['branch', '-D', 'feature-squash']);
 
     // 6. Run gitUp - should pull squashed main and clean up feature-squash
-    await expectLater(
+    final prints = await capturePrints(
       () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-      prints(
-        allOf(
-          contains('Successfully updated main.'),
-          contains('Checking safety of 1 branches with gone upstreams...'),
-          contains('Deleting feature-squash...'),
-        ),
-      ),
     );
+
+    check(prints.join('\n'))
+      ..contains('Successfully updated main.')
+      ..contains('Checking safety of 1 branches with gone upstreams...')
+      ..contains('Deleting feature-squash...');
 
     // Verify it was deleted
     final branches = await localGitDir.branches();
-    expect(
+    check(
       branches.map((b) => b.branchName),
-      isNot(contains('feature-squash')),
-    );
+    ).not((it) => it.contains('feature-squash'));
   });
 
   test(
@@ -456,23 +411,20 @@ void main() {
 
       // 7. Run gitUp - should pull squashed main (with both commits) and
       //    clean up feature-squash-progressed
-      await expectLater(
+      final prints = await capturePrints(
         () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-        prints(
-          allOf(
-            contains('Successfully updated main.'),
-            contains('Checking safety of 1 branches with gone upstreams...'),
-            contains('Deleting feature-squash-progressed...'),
-          ),
-        ),
       );
+
+      check(prints.join('\n'))
+        ..contains('Successfully updated main.')
+        ..contains('Checking safety of 1 branches with gone upstreams...')
+        ..contains('Deleting feature-squash-progressed...');
 
       // Verify it was deleted
       final branches = await localGitDir.branches();
-      expect(
+      check(
         branches.map((b) => b.branchName),
-        isNot(contains('feature-squash-progressed')),
-      );
+      ).not((it) => it.contains('feature-squash-progressed'));
     },
   );
 
@@ -508,21 +460,22 @@ void main() {
       final status = await localGitDir.getBranchesStatus();
 
       final noUpstream = status['branch-no-upstream'];
-      expect(noUpstream, isNotNull);
-      expect(noUpstream!.upstream, isEmpty);
-      expect(noUpstream.isUpstreamGone, isFalse);
+      check(noUpstream).isNotNull()
+        ..has((b) => b.upstream, 'upstream').isEmpty()
+        ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
 
       final withUpstream = status['branch-with-upstream'];
-      expect(withUpstream, isNotNull);
-      expect(
-        withUpstream!.upstream,
-        contains('refs/remotes/origin/branch-with-upstream'),
-      );
-      expect(withUpstream.isUpstreamGone, isFalse);
+      check(withUpstream).isNotNull()
+        ..has(
+          (b) => b.upstream,
+          'upstream',
+        ).contains('refs/remotes/origin/branch-with-upstream')
+        ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
 
       final goneUpstream = status['branch-gone-upstream'];
-      expect(goneUpstream, isNotNull);
-      expect(goneUpstream!.isUpstreamGone, isTrue);
+      check(
+        goneUpstream,
+      ).isNotNull().has((b) => b.isUpstreamGone, 'isUpstreamGone').isTrue();
     },
   );
 
@@ -535,12 +488,12 @@ void main() {
 
       final status = await localGitDir.getBranchesStatus();
       final branchStatus = status[branchName];
-      expect(branchStatus, isNotNull);
-      expect(
-        branchStatus!.upstream,
-        contains('refs/remotes/origin/$branchName'),
-      );
-      expect(branchStatus.isUpstreamGone, isFalse);
+      check(branchStatus).isNotNull()
+        ..has(
+          (b) => b.upstream,
+          'upstream',
+        ).contains('refs/remotes/origin/$branchName')
+        ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
     },
   );
 
@@ -553,19 +506,15 @@ void main() {
 
     await localGitDir.runCommand(['checkout', 'main']);
 
-    await expectLater(
+    final prints = await capturePrints(
       () => wrappedForTesting(
         () => gitUp(workingDirectory: localPath, check: true),
       ),
-      prints(
-        allOf(
-          contains(
-            'Warning: GitHub CLI (gh) is not available or authenticated.',
-          ),
-          contains('Skipping active remote branch checks.'),
-        ),
-      ),
     );
+
+    check(prints.join('\n'))
+      ..contains('Warning: GitHub CLI (gh) is not available or authenticated.')
+      ..contains('Skipping active remote branch checks.');
   });
 
   test('gitUp with check: true warns if remote branch still exists', () async {
@@ -589,18 +538,16 @@ void main() {
 
     await localGitDir.runCommand(['checkout', 'main']);
 
-    await expectLater(
+    final prints = await capturePrints(
       () => wrappedForTesting(
         () => gitUp(workingDirectory: localPath, check: true),
       ),
-      prints(
-        allOf(
-          contains('Checking active remote branches for closed PRs...'),
-          contains('PR #123 for branch "feature-check" is closed,'),
-          contains('but the remote branch still exists.'),
-        ),
-      ),
     );
+
+    check(prints.join('\n'))
+      ..contains('Checking active remote branches for closed PRs...')
+      ..contains('PR #123 for branch "feature-check" is closed,')
+      ..contains('but the remote branch still exists.');
   });
 
   test(
@@ -641,15 +588,15 @@ void main() {
 
       // 4. Run gitUp - this will fetch and prune, deleting origin/feature-check-deleted locally,
       // so the warning should NOT be printed!
-      await expectLater(
+      final prints = await capturePrints(
         () => wrappedForTesting(
           () => gitUp(workingDirectory: localPath, check: true),
         ),
-        prints(
-          isNot(
-            contains('PR #123 for branch "feature-check-deleted" is closed'),
-          ),
-        ),
+      );
+
+      check(prints.join('\n')).not(
+        (it) =>
+            it.contains('PR #123 for branch "feature-check-deleted" is closed'),
       );
     },
   );
@@ -686,22 +633,19 @@ void main() {
     // 3. Run gitUp - should detect the merged PR and clean up the branch
     // locally, even though the remote branch is NOT deleted (since we did
     // not delete it on remote)!
-    await expectLater(
+    final prints = await capturePrints(
       () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-      prints(
-        allOf(
-          contains('Checking safety of 1 branches with gone upstreams...'),
-          contains('Deleting feature-merged-active...'),
-        ),
-      ),
     );
+
+    check(prints.join('\n'))
+      ..contains('Checking safety of 1 branches with gone upstreams...')
+      ..contains('Deleting feature-merged-active...');
 
     // Verify it was deleted
     final branches = await localGitDir.branches();
-    expect(
+    check(
       branches.map((b) => b.branchName),
-      isNot(contains('feature-merged-active')),
-    );
+    ).not((it) => it.contains('feature-merged-active'));
   });
 
   test(
@@ -773,28 +717,25 @@ void main() {
       //    feature-merged-non-default is merged into origin/feature-base
       //    (since we resolve lookups and check origin/feature-base!).
       //    It should delete feature-merged-non-default silently.
-      await expectLater(
+      final prints = await capturePrints(
         () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-        prints(
-          allOf(
-            contains('Checking safety of 1 branches with gone upstreams...'),
-            contains('Deleting feature-merged-non-default...'),
-          ),
-        ),
       );
+
+      check(prints.join('\n'))
+        ..contains('Checking safety of 1 branches with gone upstreams...')
+        ..contains('Deleting feature-merged-non-default...');
 
       // Verify it was deleted
       final branches = await localGitDir.branches();
-      expect(
+      check(
         branches.map((b) => b.branchName),
-        isNot(contains('feature-merged-non-default')),
-      );
+      ).not((it) => it.contains('feature-merged-non-default'));
     },
   );
 
   test('resolveLookups returns empty set when branchName is empty', () async {
     final refs = await localGitDir.resolveLookups('');
-    expect(refs, isEmpty);
+    check(refs).isEmpty();
   });
 
   test(
@@ -850,23 +791,20 @@ void main() {
       await remoteGitDir.runCommand(['branch', '-D', 'feature-empty-base']);
 
       // 6. Run gitUp - should fall back to main and clean up feature-empty-base
-      await expectLater(
+      final prints = await capturePrints(
         () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-        prints(
-          allOf(
-            contains('Successfully updated main.'),
-            contains('Checking safety of 1 branches with gone upstreams...'),
-            contains('Deleting feature-empty-base...'),
-          ),
-        ),
       );
+
+      check(prints.join('\n'))
+        ..contains('Successfully updated main.')
+        ..contains('Checking safety of 1 branches with gone upstreams...')
+        ..contains('Deleting feature-empty-base...');
 
       // Verify it was deleted
       final branches = await localGitDir.branches();
-      expect(
+      check(
         branches.map((b) => b.branchName),
-        isNot(contains('feature-empty-base')),
-      );
+      ).not((it) => it.contains('feature-empty-base'));
     },
   );
 
@@ -917,22 +855,19 @@ void main() {
     // 4. Run gitUp - should pull main (which now has the merged content),
     //    detect the merged PR for the local branch with no upstream,
     //    and clean it up!
-    await expectLater(
+    final prints = await capturePrints(
       () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-      prints(
-        allOf(
-          contains('Successfully updated main.'),
-          contains('Checking safety of 1 branches with gone upstreams...'),
-          contains('Deleting feature-no-upstream-merged...'),
-        ),
-      ),
     );
+
+    check(prints.join('\n'))
+      ..contains('Successfully updated main.')
+      ..contains('Checking safety of 1 branches with gone upstreams...')
+      ..contains('Deleting feature-no-upstream-merged...');
 
     // Verify it was deleted
     final branches = await localGitDir.branches();
-    expect(
+    check(
       branches.map((b) => b.branchName),
-      isNot(contains('feature-no-upstream-merged')),
-    );
+    ).not((it) => it.contains('feature-no-upstream-merged'));
   });
 }
