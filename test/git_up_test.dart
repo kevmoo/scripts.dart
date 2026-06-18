@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:checks/checks.dart';
@@ -10,6 +9,8 @@ import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
+
+import 'test_helpers.dart';
 
 void main() {
   late String localPath;
@@ -459,20 +460,22 @@ void main() {
       final status = await localGitDir.getBranchesStatus();
 
       final noUpstream = status['branch-no-upstream'];
-      check(noUpstream).isNotNull();
-      check(noUpstream!.upstream).isEmpty();
-      check(noUpstream.isUpstreamGone).isFalse();
+      check(noUpstream).isNotNull()
+        ..has((b) => b.upstream, 'upstream').isEmpty()
+        ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
 
       final withUpstream = status['branch-with-upstream'];
-      check(withUpstream).isNotNull();
-      check(
-        withUpstream!.upstream,
-      ).contains('refs/remotes/origin/branch-with-upstream');
-      check(withUpstream.isUpstreamGone).isFalse();
+      check(withUpstream).isNotNull()
+        ..has(
+          (b) => b.upstream,
+          'upstream',
+        ).contains('refs/remotes/origin/branch-with-upstream')
+        ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
 
       final goneUpstream = status['branch-gone-upstream'];
-      check(goneUpstream).isNotNull();
-      check(goneUpstream!.isUpstreamGone).isTrue();
+      check(
+        goneUpstream,
+      ).isNotNull().has((b) => b.isUpstreamGone, 'isUpstreamGone').isTrue();
     },
   );
 
@@ -485,9 +488,12 @@ void main() {
 
       final status = await localGitDir.getBranchesStatus();
       final branchStatus = status[branchName];
-      check(branchStatus).isNotNull();
-      check(branchStatus!.upstream).contains('refs/remotes/origin/$branchName');
-      check(branchStatus.isUpstreamGone).isFalse();
+      check(branchStatus).isNotNull()
+        ..has(
+          (b) => b.upstream,
+          'upstream',
+        ).contains('refs/remotes/origin/$branchName')
+        ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
     },
   );
 
@@ -864,19 +870,4 @@ void main() {
       branches.map((b) => b.branchName),
     ).not((it) => it.contains('feature-no-upstream-merged'));
   });
-}
-
-Future<List<String>> capturePrints(FutureOr<void> Function() action) async {
-  final prints = <String>[];
-  await runZoned(
-    () async {
-      await action();
-    },
-    zoneSpecification: ZoneSpecification(
-      print: (self, parent, zone, line) {
-        prints.add(line);
-      },
-    ),
-  );
-  return prints;
 }

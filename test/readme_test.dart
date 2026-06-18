@@ -18,7 +18,7 @@ void main() {
         .where((line) => line.contains('| `bin/') && line.trim().endsWith('|'))
         .toList();
 
-    check(because: 'Should find table rows in README', tableLines).isNotEmpty();
+    check(tableLines, because: 'Should find table rows in README').isNotEmpty();
 
     // Make sure every item in `executables` is in the table
     final mappedExecutables = <String, String>{};
