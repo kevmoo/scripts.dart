@@ -1,9 +1,10 @@
+import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/lint_cleanup.dart';
-import 'package:test/test.dart';
+import 'package:test/scaffolding.dart';
 
 void main() {
   test('lintCleanupUsage matches expected', () {
-    expect(lintCleanupUsage, '''
+    check(lintCleanupUsage).equals('''
 -p, --package-dir     The directory to a package within the repository that depends
                       on the referenced include file. Needed for mono repos.
 -r, --[no-]rewrite    Rewrites the analysis_options.yaml file to remove duplicative entries.
