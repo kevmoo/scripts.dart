@@ -919,7 +919,8 @@ void main() {
       () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
     );
 
-    check(prints.join('\n'))
+    final output = prints.join('\n');
+    check(output)
       ..contains('Checking safety of 1 branches with gone upstreams...')
       ..contains('Removing worktree at $worktreePath...')
       ..contains('Deleting feature-wt-merged...');
