@@ -926,7 +926,7 @@ void main() {
 
     // Verify branch was deleted
     final branches = await localGitDir.branches();
-    check(branches.map((b) => b.branchName))
-        .not((it) => it.contains('feature-wt-merged'));
+    final branchNames = branches.map((b) => b.branchName);
+    check(branchNames).not((it) => it.contains('feature-wt-merged'));
   });
 }
