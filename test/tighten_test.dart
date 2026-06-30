@@ -115,9 +115,8 @@ dependencies:
       await tighten(isWorkspace: true, cwd: d.path('workspace_root'));
 
       final pkgBPubspec = loadYaml(
-        File(
-          p.join(d.path('workspace_root'), 'pkg_b', 'pubspec.yaml'),
-        ).readAsStringSync(),
+        File(p.join(d.path('workspace_root'), 'pkg_b', 'pubspec.yaml'))
+            .readAsStringSync(),
       ) as YamlMap;
 
       // Should still be 'any' because it was reverted
@@ -130,9 +129,8 @@ dependencies:
       await tighten(isWorkspace: true, cwd: d.path('workspace_root/pkg_b'));
 
       final pkgBPubspec = loadYaml(
-        File(
-          p.join(d.path('workspace_root'), 'pkg_b', 'pubspec.yaml'),
-        ).readAsStringSync(),
+        File(p.join(d.path('workspace_root'), 'pkg_b', 'pubspec.yaml'))
+            .readAsStringSync(),
       ) as YamlMap;
 
       // Should still be 'any' because it was reverted
