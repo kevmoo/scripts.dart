@@ -1,11 +1,20 @@
 import 'dart:convert';
 import 'dart:io';
+
 import 'package:git/git.dart';
+
+/// PR metadata retrieved from GitHub API.
+typedef PrInfo = ({
+  String state,
+  String baseBranch,
+  String? headRefOid,
+  String? url,
+  int? number,
+});
 
 bool mockGhAvailableForTesting = false;
 bool mockGhUnavailableForTesting = false;
-Map<String, ({String state, String url, int number, String baseBranch})>?
-mockRecentPrsForTesting;
+Map<String, PrInfo>? mockRecentPrsForTesting;
 
 /// Extensions on [GitDir] to provide high-level operations used in this
 /// package.
@@ -288,17 +297,15 @@ extension GitDirExtensions on GitDir {
 
   /// Queries the GitHub API for the PR info by its number.
   ///
-  /// Returns the PR state and base branch, or null if not found.
-  Future<({String state, String baseBranch})?> getPrInfoByNumber(
-    int prNumber,
-  ) async {
+  /// Returns [PrInfo], or null if not found.
+  Future<PrInfo?> getPrInfoByNumber(int prNumber) async {
     try {
       final result = await Process.run('gh', [
         'pr',
         'view',
         prNumber.toString(),
         '--json',
-        'state,baseRefName',
+        'state,baseRefName,headRefOid,url,number',
       ]);
       if (result.exitCode == 0) {
         final data =
@@ -306,6 +313,9 @@ extension GitDirExtensions on GitDir {
         return (
           state: data['state'] as String? ?? '',
           baseBranch: data['baseRefName'] as String? ?? '',
+          headRefOid: data['headRefOid'] as String?,
+          url: data['url'] as String?,
+          number: data['number'] as int?,
         );
       }
     } catch (_) {
@@ -316,17 +326,15 @@ extension GitDirExtensions on GitDir {
 
   /// Queries the GitHub API for the PR info by branch name.
   ///
-  /// Returns the PR state and base branch, or null if not found.
-  Future<({String state, String baseBranch})?> getPrInfoByBranch(
-    String branchName,
-  ) async {
+  /// Returns [PrInfo], or null if not found.
+  Future<PrInfo?> getPrInfoByBranch(String branchName) async {
     try {
       final result = await Process.run('gh', [
         'pr',
         'view',
         branchName,
         '--json',
-        'state,baseRefName',
+        'state,baseRefName,headRefOid,url,number',
       ]);
       if (result.exitCode == 0) {
         final data =
@@ -334,6 +342,9 @@ extension GitDirExtensions on GitDir {
         return (
           state: data['state'] as String? ?? '',
           baseBranch: data['baseRefName'] as String? ?? '',
+          headRefOid: data['headRefOid'] as String?,
+          url: data['url'] as String?,
+          number: data['number'] as int?,
         );
       }
     } catch (_) {
@@ -342,18 +353,32 @@ extension GitDirExtensions on GitDir {
     return null;
   }
 
+  /// Resolves PR info for [branchName] by checking local git config PR number,
+  /// falling back to [cachedRecentPrs], or querying GitHub directly.
+  Future<PrInfo?> getPrInfoForBranch(
+    String branchName, {
+    Map<String, PrInfo>? cachedRecentPrs,
+  }) async {
+    final prNumber = await getLocalPrNumber(branchName);
+    if (prNumber != null) {
+      final prInfo = await getPrInfoByNumber(prNumber);
+      if (prInfo != null) return prInfo;
+    }
+
+    final cachedPr = cachedRecentPrs?[branchName];
+    if (cachedPr != null) return cachedPr;
+
+    return getPrInfoByBranch(branchName);
+  }
+
   /// Retrieves the details of recent PRs in the repository.
   ///
   /// Returns a map of head branch names to their PR details.
-  Future<
-    Map<String, ({String state, String url, int number, String baseBranch})>
-  >
-  getRecentPrsInfo({int limit = 100}) async {
+  Future<Map<String, PrInfo>> getRecentPrsInfo({int limit = 100}) async {
     if (mockRecentPrsForTesting != null) {
       return mockRecentPrsForTesting!;
     }
-    final prs =
-        <String, ({String state, String url, int number, String baseBranch})>{};
+    final prs = <String, PrInfo>{};
     try {
       final result = await Process.run('gh', [
         'pr',
@@ -365,7 +390,7 @@ extension GitDirExtensions on GitDir {
         '--limit',
         limit.toString(),
         '--json',
-        'headRefName,state,url,number,baseRefName',
+        'headRefName,state,url,number,baseRefName,headRefOid',
       ]);
       if (result.exitCode == 0) {
         final list = jsonDecode(result.stdout as String) as List<dynamic>;
@@ -376,6 +401,7 @@ extension GitDirExtensions on GitDir {
             final url = item['url'] as String?;
             final number = item['number'] as int?;
             final baseBranch = item['baseRefName'] as String?;
+            final headRefOid = item['headRefOid'] as String?;
             if (head != null &&
                 state != null &&
                 url != null &&
@@ -386,6 +412,7 @@ extension GitDirExtensions on GitDir {
                 url: url,
                 number: number,
                 baseBranch: baseBranch,
+                headRefOid: headRefOid,
               );
             }
           }
@@ -461,5 +488,69 @@ extension GitDirExtensions on GitDir {
     }
 
     return refs;
+  }
+
+  /// Retrieves active worktrees in the repository.
+  ///
+  /// Returns a map of branch names to their worktree absolute path.
+  Future<Map<String, String>> getWorktrees() async {
+    final result = await runCommand([
+      'worktree',
+      'list',
+      '--porcelain',
+    ], throwOnError: false);
+    if (result.exitCode != 0) return const {};
+
+    final worktrees = <String, String>{}; // branchName -> path
+    final lines = LineSplitter.split(result.stdout as String);
+
+    String? currentPath;
+    String? currentBranch;
+
+    for (final line in lines) {
+      if (line.startsWith('worktree ')) {
+        currentPath = line.substring('worktree '.length).trim();
+      } else if (line.startsWith('branch refs/heads/')) {
+        currentBranch = line.substring('branch refs/heads/'.length).trim();
+      } else if (line.isEmpty) {
+        if (currentPath != null && currentBranch != null) {
+          worktrees[currentBranch] = currentPath;
+        }
+        currentPath = null;
+        currentBranch = null;
+      }
+    }
+    if (currentPath != null && currentBranch != null) {
+      worktrees[currentBranch] = currentPath;
+    }
+
+    return worktrees;
+  }
+
+  /// Removes a worktree given its path.
+  Future<void> removeWorktree(String worktreePath, {bool force = false}) async {
+    final args = ['worktree', 'remove'];
+    if (force) args.add('--force');
+    args.add(worktreePath);
+    final result = await runCommand(args, throwOnError: false);
+    if (result.exitCode != 0) {
+      throw ProcessException(
+        'git',
+        args,
+        result.stderr as String,
+        result.exitCode,
+      );
+    }
+  }
+
+  /// Checks if [branchName] has commits that are not present in [headRefOid].
+  Future<bool> hasCommitsPastHead(String headRefOid, String branchName) async {
+    final result = await runCommand([
+      'log',
+      '$headRefOid..$branchName',
+      '--oneline',
+    ], throwOnError: false);
+    if (result.exitCode != 0) return true;
+    return (result.stdout as String).trim().isNotEmpty;
   }
 }

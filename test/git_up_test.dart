@@ -526,6 +526,7 @@ void main() {
         url: 'https://github.com/kevmoo/scripts/pull/123',
         number: 123,
         baseBranch: 'main',
+        headRefOid: null,
       ),
     };
     addTearDown(() {
@@ -561,6 +562,7 @@ void main() {
           url: 'https://github.com/kevmoo/scripts/pull/123',
           number: 123,
           baseBranch: 'main',
+          headRefOid: null,
         ),
       };
       addTearDown(() {
@@ -611,6 +613,7 @@ void main() {
         url: 'https://github.com/kevmoo/scripts/pull/123',
         number: 123,
         baseBranch: 'main',
+        headRefOid: null,
       ),
     };
     addTearDown(() {
@@ -659,6 +662,7 @@ void main() {
           url: 'https://github.com/kevmoo/scripts/pull/124',
           number: 124,
           baseBranch: 'feature-base',
+          headRefOid: null,
         ),
       };
       addTearDown(() {
@@ -749,6 +753,7 @@ void main() {
           url: 'https://github.com/kevmoo/scripts/pull/125',
           number: 125,
           baseBranch: '', // Empty base branch!
+          headRefOid: null,
         ),
       };
       addTearDown(() {
@@ -818,6 +823,7 @@ void main() {
         url: 'https://github.com/kevmoo/scripts/pull/126',
         number: 126,
         baseBranch: 'main',
+        headRefOid: null,
       ),
     };
     addTearDown(() {
@@ -869,5 +875,71 @@ void main() {
     check(
       branches.map((b) => b.branchName),
     ).not((it) => it.contains('feature-no-upstream-merged'));
+  });
+
+  test('getWorktrees returns active worktrees', () async {
+    final worktreeDir = p.join(d.sandbox, 'worktree_test');
+    await localGitDir.runCommand([
+      'worktree',
+      'add',
+      '-b',
+      'wt-branch',
+      worktreeDir,
+    ]);
+
+    final worktrees = await localGitDir.getWorktrees();
+    check(worktrees['wt-branch']).isNotNull();
+
+    await localGitDir.removeWorktree(worktreeDir, force: true);
+    final updatedWorktrees = await localGitDir.getWorktrees();
+    check(updatedWorktrees['wt-branch']).isNull();
+  });
+
+  test('gitUp removes clean worktree when deleting merged branch', () async {
+    // 1. Create a branch and a worktree for it
+    final worktreePath = p.join(d.sandbox, 'wt-merged');
+    await localGitDir.runCommand([
+      'worktree',
+      'add',
+      '-b',
+      'feature-wt-merged',
+      worktreePath,
+    ]);
+
+    // 2. Commit inside worktree
+    final wtGitDir = await GitDir.fromExisting(worktreePath);
+    await wtGitDir.configureTestIdentity();
+    final filePath = p.join(worktreePath, 'wt.txt');
+    File(filePath).writeAsStringSync('wt content');
+    await wtGitDir.runCommand(['add', 'wt.txt']);
+    await wtGitDir.runCommand(['commit', '-m', 'worktree commit']);
+
+    // 3. Push feature-wt-merged to origin from localGitDir
+    await localGitDir.runCommand(['push', '-u', 'origin', 'feature-wt-merged']);
+
+    // 4. Delete remote branch feature-wt-merged
+    final remoteGitDir = await GitDir.fromExisting(p.join(d.sandbox, 'remote'));
+    // Also merge the content to main on remote
+    final remoteFilePath = p.join(d.sandbox, 'remote', 'wt.txt');
+    File(remoteFilePath).writeAsStringSync('wt content');
+    await remoteGitDir.runCommand(['add', 'wt.txt']);
+    await remoteGitDir.runCommand(['commit', '-m', 'Merged wt content']);
+    await remoteGitDir.runCommand(['branch', '-D', 'feature-wt-merged']);
+
+    // 5. Run gitUp - should detect worktree, remove worktree, and delete branch
+    final prints = await capturePrints(
+      () => wrappedForTesting(() => gitUp(workingDirectory: localPath)),
+    );
+
+    check(prints.join('\n'))
+      ..contains('Checking safety of 1 branches with gone upstreams...')
+      ..contains('Removing worktree at $worktreePath...')
+      ..contains('Deleting feature-wt-merged...');
+
+    // Verify branch was deleted
+    final branches = await localGitDir.branches();
+    check(
+      branches.map((b) => b.branchName),
+    ).not((it) => it.contains('feature-wt-merged'));
   });
 }

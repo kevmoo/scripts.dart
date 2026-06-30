@@ -300,8 +300,7 @@ Future<void> _cleanBranches(
       noUpstreamBranches.isNotEmpty;
 
   final ghAvailable = needGh && await gitDir.isGitHubCliAvailable();
-  Map<String, ({String state, String url, int number, String baseBranch})>?
-  recentPrs;
+  Map<String, PrInfo>? recentPrs;
   if (ghAvailable) {
     recentPrs = await gitDir.getRecentPrsInfo();
 
@@ -347,26 +346,16 @@ Future<void> _cleanBranches(
 
       // Determine the PR info first if GH is available, so we know the target
       // base branch!
-      String? prState;
-      String? baseBranch;
+      PrInfo? prInfo;
       if (ghAvailable) {
-        final prNumber = await gitDir.getLocalPrNumber(branch);
-        if (prNumber != null) {
-          final prInfo = await gitDir.getPrInfoByNumber(prNumber);
-          prState = prInfo?.state;
-          baseBranch = prInfo?.baseBranch;
-        } else {
-          final cachedPr = recentPrs?[branch];
-          if (cachedPr != null) {
-            prState = cachedPr.state;
-            baseBranch = cachedPr.baseBranch;
-          } else {
-            final prInfo = await gitDir.getPrInfoByBranch(branch);
-            prState = prInfo?.state;
-            baseBranch = prInfo?.baseBranch;
-          }
-        }
+        prInfo = await gitDir.getPrInfoForBranch(
+          branch,
+          cachedRecentPrs: recentPrs,
+        );
       }
+      final prState = prInfo?.state;
+      final baseBranch = prInfo?.baseBranch;
+      final headRefOid = prInfo?.headRefOid;
 
       final targetBranch = (baseBranch != null && baseBranch.isNotEmpty)
           ? baseBranch
@@ -396,32 +385,38 @@ Future<void> _cleanBranches(
       }
 
       // Tier 2 & 3: GitHub Checks (if available)
-      if (ghAvailable) {
-        if (prState == 'MERGED') {
-          // PR is merged, but we have unmerged local commits!
-          if (stdin.hasTerminal) {
-            final prompt =
-                'Branch "$branch" has a merged PR but contains unmerged '
-                'local commits (relative to $targetBranch). Delete anyway? [y/N]: ';
-            stdout.write(yellow.wrap(prompt) ?? prompt);
-            final response = stdin.readLineSync()?.trim().toLowerCase();
-            if (response == 'y' || response == 'yes') {
-              toDelete.add(branch);
-            } else {
-              print(
-                styleDim.wrap('Skipping deletion of "$branch".') ??
-                    'Skipping deletion of "$branch".',
-              );
-            }
-          } else {
-            printError(
-              'Warning: Branch "$branch" has a merged PR but contains '
-              'unmerged local commits (relative to $targetBranch). '
-              'Skipping deletion.',
-            );
-          }
+      if (ghAvailable && prState == 'MERGED') {
+        final hasNewCommits =
+            headRefOid != null &&
+            await gitDir.hasCommitsPastHead(headRefOid, branch);
+
+        if (!hasNewCommits) {
+          toDelete.add(branch);
           continue;
         }
+
+        // PR is merged, but we have unmerged local commits past PR head!
+        if (stdin.hasTerminal) {
+          final prompt =
+              'Branch "$branch" has a merged PR but contains local '
+              'commits after PR head. Delete anyway? [y/N]: ';
+          stdout.write(yellow.wrap(prompt) ?? prompt);
+          final response = stdin.readLineSync()?.trim().toLowerCase();
+          if (response == 'y' || response == 'yes') {
+            toDelete.add(branch);
+          } else {
+            print(
+              styleDim.wrap('Skipping deletion of "$branch".') ??
+                  'Skipping deletion of "$branch".',
+            );
+          }
+        } else {
+          printError(
+            'Warning: Branch "$branch" has a merged PR but contains '
+            'local commits after PR head. Skipping deletion.',
+          );
+        }
+        continue;
       }
 
       // If we reach here, it's not merged and not approved for deletion
@@ -437,7 +432,57 @@ Future<void> _cleanBranches(
         print('  $branch (${goneBranches[branch]})');
       }
 
+      final worktrees = await gitDir.getWorktrees();
+
       for (final branch in toDelete) {
+        final worktreePath = worktrees[branch];
+        if (worktreePath != null) {
+          try {
+            final wtGitDir = await GitDir.fromExisting(worktreePath);
+            if (await wtGitDir.isDirty()) {
+              printError(
+                'Warning: Branch "$branch" is checked out in worktree at '
+                '"$worktreePath", which has uncommitted changes. '
+                'Skipping deletion.',
+              );
+              continue;
+            }
+          } catch (_) {
+            // Ignore if GitDir.fromExisting fails
+          }
+
+          var shouldRemoveWorktree = true;
+          if (stdin.hasTerminal) {
+            final prompt =
+                'Branch "$branch" is checked out in worktree at '
+                '"$worktreePath". '
+                'All changes are merged and working tree is clean. '
+                'Remove worktree and delete branch? [Y/n]: ';
+            stdout.write(yellow.wrap(prompt) ?? prompt);
+            final response = stdin.readLineSync()?.trim().toLowerCase();
+            if (response == 'n' || response == 'no') {
+              shouldRemoveWorktree = false;
+            }
+          }
+
+          if (!shouldRemoveWorktree) {
+            print(
+              styleDim.wrap('Skipping deletion of "$branch".') ??
+                  'Skipping deletion of "$branch".',
+            );
+            continue;
+          }
+
+          print('Removing worktree at $worktreePath...');
+          try {
+            await gitDir.removeWorktree(worktreePath, force: true);
+            print('  Worktree removed!');
+          } catch (e) {
+            printError('Failed to remove worktree at $worktreePath: $e');
+            continue;
+          }
+        }
+
         print('Deleting $branch...');
         try {
           await gitDir.deleteBranch(branch, force: true);
@@ -480,13 +525,14 @@ Future<void> _cleanBranches(
               headingPrinted = true;
             }
 
-            final prLabel = '#${prInfo.number}';
+            final url = prInfo.url ?? '';
+            final prLabel = prInfo.number != null ? '#${prInfo.number}' : '';
             final branchLabel = styleBold.wrap(branch) ?? branch;
-            final link = _hyperlink(prInfo.url, 'Click here');
+            final link = _hyperlink(url, 'Click here');
             print(
               'PR $prLabel for branch "$branchLabel" is closed, '
               'but the remote branch still exists.\n'
-              '  $link to delete it: ${prInfo.url}',
+              '  $link to delete it: $url',
             );
           }
         }
