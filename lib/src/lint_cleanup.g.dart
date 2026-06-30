@@ -19,12 +19,14 @@ ArgParser _$populateLintCleanupOptionsParser(ArgParser parser) => parser
   ..addOption(
     'package-dir',
     abbr: 'p',
-    help: 'The directory to a package within the repository that depends\non the referenced include file. Needed for mono repos.',
+    help:
+        'The directory to a package within the repository that depends\non the referenced include file. Needed for mono repos.',
   )
   ..addFlag(
     'rewrite',
     abbr: 'r',
-    help: 'Rewrites the analysis_options.yaml file to remove duplicative entries.',
+    help:
+        'Rewrites the analysis_options.yaml file to remove duplicative entries.',
   )
   ..addFlag(
     'help',
