@@ -454,7 +454,9 @@ Future<void> _cleanBranches(
           var shouldRemoveWorktree = true;
           if (stdin.hasTerminal) {
             final prompt =
-                'Branch "$branch" is checked out in worktree at "$worktreePath". Remove worktree and delete branch? [Y/n]: ';
+                'Branch "$branch" is checked out in worktree at "$worktreePath". '
+                'All changes are merged and working tree is clean. '
+                'Remove worktree and delete branch? [Y/n]: ';
             stdout.write(yellow.wrap(prompt) ?? prompt);
             final response = stdin.readLineSync()?.trim().toLowerCase();
             if (response == 'n' || response == 'no') {
