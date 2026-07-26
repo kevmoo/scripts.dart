@@ -20,9 +20,8 @@ void main() {
   });
 
   test('formats a test file execution', () {
-    check(
-      formatCmdline('dart --enable-asserts test/foo/bar_test.dart'),
-    ).equals('dart bar_test.dart');
+    check(formatCmdline('dart --enable-asserts test/foo/bar_test.dart'))
+        .equals('dart bar_test.dart');
   });
 
   test('handles unknown', () {
