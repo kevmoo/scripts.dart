@@ -83,16 +83,15 @@ void main() {
     await localGitDir.runCommand(['config', 'git-up.post', 'exit 42']);
 
     final prints = await capturePrints(() async {
-      await check(
-        wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-      ).throws<GitUpException>(
-        (it) => it
-          ..has((e) => e.exitCode, 'exitCode').equals(42)
-          ..has(
-            (e) => e.message,
-            'message',
-          ).contains('Post-command failed with exit code 42: exit 42'),
-      );
+      await check(wrappedForTesting(() => gitUp(workingDirectory: localPath)))
+          .throws<GitUpException>(
+            (it) => it
+              ..has((e) => e.exitCode, 'exitCode').equals(42)
+              ..has(
+                (e) => e.message,
+                'message',
+              ).contains('Post-command failed with exit code 42: exit 42'),
+          );
     });
 
     check(prints.join('\n'))
@@ -130,16 +129,15 @@ void main() {
     await localGitDir.runCommand(['config', 'git-up.before', 'exit 42']);
 
     final prints = await capturePrints(() async {
-      await check(
-        wrappedForTesting(() => gitUp(workingDirectory: localPath)),
-      ).throws<GitUpException>(
-        (it) => it
-          ..has((e) => e.exitCode, 'exitCode').equals(42)
-          ..has(
-            (e) => e.message,
-            'message',
-          ).contains('Before-command failed with exit code 42: exit 42'),
-      );
+      await check(wrappedForTesting(() => gitUp(workingDirectory: localPath)))
+          .throws<GitUpException>(
+            (it) => it
+              ..has((e) => e.exitCode, 'exitCode').equals(42)
+              ..has(
+                (e) => e.message,
+                'message',
+              ).contains('Before-command failed with exit code 42: exit 42'),
+          );
     });
 
     check(prints.join('\n'))
@@ -153,17 +151,15 @@ void main() {
     await localGitDir.runCommand(['remote', 'set-head', 'origin', '-d']);
 
     final prints = await capturePrints(() async {
-      await check(
-        wrappedForTesting(() => getDefaultBranch(localGitDir)),
-      ).throws<GitUpException>(
-        (it) =>
-            it..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code),
-      );
+      await check(wrappedForTesting(() => getDefaultBranch(localGitDir)))
+          .throws<GitUpException>(
+            (it) => it
+              ..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code),
+          );
     });
 
-    check(
-      prints.join('\n'),
-    ).contains('Error: origin/HEAD is not set for this repository.');
+    check(prints.join('\n'))
+        .contains('Error: origin/HEAD is not set for this repository.');
   });
 
   test('verifyAlignment fails when local branch has no upstream', () async {
@@ -214,9 +210,8 @@ void main() {
         );
       });
 
-      check(
-        prints.join('\n'),
-      ).contains(' tracks "origin/feature", not "origin/$defaultBranch".');
+      check(prints.join('\n'))
+          .contains(' tracks "origin/feature", not "origin/$defaultBranch".');
     },
   );
 
@@ -238,9 +233,8 @@ void main() {
       );
     });
 
-    check(
-      prints.join('\n'),
-    ).contains('Please commit or stash your changes and try again.');
+    check(prints.join('\n'))
+        .contains('Please commit or stash your changes and try again.');
   });
 
   test('gitUp cleans up standard-merged gone branches', () async {
@@ -267,9 +261,8 @@ void main() {
 
     // Verify it was deleted
     final branches = await localGitDir.branches();
-    check(
-      branches.map((b) => b.branchName),
-    ).not((it) => it.contains('feature-merged'));
+    check(branches.map((b) => b.branchName))
+        .not((it) => it.contains('feature-merged'));
   });
 
   test('gitUp does NOT delete unmerged gone branches', () async {
@@ -345,9 +338,8 @@ void main() {
 
     // Verify it was deleted
     final branches = await localGitDir.branches();
-    check(
-      branches.map((b) => b.branchName),
-    ).not((it) => it.contains('feature-squash'));
+    check(branches.map((b) => b.branchName))
+        .not((it) => it.contains('feature-squash'));
   });
 
   test(
@@ -422,9 +414,8 @@ void main() {
 
       // Verify it was deleted
       final branches = await localGitDir.branches();
-      check(
-        branches.map((b) => b.branchName),
-      ).not((it) => it.contains('feature-squash-progressed'));
+      check(branches.map((b) => b.branchName))
+          .not((it) => it.contains('feature-squash-progressed'));
     },
   );
 
@@ -473,9 +464,10 @@ void main() {
         ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
 
       final goneUpstream = status['branch-gone-upstream'];
-      check(
-        goneUpstream,
-      ).isNotNull().has((b) => b.isUpstreamGone, 'isUpstreamGone').isTrue();
+      check(goneUpstream)
+          .isNotNull()
+          .has((b) => b.isUpstreamGone, 'isUpstreamGone')
+          .isTrue();
     },
   );
 
@@ -646,9 +638,8 @@ void main() {
 
     // Verify it was deleted
     final branches = await localGitDir.branches();
-    check(
-      branches.map((b) => b.branchName),
-    ).not((it) => it.contains('feature-merged-active'));
+    check(branches.map((b) => b.branchName))
+        .not((it) => it.contains('feature-merged-active'));
   });
 
   test(
@@ -731,9 +722,8 @@ void main() {
 
       // Verify it was deleted
       final branches = await localGitDir.branches();
-      check(
-        branches.map((b) => b.branchName),
-      ).not((it) => it.contains('feature-merged-non-default'));
+      check(branches.map((b) => b.branchName))
+          .not((it) => it.contains('feature-merged-non-default'));
     },
   );
 
@@ -807,9 +797,8 @@ void main() {
 
       // Verify it was deleted
       final branches = await localGitDir.branches();
-      check(
-        branches.map((b) => b.branchName),
-      ).not((it) => it.contains('feature-empty-base'));
+      check(branches.map((b) => b.branchName))
+          .not((it) => it.contains('feature-empty-base'));
     },
   );
 
@@ -872,9 +861,8 @@ void main() {
 
     // Verify it was deleted
     final branches = await localGitDir.branches();
-    check(
-      branches.map((b) => b.branchName),
-    ).not((it) => it.contains('feature-no-upstream-merged'));
+    check(branches.map((b) => b.branchName))
+        .not((it) => it.contains('feature-no-upstream-merged'));
   });
 
   test('getWorktrees returns active worktrees', () async {
@@ -938,8 +926,7 @@ void main() {
 
     // Verify branch was deleted
     final branches = await localGitDir.branches();
-    check(
-      branches.map((b) => b.branchName),
-    ).not((it) => it.contains('feature-wt-merged'));
+    check(branches.map((b) => b.branchName))
+        .not((it) => it.contains('feature-wt-merged'));
   });
 }
