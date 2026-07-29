@@ -546,7 +546,8 @@ $urlLine$shaLine    $conflatedLabel
         )!;
         if (worktreePath != null) {
           actionText =
-              '    Run:        git worktree remove $worktreePath --force && git branch -D $branch';
+              '    Run:        git worktree remove $worktreePath --force && '
+              'git branch -D $branch';
         } else {
           actionText = '    Run:        git branch -D $branch';
         }
@@ -559,7 +560,8 @@ $urlLine$shaLine    $conflatedLabel
         if (worktreePath != null) {
           actionText =
               '    Inspect:    git diff origin/$defaultBranch..$branch\n'
-              '    Run:        git worktree remove $worktreePath --force && git branch -D $branch\n'
+              '    Run:        git worktree remove $worktreePath --force && '
+              'git branch -D $branch\n'
               '    Archive:    git config --unset branch.$branch.gerritissue';
         } else {
           actionText =
