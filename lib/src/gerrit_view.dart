@@ -522,6 +522,7 @@ $urlLine$shaLine    $conflatedLabel
         'or closed:',
       )!,
     );
+    final worktreeBranches = _getWorktreeBranches(actualRepoRoot);
     for (final entry in closedClBranches.entries) {
       final branch = entry.key;
       final (issue, details, status) = entry.value;
@@ -530,6 +531,7 @@ $urlLine$shaLine    $conflatedLabel
 
       final String safetyStatus;
       final String actionText;
+      final worktreePath = worktreeBranches[branch];
 
       if (branch == defaultBranch) {
         safetyStatus = yellow.wrap(
@@ -542,17 +544,29 @@ $urlLine$shaLine    $conflatedLabel
         safetyStatus = green.wrap(
           '✅ Safe to delete (All changes exist in origin/$defaultBranch)',
         )!;
-        actionText = '    Run:        git branch -D $branch';
+        if (worktreePath != null) {
+          actionText =
+              '    Run:        git worktree remove $worktreePath --force';
+        } else {
+          actionText = '    Run:        git branch -D $branch';
+        }
       } else {
         final count = safety.unmergedShas.length;
         safetyStatus = red.wrap(
           '⚠️  Warning: Has $count unmerged commit(s) not in '
           'origin/$defaultBranch!',
         )!;
-        actionText =
-            '    Inspect:    git diff origin/$defaultBranch..$branch\n'
-            '    Run:        git branch -D $branch (Force discard)\n'
-            '    Archive:    git config --unset branch.$branch.gerritissue';
+        if (worktreePath != null) {
+          actionText =
+              '    Inspect:    git diff origin/$defaultBranch..$branch\n'
+              '    Run:        git worktree remove $worktreePath --force\n'
+              '    Archive:    git config --unset branch.$branch.gerritissue';
+        } else {
+          actionText =
+              '    Inspect:    git diff origin/$defaultBranch..$branch\n'
+              '    Run:        git branch -D $branch (Force discard)\n'
+              '    Archive:    git config --unset branch.$branch.gerritissue';
+        }
       }
 
       final styledStatus = switch (status) {
@@ -787,4 +801,33 @@ String? _getCurrentBranch(String repoPath) {
     }
   }
   return null;
+}
+
+Map<String, String> _getWorktreeBranches(String repoPath) {
+  final result = Process.runSync('git', [
+    'worktree',
+    'list',
+    '--porcelain',
+  ], workingDirectory: repoPath);
+
+  if (result.exitCode != 0) return {};
+
+  final worktrees = <String, String>{};
+  final lines = (result.stdout as String).split('\n');
+  String? currentWorktree;
+
+  for (final line in lines) {
+    if (line.startsWith('worktree ')) {
+      currentWorktree = line.substring('worktree '.length).trim();
+    } else if (line.startsWith('branch refs/heads/')) {
+      final branch = line.substring('branch refs/heads/'.length).trim();
+      if (currentWorktree != null) {
+        worktrees[branch] = currentWorktree;
+      }
+    } else if (line.isEmpty) {
+      currentWorktree = null;
+    }
+  }
+
+  return worktrees;
 }
