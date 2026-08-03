@@ -401,7 +401,7 @@ class _CleanBranchesRunner(
     }
 
     if (_ghAvailable && prState == 'MERGED') {
-      return _evaluateMergedPrWithLocalCommits(branch, sha, headRefOid);
+      return _evaluateMergedPrWithLocalCommits(branch, headRefOid);
     }
 
     printError(
@@ -413,7 +413,6 @@ class _CleanBranchesRunner(
 
   Future<bool> _evaluateMergedPrWithLocalCommits(
     String branch,
-    String sha,
     String? headRefOid,
   ) async {
     final hasNewCommits =
