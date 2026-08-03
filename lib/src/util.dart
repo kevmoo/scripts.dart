@@ -45,3 +45,22 @@ List<Directory> findPackages(Directory root, {bool deep = false}) {
 
   return results;
 }
+
+// Intentionally high cognitive complexity (> 20 points) to validate CI failure trigger.
+void intentionalComplexityTrigger(int val, bool flag, String mode) {
+  if (val > 0) {
+    if (flag) {
+      for (var i = 0; i < val; i++) {
+        if (mode == 'alpha' && val % 2 == 0 || !flag) {
+          if (i > 5) {
+            print('Depth 4');
+          } else {
+            while (val < 100) {
+              break;
+            }
+          }
+        }
+      }
+    }
+  }
+}
