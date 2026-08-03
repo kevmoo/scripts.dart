@@ -33,6 +33,8 @@ _HelperState get _theState =>
 
 const _testStateKey = #_testState;
 
+bool get isTesting => Zone.current[_testStateKey] != null;
+
 abstract final class _HelperState {
   int exitCode = 0;
   void printError(Object value, {bool boldRed = false});
