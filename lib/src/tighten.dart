@@ -187,35 +187,35 @@ Future<void> _revertWorkspaceChanges(
       continue;
     }
 
-    if (currentFile != null) {
-      final changeMatch = changeRegex.firstMatch(line);
-      if (changeMatch != null) {
-        final packageName = changeMatch.group(1)!;
-        final oldValue = changeMatch.group(2)!;
+    if (currentFile == null) continue;
 
-        // If parsed path is relative, dart pub treats it relative to CWD.
-        // We use it as is with File(currentFile).
+    final changeMatch = changeRegex.firstMatch(line);
+    if (changeMatch == null) continue;
 
-        if (workspacePackages.contains(packageName)) {
-          reverts.putIfAbsent(currentFile, () => []).add((
-            packageName,
-            oldValue,
-          ));
-        }
-      }
+    final packageName = changeMatch.group(1)!;
+    if (workspacePackages.contains(packageName)) {
+      final oldValue = changeMatch.group(2)!;
+      reverts.putIfAbsent(currentFile, () => []).add((packageName, oldValue));
     }
   }
 
-  if (reverts.isNotEmpty) {
-    print('\nReverting changes to workspace packages:');
-    for (final entry in reverts.entries) {
-      final file = entry.key;
-      final changes = entry.value;
-      print('  $file:');
-      for (final (packageName, oldValue) in changes) {
-        print('    - $packageName (restoring $oldValue)');
-        await _revertConstraint(p.join(cwd, file), packageName, oldValue);
-      }
+  await _applyReverts(reverts, cwd);
+}
+
+Future<void> _applyReverts(
+  Map<String, List<(String, String)>> reverts,
+  String cwd,
+) async {
+  if (reverts.isEmpty) return;
+
+  print('\nReverting changes to workspace packages:');
+  for (final entry in reverts.entries) {
+    final file = entry.key;
+    final changes = entry.value;
+    print('  $file:');
+    for (final (packageName, oldValue) in changes) {
+      print('    - $packageName (restoring $oldValue)');
+      await _revertConstraint(p.join(cwd, file), packageName, oldValue);
     }
   }
 }
