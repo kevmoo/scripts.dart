@@ -21,31 +21,17 @@ Future<void> runDartClean(DartCleanOptions options) async {
 
   final currentPid = pid;
 
-  Iterable<int> parsePgrepOutput(String output) =>
-      LineSplitter.split(output).where((s) => s.isNotEmpty).map(int.parse);
-
   // Find all dart processes
   final pids = <int>{};
   for (final exe in ['dart', 'dartvm']) {
-    try {
-      final output = await runProcess('pgrep', [exe]);
-      pids.addAll(parsePgrepOutput(output));
-    } on ProcessException catch (e) {
-      if (e.errorCode != 1) rethrow;
-    }
+    pids.addAll(await _findPids([exe]));
   }
 
   // Get current process children so we don't kill them
-  final protectedPids = {currentPid};
-  try {
-    final childrenOutput = await runProcess('pgrep', [
-      '-P',
-      currentPid.toString(),
-    ]);
-    protectedPids.addAll(parsePgrepOutput(childrenOutput));
-  } on ProcessException catch (e) {
-    if (e.errorCode != 1) rethrow;
-  }
+  final protectedPids = {
+    currentPid,
+    ...await _findPids(['-P', currentPid.toString()]),
+  };
 
   print('Checking ${pids.length} processes...');
 
@@ -80,17 +66,35 @@ Future<void> runDartClean(DartCleanOptions options) async {
 
   if (options.list) return;
 
-  if (options.force) {
+  await _handleKill(orphanedPids, force: options.force);
+}
+
+Future<List<int>> _findPids(List<String> args) async {
+  try {
+    final output = await runProcess('pgrep', args);
+    return LineSplitter.split(output)
+        .where((s) => s.isNotEmpty)
+        .map(int.parse)
+        .toList();
+  } on ProcessException catch (e) {
+    if (e.errorCode != 1) rethrow;
+    return const [];
+  }
+}
+
+Future<void> _handleKill(List<int> orphanedPids, {required bool force}) async {
+  if (force) {
     await killPids(orphanedPids, force: true);
+    return;
+  }
+
+  print('');
+  stdout.write('Kill all orphaned processes? (y/N) ');
+  final response = stdin.readLineSync();
+  if (response?.toLowerCase() == 'y') {
+    await killPids(orphanedPids);
   } else {
-    print('');
-    stdout.write('Kill all orphaned processes? (y/N) ');
-    final response = stdin.readLineSync();
-    if (response?.toLowerCase() == 'y') {
-      await killPids(orphanedPids);
-    } else {
-      print('Skipping kill.');
-    }
+    print('Skipping kill.');
   }
 }
 
@@ -159,43 +163,11 @@ class DartProcess({
 
 Future<DartProcess?> _checkProcess(int p, Set<int> protectedPids) async {
   if (protectedPids.contains(p)) {
-    final cmdline = formatCmdline(await getProcessCmdline(p));
-    final cwd = await getProcessCwd(p);
-
-    final treeResult = await Process.run('witr', [
-      '--pid',
-      p.toString(),
-      '--tree',
-      '--json',
-    ]);
-
-    var ancestry = <({int pid, String command})>[];
-    if (treeResult.exitCode == 0 || treeResult.stdout.toString().isNotEmpty) {
-      try {
-        final treeOutput = treeResult.stdout as String;
-        final treeData = jsonDecode(treeOutput) as Map<String, dynamic>;
-        final ancestryJson = treeData['Ancestry'] as List<dynamic>;
-        ancestry = ancestryJson.map((e) {
-          final map = e as Map<String, dynamic>;
-          return (pid: map['PID'] as int, command: map['Command'] as String);
-        }).toList();
-      } catch (e) {
-        // Ignore
-      }
-    }
-
-    return DartProcess(
-      pid: p,
-      cmdline: cmdline,
-      cwd: cwd,
-      reason: 'since it is a protected process (current script or child).',
-      ancestry: ancestry,
-    );
+    return _checkProtectedProcess(p);
   }
 
   try {
     final result = await Process.run('witr', ['--pid', p.toString(), '--json']);
-
     final witrOutput = result.stdout as String;
 
     if (witrOutput.trim().isEmpty && result.exitCode != 0) {
@@ -219,31 +191,10 @@ Future<DartProcess?> _checkProcess(int p, Set<int> protectedPids) async {
     final ppid = data.process.ppid;
     final parentName = ppid != null ? await getProcessName(ppid) : '<unknown>';
 
-    var reason = '';
-    int? ownerPid;
-    if (ppid != 1) {
-      reason = '';
-    } else {
-      final vscodePidStr = data.process.env
-          ?.where((String e) => e.startsWith('VSCODE_PID='))
-          .firstOrNull;
-
-      if (vscodePidStr != null) {
-        final vscodePid = int.tryParse(vscodePidStr.split('=')[1]);
-        if (vscodePid != null) {
-          if (await isProcessRunning(vscodePid)) {
-            reason =
-                'parent is launchd, but since VS Code '
-                '(PID $vscodePid) is running.';
-            ownerPid = vscodePid;
-          }
-        }
-      }
-
-      if (reason.isEmpty) {
-        reason = 'Orphaned';
-      }
-    }
+    final (:reason, :ownerPid) = await _resolveOwnerReason(
+      ppid,
+      data.process.env,
+    );
 
     final cwdEnv = data.process.env
         ?.where((String e) => e.startsWith('PWD='))
@@ -276,6 +227,70 @@ Future<DartProcess?> _checkProcess(int p, Set<int> protectedPids) async {
   }
 }
 
+Future<DartProcess> _checkProtectedProcess(int p) async {
+  final cmdline = formatCmdline(await getProcessCmdline(p));
+  final cwd = await getProcessCwd(p);
+
+  final treeResult = await Process.run('witr', [
+    '--pid',
+    p.toString(),
+    '--tree',
+    '--json',
+  ]);
+
+  var ancestry = <({int pid, String command})>[];
+  if (treeResult.exitCode == 0 || treeResult.stdout.toString().isNotEmpty) {
+    try {
+      final treeOutput = treeResult.stdout as String;
+      final treeData = jsonDecode(treeOutput) as Map<String, dynamic>;
+      final ancestryJson = treeData['Ancestry'] as List<dynamic>;
+      ancestry = ancestryJson.map((e) {
+        final map = e as Map<String, dynamic>;
+        return (pid: map['PID'] as int, command: map['Command'] as String);
+      }).toList();
+    } catch (e) {
+      // Ignore
+    }
+  }
+
+  return DartProcess(
+    pid: p,
+    cmdline: cmdline,
+    cwd: cwd,
+    reason: 'since it is a protected process (current script or child).',
+    ancestry: ancestry,
+  );
+}
+
+Future<({String reason, int? ownerPid})> _resolveOwnerReason(
+  int? ppid,
+  List<String>? env,
+) async {
+  if (ppid != 1) {
+    return (reason: '', ownerPid: null);
+  }
+
+  final vscodePidStr = env
+      ?.where((String e) => e.startsWith('VSCODE_PID='))
+      .firstOrNull;
+
+  if (vscodePidStr != null) {
+    final vscodePid = int.tryParse(vscodePidStr.split('=')[1]);
+    if (vscodePid != null && await isProcessRunning(vscodePid)) {
+      return (
+        reason:
+            'parent is launchd, but since VS Code '
+            '(PID $vscodePid) is running.',
+        ownerPid: vscodePid,
+      );
+    }
+  }
+
+  return (reason: 'Orphaned', ownerPid: null);
+}
+
+typedef _PidAncestry = ({int pid, List<({int pid, String command})> ancestry});
+
 Future<List<_ProcessNode>> _buildTree(List<DartProcess> processes) async {
   final nodes = <int, _ProcessNode>{};
 
@@ -303,46 +318,9 @@ Future<List<_ProcessNode>> _buildTree(List<DartProcess> processes) async {
   // 3. Fetch ancestries concurrently
   final pool = Pool(4);
   final ancestriesList = await pool
-      .forEach(parentToPid.values, (pid) async {
-        final treeResult = await Process.run('witr', [
-          '--pid',
-          pid.toString(),
-          '--tree',
-          '--json',
-        ]);
-
-        if (treeResult.exitCode == 0 ||
-            treeResult.stdout.toString().isNotEmpty) {
-          try {
-            final treeOutput = treeResult.stdout as String;
-            final treeData = jsonDecode(treeOutput) as Map<String, dynamic>;
-            final ancestryJson = treeData['Ancestry'] as List<dynamic>;
-            final ancestry = ancestryJson.map((e) {
-              final map = e as Map<String, dynamic>;
-              return (
-                pid: map['PID'] as int,
-                command: map['Command'] as String,
-              );
-            }).toList();
-
-            return (pid: pid, ancestry: ancestry);
-          } catch (e) {
-            stderr
-              ..writeln('Failed to parse ancestry for PID $pid: $e')
-              ..writeln('Output was: ${treeResult.stdout}');
-          }
-        } else {
-          stderr
-            ..writeln(
-              'witr --tree failed for PID $pid with exit code '
-              '${treeResult.exitCode}',
-            )
-            ..writeln('Stderr: ${treeResult.stderr}');
-        }
-        return null;
-      })
+      .forEach(parentToPid.values, _fetchPidAncestry)
       .where((r) => r != null)
-      .cast<({int pid, List<({int pid, String command})> ancestry})>()
+      .cast<_PidAncestry>()
       .toList();
 
   final ancestries = Map.fromEntries(
@@ -350,6 +328,51 @@ Future<List<_ProcessNode>> _buildTree(List<DartProcess> processes) async {
   );
 
   // 4. Build the tree
+  return _linkProcessNodes(processes, nodes, parentToPid, ancestries);
+}
+
+Future<_PidAncestry?> _fetchPidAncestry(int pid) async {
+  final treeResult = await Process.run('witr', [
+    '--pid',
+    pid.toString(),
+    '--tree',
+    '--json',
+  ]);
+
+  if (treeResult.exitCode != 0 && treeResult.stdout.toString().isEmpty) {
+    stderr
+      ..writeln(
+        'witr --tree failed for PID $pid with exit code '
+        '${treeResult.exitCode}',
+      )
+      ..writeln('Stderr: ${treeResult.stderr}');
+    return null;
+  }
+
+  try {
+    final treeOutput = treeResult.stdout as String;
+    final treeData = jsonDecode(treeOutput) as Map<String, dynamic>;
+    final ancestryJson = treeData['Ancestry'] as List<dynamic>;
+    final ancestry = ancestryJson.map((e) {
+      final map = e as Map<String, dynamic>;
+      return (pid: map['PID'] as int, command: map['Command'] as String);
+    }).toList();
+
+    return (pid: pid, ancestry: ancestry);
+  } catch (e) {
+    stderr
+      ..writeln('Failed to parse ancestry for PID $pid: $e')
+      ..writeln('Output was: ${treeResult.stdout}');
+    return null;
+  }
+}
+
+Future<List<_ProcessNode>> _linkProcessNodes(
+  List<DartProcess> processes,
+  Map<int, _ProcessNode> nodes,
+  Map<int, int> parentToPid,
+  Map<int, List<({int pid, String command})>> ancestries,
+) async {
   final roots = <_ProcessNode>[];
 
   for (final p in processes) {
@@ -357,80 +380,81 @@ Future<List<_ProcessNode>> _buildTree(List<DartProcess> processes) async {
     final ppid = p.ppid;
     final node = nodes[pid]!;
 
-    if (p.ownerPid != null) {
-      final ownerNode = nodes[p.ownerPid];
-      if (ownerNode != null) {
-        if (!ownerNode.children.contains(node)) {
-          ownerNode.children.add(node);
-        }
-        continue;
-      }
+    if (p.ownerPid != null && nodes[p.ownerPid] != null) {
+      nodes[p.ownerPid]!.children.addUnique(node);
+      continue;
     }
 
     if (ppid == null || ppid == 1) {
-      if (!roots.contains(node)) {
-        roots.add(node);
-      }
+      roots.addUnique(node);
       continue;
     }
 
     if (nodes.containsKey(ppid)) {
-      // Parent is a Dart process we know about. Link it.
-      if (!nodes[ppid]!.children.contains(node)) {
-        nodes[ppid]!.children.add(node);
-      }
+      nodes[ppid]!.children.addUnique(node);
     } else {
-      // Parent is non-Dart. We should have fetched ancestry for it!
-      final ancestry = ancestries[pid] ?? ancestries[parentToPid[ppid]];
-
-      if (ancestry != null) {
-        _ProcessNode? prevNode;
-        for (final ancestor in ancestry) {
-          final aPid = ancestor.pid;
-          final aName = ancestor.command;
-
-          var aNode = nodes[aPid];
-          if (aNode == null) {
-            final cwd = await getProcessCwd(aPid);
-            aNode = _ProcessNode(
-              pid: aPid,
-              cmdline: aName,
-              reason: '',
-              isDart: false,
-              cwd: cwd,
-            );
-            nodes[aPid] = aNode;
-          }
-
-          if (prevNode == null) {
-            if (!roots.contains(aNode)) {
-              roots.add(aNode);
-            }
-          } else {
-            if (!prevNode.children.contains(aNode)) {
-              prevNode.children.add(aNode);
-            }
-          }
-          prevNode = aNode;
-        }
-
-        // Link current node to the parent in ancestry
-        if (ancestry.length >= 2) {
-          final parentPid = ancestry[ancestry.length - 2].pid;
-          final parentNode = nodes[parentPid];
-          if (parentNode != null) {
-            if (!parentNode.children.contains(node)) {
-              parentNode.children.add(node);
-            }
-          }
-        }
-      } else {
-        // Fallback if ancestry fetch failed
-        if (!roots.contains(node)) {
-          roots.add(node);
-        }
-      }
+      await _linkNonDartParent(
+        node,
+        pid,
+        ppid,
+        nodes,
+        parentToPid,
+        ancestries,
+        roots,
+      );
     }
   }
   return roots;
+}
+
+Future<void> _linkNonDartParent(
+  _ProcessNode node,
+  int pid,
+  int ppid,
+  Map<int, _ProcessNode> nodes,
+  Map<int, int> parentToPid,
+  Map<int, List<({int pid, String command})>> ancestries,
+  List<_ProcessNode> roots,
+) async {
+  final ancestry = ancestries[pid] ?? ancestries[parentToPid[ppid]];
+  if (ancestry == null) {
+    roots.addUnique(node);
+    return;
+  }
+
+  _ProcessNode? prevNode;
+  for (final ancestor in ancestry) {
+    var aNode = nodes[ancestor.pid];
+    if (aNode == null) {
+      final cwd = await getProcessCwd(ancestor.pid);
+      aNode = _ProcessNode(
+        pid: ancestor.pid,
+        cmdline: ancestor.command,
+        reason: '',
+        isDart: false,
+        cwd: cwd,
+      );
+      nodes[ancestor.pid] = aNode;
+    }
+
+    if (prevNode == null) {
+      roots.addUnique(aNode);
+    } else {
+      prevNode.children.addUnique(aNode);
+    }
+    prevNode = aNode;
+  }
+
+  if (ancestry.length >= 2) {
+    final parentNode = nodes[ancestry[ancestry.length - 2].pid];
+    parentNode?.children.addUnique(node);
+  }
+}
+
+extension on List<_ProcessNode> {
+  void addUnique(_ProcessNode node) {
+    if (!contains(node)) {
+      add(node);
+    }
+  }
 }

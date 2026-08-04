@@ -42,57 +42,14 @@ Future<void> runGitOrgClean(CleanArgs args, {DateTime? now}) async {
 
   print('Scanning organization "$org" using gh...');
 
-  List<Map<String, dynamic>> repos;
-  try {
-    final output = await runProcess('gh', [
-      'repo',
-      'list',
-      org,
-      '--limit',
-      '1000',
-      '--json',
-      'name,isFork,pushedAt,isArchived,isPrivate,url,parent,viewerPermission',
-    ]);
-    final decoded = jsonDecode(output);
-    if (decoded is! List) {
-      throw const FormatException('Expected a list of repositories from gh');
-    }
-    repos = decoded.cast<Map<String, dynamic>>();
-  } on ProcessException catch (e) {
-    if (e.message.contains('check your internet connection') ||
-        e.message.contains('not authenticated') ||
-        e.message.contains('scopes')) {
-      setError(
-        message:
-            'GitHub CLI failed to list repositories.\n'
-            'Please ensure you are authenticated by running:\n'
-            '  gh auth login\n'
-            'Or refresh scopes if you lack access:\n'
-            '  gh auth refresh -s repo,read:org\n\n'
-            'Error: ${e.message}',
-        exitCode: ExitCode.tempFail.code,
-      );
-      return;
-    }
-    setError(
-      message: 'Failed to run gh: ${e.message}',
-      exitCode: ExitCode.software.code,
-    );
-    return;
-  } catch (e) {
-    setError(
-      message: 'Unexpected error fetching repositories: $e',
-      exitCode: ExitCode.software.code,
-    );
-    return;
-  }
+  final repos = await _fetchOrgRepos(org);
+  if (repos == null) return;
 
   if (repos.isEmpty) {
     print('No repositories found in organization "$org".');
     return;
   }
 
-  // Graceful Downgrade Warning: Check if we successfully fetched private repos.
   final hasPrivate = repos.any((r) => r['isPrivate'] == true);
   if (!hasPrivate) {
     print(
@@ -105,76 +62,13 @@ Future<void> runGitOrgClean(CleanArgs args, {DateTime? now}) async {
     print('');
   }
 
-  final forks = <Map<String, dynamic>>[];
-  final stale = <Map<String, dynamic>>[];
-  final active = <Map<String, dynamic>>[];
-  final archived = <Map<String, dynamic>>[];
+  final (:forks, :stale, :active, :archived) = _categorizeRepos(
+    repos,
+    currentTime,
+  );
 
-  for (final repo in repos) {
-    if (repo['isArchived'] == true) {
-      archived.add(repo);
-      continue;
-    }
-
-    final pushedAtStr = repo['pushedAt'] as String?;
-    DateTime? pushedAt;
-    if (pushedAtStr != null && pushedAtStr.isNotEmpty) {
-      pushedAt = DateTime.tryParse(pushedAtStr);
-    }
-
-    final isFork = repo['isFork'] == true;
-    final isStale =
-        pushedAt != null && currentTime.difference(pushedAt).inDays > 365;
-
-    if (isFork) {
-      forks.add(repo);
-    } else if (isStale) {
-      stale.add(repo);
-    } else {
-      active.add(repo);
-    }
-  }
-
-  // Sort forks by pushedAt ascending (oldest push first)
-  forks.sort((a, b) {
-    final aPushed = a['pushedAt'] as String? ?? '';
-    final bPushed = b['pushedAt'] as String? ?? '';
-    return aPushed.compareTo(bPushed);
-  });
-
-  // Sort stale repos by pushedAt ascending (oldest push first)
-  stale.sort((a, b) {
-    final aPushed = a['pushedAt'] as String? ?? '';
-    final bPushed = b['pushedAt'] as String? ?? '';
-    return aPushed.compareTo(bPushed);
-  });
-
-  // Check branch sync status for the 50 oldest forks
   final oldestForks = forks.take(50).toList();
-  if (oldestForks.isNotEmpty) {
-    print('Checking branch sync status for the oldest forks...');
-    final forkPool = Pool(3);
-    final forkFutures = <Future<void>>[];
-
-    for (final repo in oldestForks) {
-      final parent = repo['parent'] as Map<String, dynamic>?;
-      if (parent != null) {
-        forkFutures.add(
-          forkPool.withResource(() async {
-            final status = await _checkForkSync(
-              org,
-              repo['name'] as String,
-              parent,
-            );
-            repo['unsyncedStatus'] = status;
-          }),
-        );
-      } else {
-        repo['unsyncedStatus'] = 'No parent info';
-      }
-    }
-    await Future.wait(forkFutures);
-  }
+  await _checkOldestForksSync(org, oldestForks);
 
   final safeForks = <Map<String, dynamic>>[];
   final unsafeForks = <Map<String, dynamic>>[];
@@ -188,7 +82,6 @@ Future<void> runGitOrgClean(CleanArgs args, {DateTime? now}) async {
     }
   }
 
-  // Generate Report in Markdown format
   final buffer = StringBuffer()
     ..writeln('# GitHub Org Cleanup Report: $org')
     ..writeln(
@@ -203,134 +96,299 @@ Future<void> runGitOrgClean(CleanArgs args, {DateTime? now}) async {
     ..writeln('- **Active Repos**: ${active.length}')
     ..writeln();
 
-  String timeAgo(String? dateStr) {
-    if (dateStr == null || dateStr.isEmpty) return 'never';
-    final parsed = DateTime.tryParse(dateStr);
-    if (parsed == null) return dateStr;
-    final diff = currentTime.difference(parsed);
-    if (diff.inDays > 365) {
-      final years = (diff.inDays / 365).floor();
-      return "$years year${years > 1 ? 's' : ''} ago";
-    }
-    if (diff.inDays > 30) {
-      final months = (diff.inDays / 30).floor();
-      return "$months month${months > 1 ? 's' : ''} ago";
-    }
-    if (diff.inDays > 0) {
-      return "${diff.inDays} day${diff.inDays > 1 ? 's' : ''} ago";
-    }
-    return 'today';
-  }
+  _writeSafeForks(buffer, safeForks, currentTime);
+  _writeUnsafeForks(buffer, unsafeForks, currentTime);
+  _writeStaleRepos(buffer, stale, currentTime);
+  _writeActiveAndArchived(buffer, active, archived, currentTime);
 
-  String formatRepoName(Map<String, dynamic> repo) {
-    final name = repo['name'] as String;
-    final url = repo['url'] as String? ?? '';
-    final visibility = repo['isPrivate'] == true ? 'private' : 'public';
-    return '[$name]($url) ($visibility)';
-  }
-
-  String isActionable(Map<String, dynamic> repo) {
-    final perm = repo['viewerPermission'] as String?;
-    return perm == 'ADMIN' ? 'Yes (Admin)' : 'No ($perm)';
-  }
-
-  if (safeForks.isNotEmpty) {
-    buffer
-      ..writeln('## 🟢 Slam Dunk: Safe to Delete (Forks fully synced)')
-      ..writeln(
-        'These forks have no unsynced branches/commits relative '
-        'to upstream. You can delete them safely. (Ordered oldest-push first)',
-      )
-      ..writeln()
-      ..writeln('| Repository | Upstream | Last Push | Actionable? |')
-      ..writeln('| :--- | :--- | :--- | :--- |');
-    for (final repo in safeForks) {
-      final upstream =
-          _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
-          '(Inaccessible)';
-      buffer.writeln(
-        '| ${formatRepoName(repo)} | `$upstream` | '
-        '${timeAgo(repo['pushedAt'] as String?)} | '
-        '${isActionable(repo)} |',
-      );
-    }
-    buffer.writeln();
-  }
-
-  if (unsafeForks.isNotEmpty) {
-    buffer
-      ..writeln('## ⚠️ Forks with Unsynced Changes (Review Required)')
-      ..writeln(
-        'These forks have one or more branches with commits not '
-        'present upstream. Review before deleting. (Ordered oldest-push first)',
-      )
-      ..writeln()
-      ..writeln(
-        '| Repository | Upstream | Last Push | Unsynced Branches | '
-        'Actionable? |',
-      )
-      ..writeln('| :--- | :--- | :--- | :--- | :--- |');
-    for (final repo in unsafeForks) {
-      final upstream =
-          _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
-          '(Inaccessible)';
-      final unsynced = repo['unsyncedStatus'] as String? ?? 'Not checked';
-      buffer.writeln(
-        '| ${formatRepoName(repo)} | `$upstream` | '
-        '${timeAgo(repo['pushedAt'] as String?)} | $unsynced | '
-        '${isActionable(repo)} |',
-      );
-    }
-    buffer.writeln();
-  }
-
-  if (stale.isNotEmpty) {
-    buffer
-      ..writeln('## 💤 Recommended for Archiving (Stale Repositories)')
-      ..writeln(
-        'Repositories with no push activity in over 365 days. '
-        '(Ordered oldest-push first)',
-      )
-      ..writeln()
-      ..writeln('| Repository | Last Push | Actionable? | Description |')
-      ..writeln('| :--- | :--- | :--- | :--- |');
-    for (final repo in stale) {
-      final desc = repo['description'] as String? ?? '';
-      buffer.writeln(
-        '| ${formatRepoName(repo)} | '
-        '${timeAgo(repo['pushedAt'] as String?)} | '
-        '${isActionable(repo)} | $desc |',
-      );
-    }
-    buffer.writeln();
-  }
-
-  if (active.isNotEmpty || archived.isNotEmpty) {
-    buffer
-      ..writeln('## ✅ Active or Already Archived Repositories')
-      ..writeln('(Listed here for completeness)')
-      ..writeln();
-    if (active.isNotEmpty) {
-      buffer.writeln('### Active Repositories (Pushed in last 365 days)');
-      for (final repo in active) {
-        buffer.writeln(
-          '- ${formatRepoName(repo)} - Last push '
-          '${timeAgo(repo['pushedAt'] as String?)}',
-        );
-      }
-      buffer.writeln();
-    }
-    if (archived.isNotEmpty) {
-      buffer.writeln('### Already Archived Repositories');
-      for (final repo in archived) {
-        buffer.writeln('- ${formatRepoName(repo)}');
-      }
-      buffer.writeln();
-    }
-  }
-
-  // Print the report to stdout
   print(buffer.toString());
+}
+
+Future<List<Map<String, dynamic>>?> _fetchOrgRepos(String org) async {
+  try {
+    final output = await runProcess('gh', [
+      'repo',
+      'list',
+      org,
+      '--limit',
+      '1000',
+      '--json',
+      'name,isFork,pushedAt,isArchived,isPrivate,url,parent,viewerPermission',
+    ]);
+    final decoded = jsonDecode(output);
+    if (decoded is! List) {
+      throw const FormatException('Expected a list of repositories from gh');
+    }
+    return decoded.cast<Map<String, dynamic>>();
+  } on ProcessException catch (e) {
+    if (e.message.contains('check your internet connection') ||
+        e.message.contains('not authenticated') ||
+        e.message.contains('scopes')) {
+      setError(
+        message:
+            'GitHub CLI failed to list repositories.\n'
+            'Please ensure you are authenticated by running:\n'
+            '  gh auth login\n'
+            'Or refresh scopes if you lack access:\n'
+            '  gh auth refresh -s repo,read:org\n\n'
+            'Error: ${e.message}',
+        exitCode: ExitCode.tempFail.code,
+      );
+      return null;
+    }
+    setError(
+      message: 'Failed to run gh: ${e.message}',
+      exitCode: ExitCode.software.code,
+    );
+    return null;
+  } catch (e) {
+    setError(
+      message: 'Unexpected error fetching repositories: $e',
+      exitCode: ExitCode.software.code,
+    );
+    return null;
+  }
+}
+
+typedef _CategorizedRepos = ({
+  List<Map<String, dynamic>> forks,
+  List<Map<String, dynamic>> stale,
+  List<Map<String, dynamic>> active,
+  List<Map<String, dynamic>> archived,
+});
+
+_CategorizedRepos _categorizeRepos(
+  List<Map<String, dynamic>> repos,
+  DateTime currentTime,
+) {
+  final forks = <Map<String, dynamic>>[];
+  final stale = <Map<String, dynamic>>[];
+  final active = <Map<String, dynamic>>[];
+  final archived = <Map<String, dynamic>>[];
+
+  for (final repo in repos) {
+    if (repo['isArchived'] == true) {
+      archived.add(repo);
+      continue;
+    }
+
+    final pushedAtStr = repo['pushedAt'] as String?;
+    final pushedAt = pushedAtStr != null && pushedAtStr.isNotEmpty
+        ? DateTime.tryParse(pushedAtStr)
+        : null;
+
+    final isFork = repo['isFork'] == true;
+    final isStale =
+        pushedAt != null && currentTime.difference(pushedAt).inDays > 365;
+
+    if (isFork) {
+      forks.add(repo);
+    } else if (isStale) {
+      stale.add(repo);
+    } else {
+      active.add(repo);
+    }
+  }
+
+  forks.sort((a, b) {
+    final aPushed = a['pushedAt'] as String? ?? '';
+    final bPushed = b['pushedAt'] as String? ?? '';
+    return aPushed.compareTo(bPushed);
+  });
+
+  stale.sort((a, b) {
+    final aPushed = a['pushedAt'] as String? ?? '';
+    final bPushed = b['pushedAt'] as String? ?? '';
+    return aPushed.compareTo(bPushed);
+  });
+
+  return (forks: forks, stale: stale, active: active, archived: archived);
+}
+
+Future<void> _checkOldestForksSync(
+  String org,
+  List<Map<String, dynamic>> oldestForks,
+) async {
+  if (oldestForks.isEmpty) return;
+
+  print('Checking branch sync status for the oldest forks...');
+  final forkPool = Pool(3);
+  final forkFutures = <Future<void>>[];
+
+  for (final repo in oldestForks) {
+    final parent = repo['parent'] as Map<String, dynamic>?;
+    if (parent != null) {
+      forkFutures.add(
+        forkPool.withResource(() async {
+          final status = await _checkForkSync(
+            org,
+            repo['name'] as String,
+            parent,
+          );
+          repo['unsyncedStatus'] = status;
+        }),
+      );
+    } else {
+      repo['unsyncedStatus'] = 'No parent info';
+    }
+  }
+  await Future.wait(forkFutures);
+}
+
+String _timeAgo(String? dateStr, DateTime currentTime) {
+  if (dateStr == null || dateStr.isEmpty) return 'never';
+  final parsed = DateTime.tryParse(dateStr);
+  if (parsed == null) return dateStr;
+  final diff = currentTime.difference(parsed);
+  if (diff.inDays > 365) {
+    final years = (diff.inDays / 365).floor();
+    return "$years year${years > 1 ? 's' : ''} ago";
+  }
+  if (diff.inDays > 30) {
+    final months = (diff.inDays / 30).floor();
+    return "$months month${months > 1 ? 's' : ''} ago";
+  }
+  if (diff.inDays > 0) {
+    return "${diff.inDays} day${diff.inDays > 1 ? 's' : ''} ago";
+  }
+  return 'today';
+}
+
+String _formatRepoName(Map<String, dynamic> repo) {
+  final name = repo['name'] as String;
+  final url = repo['url'] as String? ?? '';
+  final visibility = repo['isPrivate'] == true ? 'private' : 'public';
+  return '[$name]($url) ($visibility)';
+}
+
+String _isActionable(Map<String, dynamic> repo) {
+  final perm = repo['viewerPermission'] as String?;
+  return perm == 'ADMIN' ? 'Yes (Admin)' : 'No ($perm)';
+}
+
+void _writeSafeForks(
+  StringBuffer buffer,
+  List<Map<String, dynamic>> safeForks,
+  DateTime currentTime,
+) {
+  if (safeForks.isEmpty) return;
+
+  buffer
+    ..writeln('## 🟢 Slam Dunk: Safe to Delete (Forks fully synced)')
+    ..writeln(
+      'These forks have no unsynced branches/commits relative '
+      'to upstream. You can delete them safely. (Ordered oldest-push first)',
+    )
+    ..writeln()
+    ..writeln('| Repository | Upstream | Last Push | Actionable? |')
+    ..writeln('| :--- | :--- | :--- | :--- |');
+
+  for (final repo in safeForks) {
+    final upstream =
+        _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
+        '(Inaccessible)';
+    buffer.writeln(
+      '| ${_formatRepoName(repo)} | `$upstream` | '
+      '${_timeAgo(repo['pushedAt'] as String?, currentTime)} | '
+      '${_isActionable(repo)} |',
+    );
+  }
+  buffer.writeln();
+}
+
+void _writeUnsafeForks(
+  StringBuffer buffer,
+  List<Map<String, dynamic>> unsafeForks,
+  DateTime currentTime,
+) {
+  if (unsafeForks.isEmpty) return;
+
+  buffer
+    ..writeln('## ⚠️ Forks with Unsynced Changes (Review Required)')
+    ..writeln(
+      'These forks have one or more branches with commits not '
+      'present upstream. Review before deleting. (Ordered oldest-push first)',
+    )
+    ..writeln()
+    ..writeln(
+      '| Repository | Upstream | Last Push | Unsynced Branches | '
+      'Actionable? |',
+    )
+    ..writeln('| :--- | :--- | :--- | :--- | :--- |');
+
+  for (final repo in unsafeForks) {
+    final upstream =
+        _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
+        '(Inaccessible)';
+    final unsynced = repo['unsyncedStatus'] as String? ?? 'Not checked';
+    buffer.writeln(
+      '| ${_formatRepoName(repo)} | `$upstream` | '
+      '${_timeAgo(repo['pushedAt'] as String?, currentTime)} | $unsynced | '
+      '${_isActionable(repo)} |',
+    );
+  }
+  buffer.writeln();
+}
+
+void _writeStaleRepos(
+  StringBuffer buffer,
+  List<Map<String, dynamic>> stale,
+  DateTime currentTime,
+) {
+  if (stale.isEmpty) return;
+
+  buffer
+    ..writeln('## 💤 Recommended for Archiving (Stale Repositories)')
+    ..writeln(
+      'Repositories with no push activity in over 365 days. '
+      '(Ordered oldest-push first)',
+    )
+    ..writeln()
+    ..writeln('| Repository | Last Push | Actionable? | Description |')
+    ..writeln('| :--- | :--- | :--- | :--- |');
+
+  for (final repo in stale) {
+    final desc = repo['description'] as String? ?? '';
+    buffer.writeln(
+      '| ${_formatRepoName(repo)} | '
+      '${_timeAgo(repo['pushedAt'] as String?, currentTime)} | '
+      '${_isActionable(repo)} | $desc |',
+    );
+  }
+  buffer.writeln();
+}
+
+void _writeActiveAndArchived(
+  StringBuffer buffer,
+  List<Map<String, dynamic>> active,
+  List<Map<String, dynamic>> archived,
+  DateTime currentTime,
+) {
+  if (active.isEmpty && archived.isEmpty) return;
+
+  buffer
+    ..writeln('## ✅ Active or Already Archived Repositories')
+    ..writeln('(Listed here for completeness)')
+    ..writeln();
+
+  if (active.isNotEmpty) {
+    buffer.writeln('### Active Repositories (Pushed in last 365 days)');
+    for (final repo in active) {
+      buffer.writeln(
+        '- ${_formatRepoName(repo)} - Last push '
+        '${_timeAgo(repo['pushedAt'] as String?, currentTime)}',
+      );
+    }
+    buffer.writeln();
+  }
+
+  if (archived.isNotEmpty) {
+    buffer.writeln('### Already Archived Repositories');
+    for (final repo in archived) {
+      buffer.writeln('- ${_formatRepoName(repo)}');
+    }
+    buffer.writeln();
+  }
 }
 
 String? _upstreamRepo(Map<String, dynamic>? parent) => switch (parent) {
