@@ -298,41 +298,21 @@ extension GitDirExtensions on GitDir {
   /// Queries the GitHub API for the PR info by its number.
   ///
   /// Returns [PrInfo], or null if not found.
-  Future<PrInfo?> getPrInfoByNumber(int prNumber) async {
-    try {
-      final result = await Process.run('gh', [
-        'pr',
-        'view',
-        prNumber.toString(),
-        '--json',
-        'state,baseRefName,headRefOid,url,number',
-      ]);
-      if (result.exitCode == 0) {
-        final data =
-            jsonDecode(result.stdout as String) as Map<String, dynamic>;
-        return (
-          state: data['state'] as String? ?? '',
-          baseBranch: data['baseRefName'] as String? ?? '',
-          headRefOid: data['headRefOid'] as String?,
-          url: data['url'] as String?,
-          number: data['number'] as int?,
-        );
-      }
-    } catch (_) {
-      // Ignore and return null
-    }
-    return null;
-  }
+  Future<PrInfo?> getPrInfoByNumber(int prNumber) =>
+      _getPrInfo(prNumber.toString());
 
   /// Queries the GitHub API for the PR info by branch name.
   ///
   /// Returns [PrInfo], or null if not found.
-  Future<PrInfo?> getPrInfoByBranch(String branchName) async {
+  Future<PrInfo?> getPrInfoByBranch(String branchName) =>
+      _getPrInfo(branchName);
+
+  Future<PrInfo?> _getPrInfo(String target) async {
     try {
       final result = await Process.run('gh', [
         'pr',
         'view',
-        branchName,
+        target,
         '--json',
         'state,baseRefName,headRefOid,url,number',
       ]);
