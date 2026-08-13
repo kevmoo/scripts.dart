@@ -891,16 +891,22 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
   final touched = formatTouchedTerminal(pr.updatedAt, currentTime: now);
 
   final statusBadges = <String>[];
-  if (pr.isRepoArchived)
+  if (pr.isRepoArchived) {
     statusBadges.add(styleDim.wrap('[Archived Repo]') ?? '[Archived Repo]');
-  if (pr.isDraft) statusBadges.add(styleDim.wrap('[Draft]') ?? '[Draft]');
+  }
+  if (pr.isDraft) {
+    statusBadges.add(styleDim.wrap('[Draft]') ?? '[Draft]');
+  }
 
-  statusBadges.add(_formatReviewBadgeTerminal(pr));
-  statusBadges.add(_formatCiBadgeTerminal(pr));
-  if (pr.isInMergeQueue)
+  statusBadges
+    ..add(_formatReviewBadgeTerminal(pr))
+    ..add(_formatCiBadgeTerminal(pr));
+  if (pr.isInMergeQueue) {
     statusBadges.add(cyan.wrap('🔀 In Merge Queue') ?? '🔀 In Merge Queue');
-  if (pr.mergeable == 'CONFLICTING')
+  }
+  if (pr.mergeable == 'CONFLICTING') {
     statusBadges.add(red.wrap('⚠️ Conflicting') ?? '⚠️ Conflicting');
+  }
 
   buffer
     ..writeln('\n  • $prTag: ${pr.title}')
@@ -920,8 +926,9 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
 }
 
 String _formatReviewBadgeTerminal(GhPr pr) {
-  if (pr.reviewDecision == 'APPROVED')
+  if (pr.reviewDecision == 'APPROVED') {
     return green.wrap('Approved') ?? 'Approved';
+  }
   if (pr.reviewDecision == 'CHANGES_REQUESTED') {
     if (pr.requestedReviewers.isNotEmpty) {
       return yellow.wrap(
@@ -978,22 +985,28 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
     ..writeln('| Metric | Count | Status Description |')
     ..writeln('| :--- | :---: | :--- |')
     ..writeln(
-      '| **Total Open PRs** | **${prs.length}** | Active pull requests across all GitHub organizations |',
+      '| **Total Open PRs** | **${prs.length}** | '
+      'Active pull requests across all GitHub organizations |',
     )
     ..writeln(
-      '| 🚀 **Ready to Merge** | **${categorized.readyToMerge.length}** | Approved by reviewers, passing all CI checks, and mergeable |',
+      '| 🚀 **Ready to Merge** | **${categorized.readyToMerge.length}** | '
+      'Approved by reviewers, passing all CI checks, and mergeable |',
     )
     ..writeln(
-      '| ⚠️ **Action Needed** | **${categorized.actionNeeded.length}** | Blocked by failing CI, changes requested, or merge conflicts |',
+      '| ⚠️ **Action Needed** | **${categorized.actionNeeded.length}** | '
+      'Blocked by failing CI, changes requested, or merge conflicts |',
     )
     ..writeln(
-      '| 🟡 **In Review Queue** | **${categorized.inReview.length}** | Active non-draft PRs with green/pending CI awaiting review |',
+      '| 🟡 **In Review Queue** | **${categorized.inReview.length}** | '
+      'Active non-draft PRs with green/pending CI awaiting review |',
     )
     ..writeln(
-      '| ⚪ **Drafts & WIP** | **${categorized.drafts.length}** | Work-in-progress draft pull requests |',
+      '| ⚪ **Drafts & WIP** | **${categorized.drafts.length}** | '
+      'Work-in-progress draft pull requests |',
     )
     ..writeln(
-      '| 📦 **Archived Repositories** | **${categorized.archived.length}** | Pull requests in archived/read-only repositories |',
+      '| 📦 **Archived Repositories** | **${categorized.archived.length}** | '
+      'Pull requests in archived/read-only repositories |',
     )
     ..writeln('<!-- mdformat on -->')
     ..writeln();
@@ -1037,7 +1050,8 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
   _writeMarkdownSection(
     buffer,
     title:
-        '## 📦 5. Archived Repositories (Read-Only) (${categorized.archived.length} PRs)',
+        '## 📦 5. Archived Repositories (Read-Only) '
+        '(${categorized.archived.length} PRs)',
     prs: categorized.archived,
     now: now,
   );
@@ -1108,10 +1122,9 @@ void _writeMarkdownPrRow(
     statusLines.add('Issue: ${_resolveIssueType(pr, areThreadsResolved)}');
   }
 
-  statusLines.add(
-    'Review: ${_formatReviewBadgeMarkdown(pr, areThreadsResolved)}',
-  );
-  statusLines.add('CI: ${_formatCiBadgeMarkdown(pr.ciStatus)}');
+  statusLines
+    ..add('Review: ${_formatReviewBadgeMarkdown(pr, areThreadsResolved)}')
+    ..add('CI: ${_formatCiBadgeMarkdown(pr.ciStatus)}');
 
   final mergeableCell = _formatMergeableBadgeMarkdown(pr);
   statusLines.add('Merge: $mergeableCell');
