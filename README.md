@@ -13,6 +13,7 @@ dart pub global activate --source git https://github.com/kevmoo/scripts.dart
 |---|---|---|
 | [`dart-clean`](#dart-clean) | `bin/dart_clean.dart` | Find and kill orphaned Dart processes. |
 | [`gerrit-view`](#gerrit-view) | `bin/gerrit_view.dart` | Complete overview of your active work on Gerrit. |
+| [`gh-view`](#gh-view) | `bin/gh_view.dart` | Complete overview of your active pull requests on GitHub. |
 | [`git-org-clean`](#git-org-clean) | `bin/git_org_clean.dart` | Analyze a GitHub organization for archive/delete candidates. |
 | [`git-up`](#git-up) | `bin/git_up.dart` | Safely switch to and update the default branch. |
 | [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
@@ -49,6 +50,27 @@ gerrit-view [options]
 
 -p, --path-to-gerrit-repo    Path to a local gerrit repo. Defaults to CWD.
 -h, --help                   Print this usage information.
+```
+
+### `gh-view`
+Complete overview of your active pull requests on GitHub.
+
+**Requirements:**
+This tool wraps the GitHub CLI (`gh`) and requires it to be installed and
+authenticated in your `PATH`.
+
+**Usage:**
+```shell
+gh-view [options]
+
+-u, --user          The GitHub user to inspect. (defaults to "@me")
+-R, --repo          Filter PRs to a specific repository (owner/repo).
+-l, --limit         Maximum number of PRs to retrieve. (defaults to "50")
+    --json          Output results in JSON format.
+-m, --[no-]markdown Output results as GitHub Flavored Markdown.
+    --[no-]local    Cross-reference local workspace checkouts and worktrees. (defaults to on)
+    --local-root    Base directory for local Git repositories (defaults to ~/github).
+-h, --help          Print this usage information.
 ```
 
 ### `git-org-clean`
