@@ -129,7 +129,6 @@ Future<void> runGhView({
   final runner = processRunner ?? Process.run;
   final currentTime = now ?? DateTime.now();
 
-  // 1. Fetch PRs from GitHub GraphQL
   final rawPrs = await fetchOpenPullRequests(
     user: options.user,
     repo: options.repo,
@@ -137,44 +136,11 @@ Future<void> runGhView({
     processRunner: runner,
   );
 
-  // 2. Scan local workspaces if enabled
-  Map<String, List<LocalBranchInfo>>? localMap;
-  if (options.checkLocal) {
-    final localRootPath =
-        options.localRoot ?? '${Platform.environment['HOME'] ?? ''}/github';
-    if (localRootPath.isNotEmpty && Directory(localRootPath).existsSync()) {
-      localMap = scanLocalRepositories(Directory(localRootPath));
-    }
-  }
+  final localMap = options.checkLocal
+      ? _discoverLocalRepositories(options.localRoot)
+      : null;
+  final prs = rawPrs.map((pr) => _attachLocalStatus(pr, localMap)).toList();
 
-  // 3. Attach local status to PRs
-  final prs = rawPrs.map((pr) {
-    final localStatus = _matchLocalStatus(pr, localMap);
-    return (
-      number: pr.number,
-      title: pr.title,
-      url: pr.url,
-      isDraft: pr.isDraft,
-      state: pr.state,
-      reviewDecision: pr.reviewDecision,
-      requestedReviewers: pr.requestedReviewers,
-      totalReviewThreads: pr.totalReviewThreads,
-      unresolvedReviewThreads: pr.unresolvedReviewThreads,
-      mergeable: pr.mergeable,
-      isInMergeQueue: pr.isInMergeQueue,
-      headRefName: pr.headRefName,
-      headRefOid: pr.headRefOid,
-      baseRefName: pr.baseRefName,
-      repository: pr.repository,
-      repoUrl: pr.repoUrl,
-      isRepoArchived: pr.isRepoArchived,
-      ciStatus: pr.ciStatus,
-      updatedAt: pr.updatedAt,
-      localStatus: localStatus,
-    );
-  }).toList();
-
-  // 4. Output results
   if (options.json) {
     print(renderJsonOutput(prs, currentTime: currentTime));
   } else if (options.markdown) {
@@ -184,6 +150,43 @@ Future<void> runGhView({
   }
 }
 
+Map<String, List<LocalBranchInfo>>? _discoverLocalRepositories(
+  String? customRoot,
+) {
+  final localRootPath =
+      customRoot ?? '${Platform.environment['HOME'] ?? ''}/github';
+  if (localRootPath.isNotEmpty && Directory(localRootPath).existsSync()) {
+    return scanLocalRepositories(Directory(localRootPath));
+  }
+  return null;
+}
+
+GhPr _attachLocalStatus(
+  GhPr pr,
+  Map<String, List<LocalBranchInfo>>? localMap,
+) => (
+  number: pr.number,
+  title: pr.title,
+  url: pr.url,
+  isDraft: pr.isDraft,
+  state: pr.state,
+  reviewDecision: pr.reviewDecision,
+  requestedReviewers: pr.requestedReviewers,
+  totalReviewThreads: pr.totalReviewThreads,
+  unresolvedReviewThreads: pr.unresolvedReviewThreads,
+  mergeable: pr.mergeable,
+  isInMergeQueue: pr.isInMergeQueue,
+  headRefName: pr.headRefName,
+  headRefOid: pr.headRefOid,
+  baseRefName: pr.baseRefName,
+  repository: pr.repository,
+  repoUrl: pr.repoUrl,
+  isRepoArchived: pr.isRepoArchived,
+  ciStatus: pr.ciStatus,
+  updatedAt: pr.updatedAt,
+  localStatus: _matchLocalStatus(pr, localMap),
+);
+
 /// Fetches open PRs via GitHub GraphQL.
 Future<List<GhPr>> fetchOpenPullRequests({
   required String user,
@@ -192,15 +195,7 @@ Future<List<GhPr>> fetchOpenPullRequests({
   ProcessRunner? processRunner,
 }) async {
   final runner = processRunner ?? Process.run;
-
-  var searchQuery = 'is:pr is:open';
-  if (user.isNotEmpty) {
-    searchQuery += ' author:$user';
-  }
-  if (repo != null && repo.isNotEmpty) {
-    searchQuery += ' repo:$repo';
-  }
-  searchQuery += ' sort:updated-desc';
+  final searchQuery = _buildSearchQuery(user: user, repo: repo);
 
   const graphqlQuery = r'''
 query($q: String!, $limit: Int!) {
@@ -312,16 +307,19 @@ query($q: String!, $limit: Int!) {
   final search = data?['search'] as Map<String, dynamic>?;
   final nodes = search?['nodes'] as List<dynamic>? ?? [];
 
-  final prs = <GhPr>[];
-  for (final node in nodes) {
-    if (node is! Map<String, dynamic>) continue;
-    final parsed = parsePrNode(node);
-    if (parsed != null) {
-      prs.add(parsed);
-    }
-  }
+  return nodes
+      .whereType<Map<String, dynamic>>()
+      .map(parsePrNode)
+      .whereType<GhPr>()
+      .toList();
+}
 
-  return prs;
+String _buildSearchQuery({required String user, String? repo}) {
+  final buffer = StringBuffer('is:pr is:open');
+  if (user.isNotEmpty) buffer.write(' author:$user');
+  if (repo != null && repo.isNotEmpty) buffer.write(' repo:$repo');
+  buffer.write(' sort:updated-desc');
+  return buffer.toString();
 }
 
 /// Parses a single PR node from GraphQL.
@@ -329,32 +327,58 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
   final number = node['number'] as int?;
   final title = node['title'] as String?;
   final url = node['url'] as String?;
-  final isDraft = node['isDraft'] as bool? ?? false;
-  final state = node['state'] as String? ?? 'OPEN';
-  final reviewDecision = node['reviewDecision'] as String? ?? 'NONE';
-  final mergeable = node['mergeable'] as String? ?? 'UNKNOWN';
-  final isInMergeQueue = node['isInMergeQueue'] as bool? ?? false;
-  final headRefName = node['headRefName'] as String? ?? '';
-  final headRefOid = node['headRefOid'] as String? ?? '';
-  final baseRefName = node['baseRefName'] as String? ?? '';
-  final updatedAtStr = node['updatedAt'] as String?;
   final repoMap = node['repository'] as Map<String, dynamic>?;
   final repository = repoMap?['nameWithOwner'] as String? ?? '';
-  final repoUrl = repoMap?['url'] as String? ?? '';
-  final isRepoArchived = repoMap?['isArchived'] as bool? ?? false;
 
   if (number == null || title == null || url == null || repository.isEmpty) {
     return null;
   }
 
+  final updatedAtStr = node['updatedAt'] as String?;
   final updatedAt = updatedAtStr != null
       ? DateTime.tryParse(updatedAtStr) ?? DateTime.now()
       : DateTime.now();
 
-  // Parse review requests
-  final reviewRequestsObj = node['reviewRequests'] as Map<String, dynamic>?;
+  final requestedReviewers = _extractRequestedReviewers(
+    node['reviewRequests'] as Map<String, dynamic>?,
+  );
+  final threads = _extractReviewThreads(
+    node['reviewThreads'] as Map<String, dynamic>?,
+  );
+  final ciStatus = _extractCiStatus(
+    repository,
+    node['commits'] as Map<String, dynamic>?,
+  );
+
+  return (
+    number: number,
+    title: title,
+    url: url,
+    isDraft: node['isDraft'] as bool? ?? false,
+    state: node['state'] as String? ?? 'OPEN',
+    reviewDecision: node['reviewDecision'] as String? ?? 'NONE',
+    requestedReviewers: requestedReviewers,
+    totalReviewThreads: threads.total,
+    unresolvedReviewThreads: threads.unresolved,
+    mergeable: node['mergeable'] as String? ?? 'UNKNOWN',
+    isInMergeQueue: node['isInMergeQueue'] as bool? ?? false,
+    headRefName: node['headRefName'] as String? ?? '',
+    headRefOid: node['headRefOid'] as String? ?? '',
+    baseRefName: node['baseRefName'] as String? ?? '',
+    repository: repository,
+    repoUrl: repoMap?['url'] as String? ?? '',
+    isRepoArchived: repoMap?['isArchived'] as bool? ?? false,
+    ciStatus: ciStatus,
+    updatedAt: updatedAt,
+    localStatus: null,
+  );
+}
+
+List<String> _extractRequestedReviewers(
+  Map<String, dynamic>? reviewRequestsObj,
+) {
   final requestNodes = reviewRequestsObj?['nodes'] as List<dynamic>? ?? [];
-  final requestedReviewers = <String>[];
+  final reviewers = <String>[];
   for (final r in requestNodes) {
     if (r is Map<String, dynamic>) {
       final reviewer = r['requestedReviewer'] as Map<String, dynamic>?;
@@ -363,13 +387,16 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
           reviewer?['slug'] as String? ??
           reviewer?['name'] as String?;
       if (login != null && login.isNotEmpty) {
-        requestedReviewers.add(login);
+        reviewers.add(login);
       }
     }
   }
+  return reviewers;
+}
 
-  // Parse review threads
-  final reviewThreadsObj = node['reviewThreads'] as Map<String, dynamic>?;
+({int total, int unresolved}) _extractReviewThreads(
+  Map<String, dynamic>? reviewThreadsObj,
+) {
   final totalThreads = reviewThreadsObj?['totalCount'] as int? ?? 0;
   final threadNodes = reviewThreadsObj?['nodes'] as List<dynamic>? ?? [];
   var unresolvedThreads = 0;
@@ -378,80 +405,69 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
       unresolvedThreads++;
     }
   }
+  return (total: totalThreads, unresolved: unresolvedThreads);
+}
 
-  var ciStatus = 'NONE';
-  final commits = node['commits'] as Map<String, dynamic>?;
+String _extractCiStatus(String repository, Map<String, dynamic>? commits) {
   final commitNodes = commits?['nodes'] as List<dynamic>?;
-  if (commitNodes != null && commitNodes.isNotEmpty) {
-    final firstCommit = commitNodes.first as Map<String, dynamic>?;
-    final commitObj = firstCommit?['commit'] as Map<String, dynamic>?;
-    final statusRollup =
-        commitObj?['statusCheckRollup'] as Map<String, dynamic>?;
-    final rawState = statusRollup?['state'] as String? ?? 'NONE';
+  if (commitNodes == null || commitNodes.isEmpty) return 'NONE';
 
-    if (repository.toLowerCase() == 'flutter/flutter' &&
-        rawState == 'FAILURE') {
-      final contexts = statusRollup?['contexts'] as Map<String, dynamic>?;
-      final contextNodes = contexts?['nodes'] as List<dynamic>? ?? [];
+  final firstCommit = commitNodes.first as Map<String, dynamic>?;
+  final commitObj = firstCommit?['commit'] as Map<String, dynamic>?;
+  final statusRollup = commitObj?['statusCheckRollup'] as Map<String, dynamic>?;
+  final rawState = statusRollup?['state'] as String? ?? 'NONE';
 
-      var hasRealFailure = false;
-      var hasTreeStatusFailure = false;
-
-      for (final ctx in contextNodes) {
-        if (ctx is! Map<String, dynamic>) continue;
-        final typename = ctx['__typename'] as String?;
-        if (typename == 'StatusContext') {
-          final contextName = ctx['context'] as String? ?? '';
-          final state = ctx['state'] as String? ?? '';
-          if (state == 'FAILURE' || state == 'ERROR') {
-            if (contextName == 'tree-status') {
-              hasTreeStatusFailure = true;
-            } else {
-              hasRealFailure = true;
-            }
-          }
-        } else if (typename == 'CheckRun') {
-          final conclusion = ctx['conclusion'] as String? ?? '';
-          if (conclusion == 'FAILURE' ||
-              conclusion == 'TIMED_OUT' ||
-              conclusion == 'CANCELLED') {
-            hasRealFailure = true;
-          }
-        }
-      }
-
-      if (hasTreeStatusFailure && !hasRealFailure) {
-        ciStatus = 'TREE_BROKEN';
-      } else {
-        ciStatus = rawState;
-      }
-    } else {
-      ciStatus = rawState;
+  if (repository.toLowerCase() == 'flutter/flutter' && rawState == 'FAILURE') {
+    if (_isFlutterTreeStatusOnlyFailure(statusRollup)) {
+      return 'TREE_BROKEN';
     }
   }
 
-  return (
-    number: number,
-    title: title,
-    url: url,
-    isDraft: isDraft,
-    state: state,
-    reviewDecision: reviewDecision,
-    requestedReviewers: requestedReviewers,
-    totalReviewThreads: totalThreads,
-    unresolvedReviewThreads: unresolvedThreads,
-    mergeable: mergeable,
-    isInMergeQueue: isInMergeQueue,
-    headRefName: headRefName,
-    headRefOid: headRefOid,
-    baseRefName: baseRefName,
-    repository: repository,
-    repoUrl: repoUrl,
-    isRepoArchived: isRepoArchived,
-    ciStatus: ciStatus,
-    updatedAt: updatedAt,
-    localStatus: null,
-  );
+  return rawState;
+}
+
+bool _isFlutterTreeStatusOnlyFailure(Map<String, dynamic>? statusRollup) {
+  final contexts = statusRollup?['contexts'] as Map<String, dynamic>?;
+  final contextNodes = contexts?['nodes'] as List<dynamic>? ?? [];
+
+  var hasRealFailure = false;
+  var hasTreeStatusFailure = false;
+
+  for (final ctx in contextNodes.whereType<Map<String, dynamic>>()) {
+    final status = _evaluateFlutterContext(ctx);
+    if (status == _FlutterContextStatus.realFailure) {
+      hasRealFailure = true;
+    } else if (status == _FlutterContextStatus.treeStatusFailure) {
+      hasTreeStatusFailure = true;
+    }
+  }
+
+  return hasTreeStatusFailure && !hasRealFailure;
+}
+
+enum _FlutterContextStatus { ok, treeStatusFailure, realFailure }
+
+_FlutterContextStatus _evaluateFlutterContext(Map<String, dynamic> ctx) {
+  final typename = ctx['__typename'] as String?;
+  if (typename == 'StatusContext') {
+    final state = ctx['state'] as String? ?? '';
+    if (state == 'FAILURE' || state == 'ERROR') {
+      final contextName = ctx['context'] as String? ?? '';
+      return contextName == 'tree-status'
+          ? _FlutterContextStatus.treeStatusFailure
+          : _FlutterContextStatus.realFailure;
+    }
+    return _FlutterContextStatus.ok;
+  }
+  if (typename == 'CheckRun') {
+    final conclusion = ctx['conclusion'] as String? ?? '';
+    if (conclusion == 'FAILURE' ||
+        conclusion == 'TIMED_OUT' ||
+        conclusion == 'CANCELLED') {
+      return _FlutterContextStatus.realFailure;
+    }
+  }
+  return _FlutterContextStatus.ok;
 }
 
 /// Metadata discovered about local Git repositories.
@@ -470,38 +486,39 @@ Map<String, List<LocalBranchInfo>> scanLocalRepositories(
 }) {
   final map = <String, List<LocalBranchInfo>>{};
 
-  void checkDir(Directory dir) {
-    final gitEntity = FileSystemEntity.typeSync('${dir.path}/.git');
-    if (gitEntity != FileSystemEntityType.notFound) {
-      _indexGitRepo(dir, map);
-    }
-  }
-
   try {
     for (final entity in root.listSync().whereType<Directory>()) {
-      final name = p.basename(entity.path);
-      if (name.startsWith('.')) continue;
-
-      final isGit =
-          FileSystemEntity.typeSync('${entity.path}/.git') !=
-          FileSystemEntityType.notFound;
-      if (isGit) {
-        checkDir(entity);
-      } else {
-        // Check 1 level deeper (e.g. ~/github/dart-lang/*, ~/github/kevmoo/*)
-        try {
-          for (final sub in entity.listSync().whereType<Directory>()) {
-            final subName = p.basename(sub.path);
-            if (!subName.startsWith('.')) {
-              checkDir(sub);
-            }
-          }
-        } catch (_) {}
-      }
+      _scanDirectoryEntry(entity, map);
     }
   } catch (_) {}
 
   return map;
+}
+
+void _scanDirectoryEntry(
+  Directory dir,
+  Map<String, List<LocalBranchInfo>> map,
+) {
+  final name = p.basename(dir.path);
+  if (name.startsWith('.')) return;
+
+  final isGit =
+      FileSystemEntity.typeSync('${dir.path}/.git') !=
+      FileSystemEntityType.notFound;
+  if (isGit) {
+    _indexGitRepo(dir, map);
+  } else {
+    try {
+      for (final sub in dir.listSync().whereType<Directory>()) {
+        final subName = p.basename(sub.path);
+        if (!subName.startsWith('.') &&
+            FileSystemEntity.typeSync('${sub.path}/.git') !=
+                FileSystemEntityType.notFound) {
+          _indexGitRepo(sub, map);
+        }
+      }
+    } catch (_) {}
+  }
 }
 
 void _indexGitRepo(Directory dir, Map<String, List<LocalBranchInfo>> map) {
@@ -515,74 +532,80 @@ void _indexGitRepo(Directory dir, Map<String, List<LocalBranchInfo>> map) {
   final repoName = normalizeRepoName(originResult.stdout as String);
   if (repoName == null) return;
 
+  final branches = <LocalBranchInfo>[
+    ..._parseBranchRefs(dir.path, repoName),
+    ..._parseWorktrees(dir.path, repoName),
+  ];
+
+  map.putIfAbsent(repoName.toLowerCase(), () => []).addAll(branches);
+}
+
+List<LocalBranchInfo> _parseBranchRefs(String repoPath, String repoName) {
   final branchResult = Process.runSync('git', [
     'for-each-ref',
     '--format=%(refname:short)\t%(objectname)',
     'refs/heads/',
-  ], workingDirectory: dir.path);
+  ], workingDirectory: repoPath);
+  if (branchResult.exitCode != 0) return const [];
 
   final branches = <LocalBranchInfo>[];
-  if (branchResult.exitCode == 0) {
-    for (final line in (branchResult.stdout as String).trim().split('\n')) {
-      if (line.isEmpty) continue;
-      final parts = line.split('\t');
-      if (parts.length == 2) {
-        branches.add((
-          repoName: repoName,
-          repoPath: dir.path,
-          branchName: parts[0],
-          sha: parts[1],
-          isWorktree: false,
-        ));
-      }
+  for (final line in (branchResult.stdout as String).trim().split('\n')) {
+    if (line.isEmpty) continue;
+    final parts = line.split('\t');
+    if (parts.length == 2) {
+      branches.add((
+        repoName: repoName,
+        repoPath: repoPath,
+        branchName: parts[0],
+        sha: parts[1],
+        isWorktree: false,
+      ));
     }
   }
+  return branches;
+}
 
-  // Also check active worktrees
+List<LocalBranchInfo> _parseWorktrees(String repoPath, String repoName) {
   final wtResult = Process.runSync('git', [
     'worktree',
     'list',
     '--porcelain',
-  ], workingDirectory: dir.path);
-  if (wtResult.exitCode == 0) {
-    String? currentWtPath;
-    String? currentBranch;
-    String? currentSha;
+  ], workingDirectory: repoPath);
+  if (wtResult.exitCode != 0) return const [];
 
-    for (final line in (wtResult.stdout as String).trim().split('\n')) {
-      if (line.startsWith('worktree ')) {
-        currentWtPath = line.substring('worktree '.length).trim();
-      } else if (line.startsWith('HEAD ')) {
-        currentSha = line.substring('HEAD '.length).trim();
-      } else if (line.startsWith('branch refs/heads/')) {
-        currentBranch = line.substring('branch refs/heads/'.length).trim();
-      } else if (line.isEmpty) {
-        if (currentWtPath != null && currentBranch != null) {
-          branches.add((
-            repoName: repoName,
-            repoPath: currentWtPath,
-            branchName: currentBranch,
-            sha: currentSha ?? '',
-            isWorktree: true,
-          ));
-        }
-        currentWtPath = null;
-        currentBranch = null;
-        currentSha = null;
-      }
-    }
+  final branches = <LocalBranchInfo>[];
+  String? currentWtPath;
+  String? currentBranch;
+  String? currentSha;
+
+  void flush() {
     if (currentWtPath != null && currentBranch != null) {
       branches.add((
         repoName: repoName,
-        repoPath: currentWtPath,
-        branchName: currentBranch,
+        repoPath: currentWtPath!,
+        branchName: currentBranch!,
         sha: currentSha ?? '',
         isWorktree: true,
       ));
     }
+    currentWtPath = null;
+    currentBranch = null;
+    currentSha = null;
   }
 
-  map.putIfAbsent(repoName.toLowerCase(), () => []).addAll(branches);
+  for (final line in (wtResult.stdout as String).trim().split('\n')) {
+    if (line.startsWith('worktree ')) {
+      currentWtPath = line.substring('worktree '.length).trim();
+    } else if (line.startsWith('HEAD ')) {
+      currentSha = line.substring('HEAD '.length).trim();
+    } else if (line.startsWith('branch refs/heads/')) {
+      currentBranch = line.substring('branch refs/heads/'.length).trim();
+    } else if (line.isEmpty) {
+      flush();
+    }
+  }
+  flush();
+  return branches;
 }
 
 /// Normalizes a remote Git URL to `owner/repo`.
@@ -623,23 +646,9 @@ LocalBranchStatus? _matchLocalStatus(
       pr.headRefOid.isNotEmpty &&
       (match.sha == pr.headRefOid || pr.headRefOid.startsWith(match.sha));
 
-  // Check dirty status
-  var isDirty = false;
-  try {
-    final statusRes = Process.runSync('git', [
-      'status',
-      '--porcelain',
-      '-uno',
-    ], workingDirectory: match.repoPath);
-    if (statusRes.exitCode == 0) {
-      isDirty = (statusRes.stdout as String).trim().isNotEmpty;
-    }
-  } catch (_) {}
-
+  final isDirty = _isRepoDirty(match.repoPath);
   var display = isHeadMatching ? '🟢 Synced' : '⚠️ Diverged';
-  if (isDirty) {
-    display = '$display (Dirty)';
-  }
+  if (isDirty) display = '$display (Dirty)';
 
   return (
     repoPath: match.repoPath,
@@ -650,6 +659,20 @@ LocalBranchStatus? _matchLocalStatus(
     isWorktree: match.isWorktree,
     displayStatus: display,
   );
+}
+
+bool _isRepoDirty(String repoPath) {
+  try {
+    final statusRes = Process.runSync('git', [
+      'status',
+      '--porcelain',
+      '-uno',
+    ], workingDirectory: repoPath);
+    return statusRes.exitCode == 0 &&
+        (statusRes.stdout as String).trim().isNotEmpty;
+  } catch (_) {
+    return false;
+  }
 }
 
 /// Categorizes PRs into logical operational buckets.
@@ -670,27 +693,11 @@ categorizePullRequests(List<GhPr> prs) {
   for (final pr in prs) {
     if (pr.isRepoArchived) {
       archived.add(pr);
-      continue;
-    }
-
-    if (pr.isDraft) {
+    } else if (pr.isDraft) {
       drafts.add(pr);
-      continue;
-    }
-
-    final isApproved = pr.reviewDecision == 'APPROVED';
-    final isCiSuccess =
-        pr.ciStatus == 'SUCCESS' || pr.ciStatus == 'TREE_BROKEN';
-    final isMergeable = pr.mergeable == 'MERGEABLE' || pr.isInMergeQueue;
-    final isChangesRequested =
-        pr.reviewDecision == 'CHANGES_REQUESTED' &&
-        pr.requestedReviewers.isEmpty;
-    final isCiFailure = pr.ciStatus == 'FAILURE';
-    final isConflicting = pr.mergeable == 'CONFLICTING';
-
-    if (isApproved && isCiSuccess && isMergeable) {
+    } else if (_isReadyToMerge(pr)) {
       readyToMerge.add(pr);
-    } else if (isChangesRequested || isCiFailure || isConflicting) {
+    } else if (_isActionNeeded(pr)) {
       actionNeeded.add(pr);
     } else {
       inReview.add(pr);
@@ -706,9 +713,22 @@ categorizePullRequests(List<GhPr> prs) {
   );
 }
 
+bool _isReadyToMerge(GhPr pr) {
+  final isApproved = pr.reviewDecision == 'APPROVED';
+  final isCiSuccess = pr.ciStatus == 'SUCCESS' || pr.ciStatus == 'TREE_BROKEN';
+  final isMergeable = pr.mergeable == 'MERGEABLE' || pr.isInMergeQueue;
+  return isApproved && isCiSuccess && isMergeable;
+}
+
+bool _isActionNeeded(GhPr pr) {
+  final isChangesRequested =
+      pr.reviewDecision == 'CHANGES_REQUESTED' && pr.requestedReviewers.isEmpty;
+  final isCiFailure = pr.ciStatus == 'FAILURE';
+  final isConflicting = pr.mergeable == 'CONFLICTING';
+  return isChangesRequested || isCiFailure || isConflicting;
+}
+
 /// Formats the last touched time relative to [currentTime].
-///
-/// Returns `# of hours up to 24, then number of days`.
 String formatTimeAgo(DateTime dateTime, {DateTime? currentTime}) {
   final now = currentTime ?? DateTime.now();
   final diff = now.difference(dateTime);
@@ -721,12 +741,9 @@ String formatTimeAgo(DateTime dateTime, {DateTime? currentTime}) {
     return minutes <= 1 ? 'just now' : '${minutes}m ago';
   }
 
-  if (hours <= 24) {
-    return '${hours}h ago';
-  }
+  if (hours <= 24) return '${hours}h ago';
 
-  final days = diff.inDays;
-  return '${days}d ago';
+  return '${diff.inDays}d ago';
 }
 
 /// Color classification for touched timestamps:
@@ -743,15 +760,9 @@ TouchedColor getTouchedColor(DateTime dateTime, {DateTime? currentTime}) {
   if (diff.isNegative) return TouchedColor.green;
 
   final days = diff.inDays;
-  if (days < 7) {
-    return TouchedColor.green;
-  }
-  if (days < 14) {
-    return TouchedColor.yellow;
-  }
-  if (days <= 28) {
-    return TouchedColor.orange;
-  }
+  if (days < 7) return TouchedColor.green;
+  if (days < 14) return TouchedColor.yellow;
+  if (days <= 28) return TouchedColor.orange;
   return TouchedColor.red;
 }
 
@@ -796,73 +807,50 @@ ${styleBold.wrap('🐙 GITHUB PULL REQUEST OVERVIEW')}
     return buffer.toString();
   }
 
-  // 1. Ready to Merge
-  if (categorized.readyToMerge.isNotEmpty) {
-    buffer
-      ..writeln('\n${green.wrap(styleBold.wrap('🚀 READY TO MERGE')!)}')
-      ..writeln(
-        styleDim.wrap('   Approved by reviewers and all CI checks passing:')!,
-      );
-    for (final pr in categorized.readyToMerge) {
-      _writePrItem(buffer, pr, now);
-    }
-  }
+  _writeTerminalSection(
+    buffer,
+    title: green.wrap(styleBold.wrap('🚀 READY TO MERGE')!)!,
+    subtitle: 'Approved by reviewers and all CI checks passing:',
+    prs: categorized.readyToMerge,
+    now: now,
+  );
 
-  // 2. Action Needed
-  if (categorized.actionNeeded.isNotEmpty) {
-    final header = red.wrap(
+  _writeTerminalSection(
+    buffer,
+    title: red.wrap(
       styleBold.wrap('⚠️  ACTION NEEDED (Blocked / Failing / Conflicts)')!,
-    );
-    buffer
-      ..writeln('\n$header')
-      ..writeln(
-        styleDim.wrap(
-          '   Requires code fixes, rebase, or review feedback resolution:',
-        )!,
-      );
-    for (final pr in categorized.actionNeeded) {
-      _writePrItem(buffer, pr, now);
-    }
-  }
+    )!,
+    subtitle: 'Requires code fixes, rebase, or review feedback resolution:',
+    prs: categorized.actionNeeded,
+    now: now,
+  );
 
-  // 3. In Review
-  if (categorized.inReview.isNotEmpty) {
-    buffer
-      ..writeln('\n${yellow.wrap(styleBold.wrap('🟡 IN REVIEW QUEUE')!)}')
-      ..writeln(styleDim.wrap('   Active PRs awaiting reviewer feedback:')!);
-    for (final pr in categorized.inReview) {
-      _writePrItem(buffer, pr, now);
-    }
-  }
+  _writeTerminalSection(
+    buffer,
+    title: yellow.wrap(styleBold.wrap('🟡 IN REVIEW QUEUE')!)!,
+    subtitle: 'Active PRs awaiting reviewer feedback:',
+    prs: categorized.inReview,
+    now: now,
+  );
 
-  // 4. Drafts & WIP
-  if (categorized.drafts.isNotEmpty) {
-    buffer.writeln(
-      '\n${styleDim.wrap(styleBold.wrap('⚪ DRAFTS & WORK IN PROGRESS')!)}',
-    );
-    for (final pr in categorized.drafts) {
-      _writePrItem(buffer, pr, now);
-    }
-  }
+  _writeTerminalSection(
+    buffer,
+    title: styleDim.wrap(styleBold.wrap('⚪ DRAFTS & WORK IN PROGRESS')!)!,
+    subtitle: 'Work-in-progress draft pull requests:',
+    prs: categorized.drafts,
+    now: now,
+  );
 
-  // 5. Archived Repositories
-  if (categorized.archived.isNotEmpty) {
-    final archivedHeader = styleDim.wrap(
+  _writeTerminalSection(
+    buffer,
+    title: styleDim.wrap(
       styleBold.wrap('📦 ARCHIVED REPOSITORIES (Read-Only)')!,
-    );
-    buffer
-      ..writeln('\n$archivedHeader')
-      ..writeln(
-        styleDim.wrap(
-          '   Repositories are archived; pull requests cannot be modified:',
-        )!,
-      );
-    for (final pr in categorized.archived) {
-      _writePrItem(buffer, pr, now);
-    }
-  }
+    )!,
+    subtitle: 'Repositories are archived; pull requests cannot be modified:',
+    prs: categorized.archived,
+    now: now,
+  );
 
-  // Summary footer
   final summary =
       'Total Open: ${prs.length} | '
       '🚀 Ready: ${categorized.readyToMerge.length} | '
@@ -880,6 +868,22 @@ ${styleBold.wrap('Summary:')} $summary
   return buffer.toString();
 }
 
+void _writeTerminalSection(
+  StringBuffer buffer, {
+  required String title,
+  required String subtitle,
+  required List<GhPr> prs,
+  required DateTime now,
+}) {
+  if (prs.isEmpty) return;
+  buffer
+    ..writeln('\n$title')
+    ..writeln(styleDim.wrap('   $subtitle')!);
+  for (final pr in prs) {
+    _writePrItem(buffer, pr, now);
+  }
+}
+
 void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
   final prTag =
       styleBold.wrap('${pr.repository}#${pr.number}') ??
@@ -887,53 +891,16 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
   final touched = formatTouchedTerminal(pr.updatedAt, currentTime: now);
 
   final statusBadges = <String>[];
-  if (pr.isRepoArchived) {
+  if (pr.isRepoArchived)
     statusBadges.add(styleDim.wrap('[Archived Repo]') ?? '[Archived Repo]');
-  }
-  if (pr.isDraft) {
-    statusBadges.add(styleDim.wrap('[Draft]') ?? '[Draft]');
-  }
+  if (pr.isDraft) statusBadges.add(styleDim.wrap('[Draft]') ?? '[Draft]');
 
-  final reviewBadge = switch (pr.reviewDecision) {
-    'APPROVED' => green.wrap('Approved') ?? 'Approved',
-    'CHANGES_REQUESTED' =>
-      pr.requestedReviewers.isNotEmpty
-          ? yellow.wrap(
-                  'Re-review Requested (@${pr.requestedReviewers.join(', @')})',
-                ) ??
-                'Re-review Requested'
-          : pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0
-          ? yellow.wrap('Changes Requested (Resolved: Re-review Needed)') ??
-                'Changes Requested (Resolved: Re-review Needed)'
-          : red.wrap('Changes Requested') ?? 'Changes Requested',
-    'REVIEW_REQUIRED' =>
-      pr.requestedReviewers.isNotEmpty
-          ? yellow.wrap(
-                  'Review Required (@${pr.requestedReviewers.join(', @')})',
-                ) ??
-                'Review Required'
-          : yellow.wrap('Review Required') ?? 'Review Required',
-    _ => 'No Reviewers',
-  };
-  statusBadges.add(reviewBadge);
-
-  final ciBadge = switch (pr.ciStatus) {
-    'SUCCESS' => green.wrap('CI: Passing') ?? 'CI: Passing',
-    'TREE_BROKEN' =>
-      yellow.wrap('CI: Tree Broken (PR Clean)') ?? 'CI: Tree Broken (PR Clean)',
-    'FAILURE' => red.wrap('CI: Failing') ?? 'CI: Failing',
-    'PENDING' => yellow.wrap('CI: Pending') ?? 'CI: Pending',
-    _ => styleDim.wrap('CI: None') ?? 'CI: None',
-  };
-  statusBadges.add(ciBadge);
-
-  if (pr.isInMergeQueue) {
+  statusBadges.add(_formatReviewBadgeTerminal(pr));
+  statusBadges.add(_formatCiBadgeTerminal(pr));
+  if (pr.isInMergeQueue)
     statusBadges.add(cyan.wrap('🔀 In Merge Queue') ?? '🔀 In Merge Queue');
-  }
-
-  if (pr.mergeable == 'CONFLICTING') {
+  if (pr.mergeable == 'CONFLICTING')
     statusBadges.add(red.wrap('⚠️ Conflicting') ?? '⚠️ Conflicting');
-  }
 
   buffer
     ..writeln('\n  • $prTag: ${pr.title}')
@@ -951,6 +918,43 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
     );
   }
 }
+
+String _formatReviewBadgeTerminal(GhPr pr) {
+  if (pr.reviewDecision == 'APPROVED')
+    return green.wrap('Approved') ?? 'Approved';
+  if (pr.reviewDecision == 'CHANGES_REQUESTED') {
+    if (pr.requestedReviewers.isNotEmpty) {
+      return yellow.wrap(
+            'Re-review Requested (@${pr.requestedReviewers.join(', @')})',
+          ) ??
+          'Re-review Requested';
+    }
+    if (pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0) {
+      return yellow.wrap('Changes Requested (Resolved: Re-review Needed)') ??
+          'Changes Requested (Resolved: Re-review Needed)';
+    }
+    return red.wrap('Changes Requested') ?? 'Changes Requested';
+  }
+  if (pr.reviewDecision == 'REVIEW_REQUIRED') {
+    if (pr.requestedReviewers.isNotEmpty) {
+      return yellow.wrap(
+            'Review Required (@${pr.requestedReviewers.join(', @')})',
+          ) ??
+          'Review Required';
+    }
+    return yellow.wrap('Review Required') ?? 'Review Required';
+  }
+  return 'No Reviewers';
+}
+
+String _formatCiBadgeTerminal(GhPr pr) => switch (pr.ciStatus) {
+  'SUCCESS' => green.wrap('CI: Passing') ?? 'CI: Passing',
+  'TREE_BROKEN' =>
+    yellow.wrap('CI: Tree Broken (PR Clean)') ?? 'CI: Tree Broken (PR Clean)',
+  'FAILURE' => red.wrap('CI: Failing') ?? 'CI: Failing',
+  'PENDING' => yellow.wrap('CI: Pending') ?? 'CI: Pending',
+  _ => styleDim.wrap('CI: None') ?? 'CI: None',
+};
 
 /// Renders GitHub Flavored Markdown report.
 String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
@@ -974,28 +978,22 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
     ..writeln('| Metric | Count | Status Description |')
     ..writeln('| :--- | :---: | :--- |')
     ..writeln(
-      '| **Total Open PRs** | **${prs.length}** | '
-      'Active pull requests across all GitHub organizations |',
+      '| **Total Open PRs** | **${prs.length}** | Active pull requests across all GitHub organizations |',
     )
     ..writeln(
-      '| 🚀 **Ready to Merge** | **${categorized.readyToMerge.length}** | '
-      'Approved by reviewers, passing all CI checks, and mergeable |',
+      '| 🚀 **Ready to Merge** | **${categorized.readyToMerge.length}** | Approved by reviewers, passing all CI checks, and mergeable |',
     )
     ..writeln(
-      '| ⚠️ **Action Needed** | **${categorized.actionNeeded.length}** | '
-      'Blocked by failing CI, changes requested, or merge conflicts |',
+      '| ⚠️ **Action Needed** | **${categorized.actionNeeded.length}** | Blocked by failing CI, changes requested, or merge conflicts |',
     )
     ..writeln(
-      '| 🟡 **In Review Queue** | **${categorized.inReview.length}** | '
-      'Active non-draft PRs with green/pending CI awaiting review |',
+      '| 🟡 **In Review Queue** | **${categorized.inReview.length}** | Active non-draft PRs with green/pending CI awaiting review |',
     )
     ..writeln(
-      '| ⚪ **Drafts & WIP** | **${categorized.drafts.length}** | '
-      'Work-in-progress draft pull requests |',
+      '| ⚪ **Drafts & WIP** | **${categorized.drafts.length}** | Work-in-progress draft pull requests |',
     )
     ..writeln(
-      '| 📦 **Archived Repositories** | **${categorized.archived.length}** | '
-      'Pull requests in archived/read-only repositories |',
+      '| 📦 **Archived Repositories** | **${categorized.archived.length}** | Pull requests in archived/read-only repositories |',
     )
     ..writeln('<!-- mdformat on -->')
     ..writeln();
@@ -1005,90 +1003,78 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
     return buffer.toString();
   }
 
+  _writeMarkdownSection(
+    buffer,
+    title: '## 🚀 1. Ready to Merge (Approved + Green CI + Mergeable)',
+    prs: categorized.readyToMerge,
+    now: now,
+  );
+
+  _writeMarkdownSection(
+    buffer,
+    title: '## ⚠️ 2. Action Needed (Blocked / Failing CI / Conflicts / Changes Requested)',
+    prs: categorized.actionNeeded,
+    now: now,
+    includeIssueType: true,
+  );
+
+  _writeMarkdownSection(
+    buffer,
+    title: '## 🟡 3. In Review Queue (Green CI + Active Review)',
+    prs: categorized.inReview,
+    now: now,
+  );
+
+  _writeMarkdownSection(
+    buffer,
+    title:
+        '## ⚪ 4. Drafts & Work In Progress (${categorized.drafts.length} PRs)',
+    prs: categorized.drafts,
+    now: now,
+    isDraftSection: true,
+  );
+
+  _writeMarkdownSection(
+    buffer,
+    title:
+        '## 📦 5. Archived Repositories (Read-Only) (${categorized.archived.length} PRs)',
+    prs: categorized.archived,
+    now: now,
+  );
+
+  return buffer.toString();
+}
+
+void _writeMarkdownSection(
+  StringBuffer buffer, {
+  required String title,
+  required List<GhPr> prs,
+  required DateTime now,
+  bool includeIssueType = false,
+  bool isDraftSection = false,
+}) {
+  if (prs.isEmpty) return;
   const tableHeader = '''
 <!-- mdformat off(prevent table wrapping) -->
 | Pull Request | Status |
 | :--- | :--- |''';
 
-  // 1. Ready to Merge
-  if (categorized.readyToMerge.isNotEmpty) {
-    buffer
-      ..writeln('## 🚀 1. Ready to Merge (Approved + Green CI + Mergeable)')
-      ..writeln()
-      ..writeln(tableHeader);
-    for (final pr in categorized.readyToMerge) {
-      _writeMarkdownPrRow(buffer, pr, now);
-    }
-    buffer
-      ..writeln('<!-- mdformat on -->')
-      ..writeln();
+  buffer
+    ..writeln(title)
+    ..writeln()
+    ..writeln(tableHeader);
+  for (final pr in prs) {
+    _writeMarkdownPrRow(
+      buffer,
+      pr,
+      now,
+      includeIssueType: includeIssueType,
+      isDraftSection: isDraftSection,
+    );
   }
-
-  // 2. Action Needed
-  if (categorized.actionNeeded.isNotEmpty) {
-    buffer
-      ..writeln(
-        '## ⚠️ 2. Action Needed '
-        '(Blocked / Failing CI / Conflicts / Changes Requested)',
-      )
-      ..writeln()
-      ..writeln(tableHeader);
-    for (final pr in categorized.actionNeeded) {
-      _writeMarkdownPrRow(buffer, pr, now, includeIssueType: true);
-    }
-    buffer
-      ..writeln('<!-- mdformat on -->')
-      ..writeln();
-  }
-
-  // 3. In Review
-  if (categorized.inReview.isNotEmpty) {
-    buffer
-      ..writeln('## 🟡 3. In Review Queue (Green CI + Active Review)')
-      ..writeln()
-      ..writeln(tableHeader);
-    for (final pr in categorized.inReview) {
-      _writeMarkdownPrRow(buffer, pr, now);
-    }
-    buffer
-      ..writeln('<!-- mdformat on -->')
-      ..writeln();
-  }
-
-  // 4. Drafts & WIP
-  if (categorized.drafts.isNotEmpty) {
-    buffer
-      ..writeln(
-        '## ⚪ 4. Drafts & Work In Progress (${categorized.drafts.length} PRs)',
-      )
-      ..writeln()
-      ..writeln(tableHeader);
-    for (final pr in categorized.drafts) {
-      _writeMarkdownPrRow(buffer, pr, now, isDraftSection: true);
-    }
-    buffer
-      ..writeln('<!-- mdformat on -->')
-      ..writeln();
-  }
-
-  // 5. Archived Repositories
-  if (categorized.archived.isNotEmpty) {
-    buffer
-      ..writeln(
-        '## 📦 5. Archived Repositories (Read-Only) '
-        '(${categorized.archived.length} PRs)',
-      )
-      ..writeln()
-      ..writeln(tableHeader);
-    for (final pr in categorized.archived) {
-      _writeMarkdownPrRow(buffer, pr, now);
-    }
-    buffer
-      ..writeln('<!-- mdformat on -->')
-      ..writeln();
-  }
-
-  return buffer.toString();
+  buffer
+    ..writeln('<!-- mdformat on -->')
+    ..writeln();
 }
 
 void _writeMarkdownPrRow(
@@ -1101,97 +1087,103 @@ void _writeMarkdownPrRow(
   final repoUrl = pr.repoUrl.isNotEmpty
       ? pr.repoUrl
       : 'https://github.com/${pr.repository}';
-  final repoCell = '[${pr.repository}]($repoUrl)';
+  final queuePrefix = pr.isInMergeQueue ? '`[🔀 Merge Queue]` ' : '';
   final sanitizedTitle = pr.title
       .replaceAll('|', '/')
       .replaceAll('\n', ' ')
       .trim();
-  final queuePrefix = pr.isInMergeQueue ? '`[🔀 Merge Queue]` ' : '';
-  final prTitleLine = '[#${pr.number}](${pr.url}) $queuePrefix$sanitizedTitle';
 
-  final prLines = <String>[repoCell, prTitleLine, '`${pr.headRefName}`'];
-
-  if (pr.localStatus != null) {
-    final loc = pr.localStatus!;
-    final dirName = p.basename(loc.repoPath);
-    prLines.add(
-      'Local: ${loc.displayStatus} ([$dirName](file://${loc.repoPath}))',
-    );
-  } else {
-    prLines.add('Local: ⚪ Not checked out');
-  }
-
-  final prCell = prLines.join('<br>');
+  final prLines = <String>[
+    '[${pr.repository}]($repoUrl)',
+    '[#${pr.number}](${pr.url}) $queuePrefix$sanitizedTitle',
+    '`${pr.headRefName}`',
+    _formatLocalMappingMarkdown(pr.localStatus),
+  ];
 
   final areThreadsResolved =
       pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0;
-
   final statusLines = <String>[];
 
   if (includeIssueType) {
-    final issueType = switch ((
-      pr.reviewDecision == 'CHANGES_REQUESTED',
-      pr.requestedReviewers.isNotEmpty,
-      areThreadsResolved,
-      pr.ciStatus == 'FAILURE',
-      pr.mergeable == 'CONFLICTING',
-    )) {
-      (true, true, _, _, _) => '🟡 Re-review Requested',
-      (true, false, true, _, _) => '🔄 Re-review Needed',
-      (true, false, false, _, _) => '🔴 Changes Requested',
-      (_, _, _, true, _) => '🔴 CI Failing',
-      (_, _, _, _, true) => '⚠️ Conflicting',
-      _ => '🟡 Attention Needed',
-    };
-    statusLines.add('Issue: $issueType');
+    statusLines.add('Issue: ${_resolveIssueType(pr, areThreadsResolved)}');
   }
 
-  final reviewCell = switch (pr.reviewDecision) {
-    'APPROVED' => '🟢 Approved',
-    'CHANGES_REQUESTED' =>
-      pr.requestedReviewers.isNotEmpty
-          ? '🟡 Re-review Requested (@${pr.requestedReviewers.join(', @')})'
-          : areThreadsResolved
-          ? '🔴 Changes Requested (Resolved)'
-          : pr.unresolvedReviewThreads > 0
-          ? '🔴 Changes Requested (${pr.unresolvedReviewThreads} open)'
-          : '🔴 Changes Requested',
-    'REVIEW_REQUIRED' =>
-      pr.requestedReviewers.isNotEmpty
-          ? '🟡 Review Required (@${pr.requestedReviewers.join(', @')})'
-          : '🟡 Review Required',
-    _ => '⚪ None',
-  };
-  statusLines.add('Review: $reviewCell');
+  statusLines.add(
+    'Review: ${_formatReviewBadgeMarkdown(pr, areThreadsResolved)}',
+  );
+  statusLines.add('CI: ${_formatCiBadgeMarkdown(pr.ciStatus)}');
 
-  final ciCell = switch (pr.ciStatus) {
-    'SUCCESS' => '🟢 Passing',
-    'TREE_BROKEN' => '🟠 Tree Broken (PR Clean)',
-    'FAILURE' => '🔴 Failing',
-    'PENDING' => '⏳ Pending',
-    _ => '⚪ None',
-  };
-  statusLines.add('CI: $ciCell');
-
-  final mergeableCell = switch (pr.mergeable) {
-    'MERGEABLE' => '✅ Yes',
-    'CONFLICTING' => '⚠️ Conflicting',
-    _ => pr.isInMergeQueue ? '✅ Yes' : '⚪ Unknown',
-  };
-  if (pr.isInMergeQueue) {
-    statusLines.add('Merge: $mergeableCell (🔀 Queue)');
-  } else {
-    statusLines.add('Merge: $mergeableCell');
-  }
+  final mergeableCell = _formatMergeableBadgeMarkdown(pr);
+  statusLines.add('Merge: $mergeableCell');
 
   final touched = formatTouchedMarkdown(pr.updatedAt, currentTime: now);
   statusLines.add('Touched: $touched');
 
+  final prCell = prLines.join('<br>');
   final statusCell = statusLines
       .map((line) => line.replaceAll(' ', '&nbsp;'))
       .join('<br>');
 
   buffer.writeln('| $prCell | $statusCell |');
+}
+
+String _resolveIssueType(GhPr pr, bool areThreadsResolved) => switch ((
+  pr.reviewDecision == 'CHANGES_REQUESTED',
+  pr.requestedReviewers.isNotEmpty,
+  areThreadsResolved,
+  pr.ciStatus == 'FAILURE',
+  pr.mergeable == 'CONFLICTING',
+)) {
+  (true, true, _, _, _) => '🟡 Re-review Requested',
+  (true, false, true, _, _) => '🔄 Re-review Needed',
+  (true, false, false, _, _) => '🔴 Changes Requested',
+  (_, _, _, true, _) => '🔴 CI Failing',
+  (_, _, _, _, true) => '⚠️ Conflicting',
+  _ => '🟡 Attention Needed',
+};
+
+String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) {
+  if (pr.reviewDecision == 'APPROVED') return '🟢 Approved';
+  if (pr.reviewDecision == 'CHANGES_REQUESTED') {
+    if (pr.requestedReviewers.isNotEmpty) {
+      return '🟡 Re-review Requested (@${pr.requestedReviewers.join(', @')})';
+    }
+    if (areThreadsResolved) return '🔴 Changes Requested (Resolved)';
+    if (pr.unresolvedReviewThreads > 0) {
+      return '🔴 Changes Requested (${pr.unresolvedReviewThreads} open)';
+    }
+    return '🔴 Changes Requested';
+  }
+  if (pr.reviewDecision == 'REVIEW_REQUIRED') {
+    if (pr.requestedReviewers.isNotEmpty) {
+      return '🟡 Review Required (@${pr.requestedReviewers.join(', @')})';
+    }
+    return '🟡 Review Required';
+  }
+  return '⚪ None';
+}
+
+String _formatCiBadgeMarkdown(String ciStatus) => switch (ciStatus) {
+  'SUCCESS' => '🟢 Passing',
+  'TREE_BROKEN' => '🟠 Tree Broken (PR Clean)',
+  'FAILURE' => '🔴 Failing',
+  'PENDING' => '⏳ Pending',
+  _ => '⚪ None',
+};
+
+String _formatMergeableBadgeMarkdown(GhPr pr) {
+  final label = switch (pr.mergeable) {
+    'MERGEABLE' => '✅ Yes',
+    'CONFLICTING' => '⚠️ Conflicting',
+    _ => pr.isInMergeQueue ? '✅ Yes' : '⚪ Unknown',
+  };
+  return pr.isInMergeQueue ? '$label (🔀 Queue)' : label;
+}
+
+String _formatLocalMappingMarkdown(LocalBranchStatus? loc) {
+  if (loc == null) return 'Local: ⚪ Not checked out';
+  final dirName = p.basename(loc.repoPath);
+  return 'Local: ${loc.displayStatus} ([$dirName](file://${loc.repoPath}))';
 }
 
 /// Renders machine-readable JSON output.
