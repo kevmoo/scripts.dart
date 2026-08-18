@@ -289,6 +289,7 @@ void main() {
       ciStatus: ciStatus,
       updatedAt: now,
       localStatus: null,
+      context: null,
     );
 
     test(
@@ -359,6 +360,7 @@ void main() {
           isWorktree: false,
           displayStatus: '🟢 Synced',
         ),
+        context: null,
       );
 
       final jsonStr = renderJsonOutput([pr], currentTime: now);
@@ -416,6 +418,7 @@ void main() {
           isWorktree: false,
           displayStatus: '🟢 Synced',
         ),
+        context: null,
       );
 
       final md = renderMarkdownReport([pr], currentTime: now);
@@ -451,6 +454,7 @@ void main() {
           ciStatus: 'TREE_BROKEN',
           updatedAt: now.subtract(const Duration(hours: 19)),
           localStatus: null,
+          context: null,
         );
 
         final md = renderMarkdownReport([pr], currentTime: now);
@@ -482,6 +486,7 @@ void main() {
         ciStatus: 'TREE_BROKEN',
         updatedAt: now.subtract(const Duration(hours: 19)),
         localStatus: null,
+        context: null,
       );
 
       final md = renderMarkdownReport([pr], currentTime: now);
@@ -560,6 +565,99 @@ void main() {
       check(output).contains('CI: Passing');
     });
 
+    test('filters PRs by lastNDays correctly', () async {
+      final now = DateTime.parse('2026-08-13T20:00:00Z');
+      final mockData = {
+        'data': {
+          'search': {
+            'issueCount': 2,
+            'nodes': [
+              {
+                'number': 101,
+                'title': 'Recent PR (2d old)',
+                'url': 'https://github.com/dart-lang/build/pull/101',
+                'isDraft': false,
+                'state': 'OPEN',
+                'reviewDecision': 'APPROVED',
+                'mergeable': 'MERGEABLE',
+                'headRefName': 'recent-branch',
+                'headRefOid': 'sha101',
+                'baseRefName': 'master',
+                'updatedAt': '2026-08-11T20:00:00Z',
+                'repository': {
+                  'nameWithOwner': 'dart-lang/build',
+                  'url': 'https://github.com/dart-lang/build',
+                },
+                'commits': {
+                  'nodes': [
+                    {
+                      'commit': {
+                        'statusCheckRollup': {'state': 'SUCCESS'},
+                      },
+                    },
+                  ],
+                },
+              },
+              {
+                'number': 102,
+                'title': 'Old PR (10d old)',
+                'url': 'https://github.com/dart-lang/build/pull/102',
+                'isDraft': false,
+                'state': 'OPEN',
+                'reviewDecision': 'APPROVED',
+                'mergeable': 'MERGEABLE',
+                'headRefName': 'old-branch',
+                'headRefOid': 'sha102',
+                'baseRefName': 'master',
+                'updatedAt': '2026-08-03T20:00:00Z',
+                'repository': {
+                  'nameWithOwner': 'dart-lang/build',
+                  'url': 'https://github.com/dart-lang/build',
+                },
+                'commits': {
+                  'nodes': [
+                    {
+                      'commit': {
+                        'statusCheckRollup': {'state': 'SUCCESS'},
+                      },
+                    },
+                  ],
+                },
+              },
+            ],
+          },
+        },
+      };
+
+      ProcessResult mockRunner(
+        String exe,
+        List<String> args, {
+        String? workingDirectory,
+      }) {
+        if (exe == 'gh' && args.contains('graphql')) {
+          return ProcessResult(1234, 0, jsonEncode(mockData), '');
+        }
+        return ProcessResult(1234, 0, '', '');
+      }
+
+      final prints = <String>[];
+      await wrappedForTesting(() async {
+        final printsList = await _capturePrints(() async {
+          await runGhView(
+            options: const GhViewOptions(checkLocal: false, lastNDays: 7),
+            processRunner: (exe, args, {workingDirectory}) async =>
+                mockRunner(exe, args, workingDirectory: workingDirectory),
+            now: now,
+          );
+        });
+        prints.addAll(printsList);
+      });
+
+      final output = prints.join('\n');
+      check(output).contains('dart-lang/build#101');
+      check(output).not((c) => c.contains('dart-lang/build#102'));
+    });
+
     test('throws GhViewException when gh command fails', () async {
       ProcessResult mockFailingRunner(
         String exe,
@@ -576,6 +674,160 @@ void main() {
       ).throws<GhViewException>();
     });
   });
+
+  group('GhViewOptions.createArgParser', () {
+    test('parses --last-n-days and aliases', () {
+      final parser = GhViewOptions.createArgParser();
+      check(parser.parse(['--last-n-days', '7'])['last-n-days']).equals('7');
+      check(parser.parse(['-d', '14'])['last-n-days']).equals('14');
+      check(parser.parse(['--last-days', '3'])['last-n-days']).equals('3');
+      check(parser.parse(['--days', '5'])['last-n-days']).equals('5');
+    });
+
+    test('parses --enricher and -e', () {
+      final parser = GhViewOptions.createArgParser();
+      check(parser.parse(['--enricher', 'pm-status enrich-prs'])['enricher'])
+          .equals('pm-status enrich-prs');
+      check(parser.parse(['-e', 'pm-status enrich-prs'])['enricher'])
+          .equals('pm-status enrich-prs');
+    });
+  });
+
+  group('fetchEnrichedContext', () {
+    final pr = (
+      number: 42,
+      title: 'Fix issue',
+      url: 'https://github.com/dart-lang/tools/pull/42',
+      isDraft: false,
+      state: 'OPEN',
+      reviewDecision: 'APPROVED',
+      requestedReviewers: <String>[],
+      totalReviewThreads: 0,
+      unresolvedReviewThreads: 0,
+      mergeable: 'MERGEABLE',
+      isInMergeQueue: false,
+      headRefName: 'fix-issue',
+      headRefOid: 'sha42',
+      baseRefName: 'main',
+      repository: 'dart-lang/tools',
+      repoUrl: 'https://github.com/dart-lang/tools',
+      isRepoArchived: false,
+      ciStatus: 'SUCCESS',
+      updatedAt: DateTime.parse('2026-08-13T20:00:00Z'),
+      localStatus: null,
+      context: null,
+    );
+
+    test('parses mapping by url and repo#number', () async {
+      final mockJson = jsonEncode({
+        'https://github.com/dart-lang/tools/pull/42':
+            'Project: [dash-web](file:///path) #A6ER2',
+      });
+
+      final result = await fetchEnrichedContext(
+        enricherCommand: 'my-enricher',
+        prs: [pr],
+        enricherRunner: (cmd, payload) async {
+          check(cmd).equals('my-enricher');
+          check(payload).contains('"number":42');
+          return mockJson;
+        },
+      );
+
+      check(result['https://github.com/dart-lang/tools/pull/42'])
+          .equals('Project: [dash-web](file:///path) #A6ER2');
+    });
+
+    test('handles empty or null runner responses gracefully', () async {
+      final result = await fetchEnrichedContext(
+        enricherCommand: 'my-enricher',
+        prs: [pr],
+        enricherRunner: (cmd, payload) async => null,
+      );
+      check(result).isEmpty();
+    });
+
+    test('handles malformed JSON gracefully', () async {
+      final result = await fetchEnrichedContext(
+        enricherCommand: 'my-enricher',
+        prs: [pr],
+        enricherRunner: (cmd, payload) async => 'invalid json',
+      );
+      check(result).isEmpty();
+    });
+  });
+
+  group(
+    'renderTerminalReport and renderMarkdownReport with enriched context',
+    () {
+      final now = DateTime.parse('2026-08-13T20:00:00Z');
+      final prWithContext = (
+        number: 42,
+        title: 'Fix issue',
+        url: 'https://github.com/dart-lang/tools/pull/42',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: 'APPROVED',
+        requestedReviewers: <String>[],
+        totalReviewThreads: 0,
+        unresolvedReviewThreads: 0,
+        mergeable: 'MERGEABLE',
+        isInMergeQueue: false,
+        headRefName: 'fix-issue',
+        headRefOid: 'sha42',
+        baseRefName: 'main',
+        repository: 'dart-lang/tools',
+        repoUrl: 'https://github.com/dart-lang/tools',
+        isRepoArchived: false,
+        ciStatus: 'SUCCESS',
+        updatedAt: now.subtract(const Duration(hours: 1)),
+        localStatus: null,
+        context: '🎯 [dash-web](file:///projects/dash-web) · #A6ER2',
+      );
+
+      test('renderTerminalReport includes Context line', () {
+        final output = renderTerminalReport([prWithContext], currentTime: now);
+        check(output).contains(
+          'Context: 🎯 [dash-web](file:///projects/dash-web) · #A6ER2',
+        );
+      });
+
+      test('renderMarkdownReport includes context line in table cell', () {
+        final output = renderMarkdownReport([prWithContext], currentTime: now);
+        check(output)
+            .contains('🎯 [dash-web](file:///projects/dash-web) · #A6ER2');
+      });
+
+      test('renderMarkdownReport sanitizes pipe characters in context', () {
+        final prWithPipe = (
+          number: 42,
+          title: 'Fix issue',
+          url: 'https://github.com/dart-lang/tools/pull/42',
+          isDraft: false,
+          state: 'OPEN',
+          reviewDecision: 'APPROVED',
+          requestedReviewers: <String>[],
+          totalReviewThreads: 0,
+          unresolvedReviewThreads: 0,
+          mergeable: 'MERGEABLE',
+          isInMergeQueue: false,
+          headRefName: 'fix-issue',
+          headRefOid: 'sha42',
+          baseRefName: 'main',
+          repository: 'dart-lang/tools',
+          repoUrl: 'https://github.com/dart-lang/tools',
+          isRepoArchived: false,
+          ciStatus: 'SUCCESS',
+          updatedAt: now.subtract(const Duration(hours: 1)),
+          localStatus: null,
+          context: 'Project: Foo | Bar',
+        );
+        final output = renderMarkdownReport([prWithPipe], currentTime: now);
+        check(output).contains('Project: Foo / Bar');
+        check(output).not((c) => c.contains('Project: Foo | Bar'));
+      });
+    },
+  );
 }
 
 Future<List<String>> _capturePrints(Future<void> Function() action) async {

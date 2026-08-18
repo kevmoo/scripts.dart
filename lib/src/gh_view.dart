@@ -39,6 +39,7 @@ typedef GhPr = ({
   String ciStatus,
   DateTime updatedAt,
   LocalBranchStatus? localStatus,
+  String? context,
 });
 
 /// Local workspace status for a PR branch.
@@ -57,19 +58,23 @@ class GhViewOptions {
   final String user;
   final String? repo;
   final int limit;
+  final int? lastNDays;
   final bool json;
   final bool markdown;
   final bool checkLocal;
   final String? localRoot;
+  final String? enricher;
 
   const new({
     this.user = '@me',
     this.repo,
     this.limit = 50,
+    this.lastNDays,
     this.json = false,
     this.markdown = false,
     this.checkLocal = true,
     this.localRoot,
+    this.enricher,
   });
 
   static ArgParser createArgParser() => ArgParser()
@@ -90,6 +95,12 @@ class GhViewOptions {
       defaultsTo: '50',
       help: 'Maximum number of PRs to retrieve.',
     )
+    ..addOption(
+      'last-n-days',
+      abbr: 'd',
+      aliases: ['last-days', 'days'],
+      help: 'Filter PRs touched in the last N days (positive integer).',
+    )
     ..addFlag('json', negatable: false, help: 'Output results in JSON format.')
     ..addFlag(
       'markdown',
@@ -106,6 +117,13 @@ class GhViewOptions {
       'local-root',
       help: 'Base directory for local Git repositories (defaults to ~/github).',
     )
+    ..addOption(
+      'enricher',
+      abbr: 'e',
+      help:
+          'External command or script to enrich PRs with project/context '
+          'metadata.',
+    )
     ..addFlag(
       'help',
       abbr: 'h',
@@ -120,26 +138,142 @@ typedef ProcessRunner = Future<ProcessResult> Function(
   String? workingDirectory,
 });
 
+/// Function signature for running an external enricher command with stdin JSON
+/// payload.
+typedef EnricherRunner = Future<String?> Function(
+  String command,
+  String stdinPayload,
+);
+
+/// Default enricher runner invoking `/bin/sh -c <command>` and piping [stdinPayload].
+Future<String?> defaultEnricherRunner(
+  String command,
+  String stdinPayload,
+) async {
+  try {
+    final process = await Process.start('/bin/sh', ['-c', command]);
+    process.stdin.write(stdinPayload);
+    await process.stdin.flush();
+    await process.stdin.close();
+
+    final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+
+    final exitCode = await process.exitCode.timeout(
+      const Duration(seconds: 10),
+      onTimeout: () {
+        process.kill();
+        return -1;
+      },
+    );
+
+    if (exitCode != 0) {
+      return null;
+    }
+
+    return await stdoutFuture;
+  } catch (_) {
+    return null;
+  }
+}
+
+/// Invokes the [enricherCommand] and parses the returned JSON map.
+Future<Map<String, String>> fetchEnrichedContext({
+  required String enricherCommand,
+  required List<GhPr> prs,
+  EnricherRunner? enricherRunner,
+}) async {
+  if (prs.isEmpty) return const {};
+  final runner = enricherRunner ?? defaultEnricherRunner;
+  final payload = jsonEncode({
+    'prs': prs
+        .map(
+          (pr) => {
+            'number': pr.number,
+            'title': pr.title,
+            'url': pr.url,
+            'repository': pr.repository,
+            'headRefName': pr.headRefName,
+            'baseRefName': pr.baseRefName,
+            'isDraft': pr.isDraft,
+          },
+        )
+        .toList(),
+  });
+
+  final rawOutput = await runner(enricherCommand, payload);
+  if (rawOutput == null || rawOutput.trim().isEmpty) {
+    return const {};
+  }
+
+  try {
+    final decoded = jsonDecode(rawOutput);
+    if (decoded is Map) {
+      final result = <String, String>{};
+      for (final entry in decoded.entries) {
+        final key = entry.key.toString().trim();
+        final value = entry.value?.toString().trim();
+        if (key.isNotEmpty && value != null && value.isNotEmpty) {
+          result[key] = value;
+        }
+      }
+      return result;
+    }
+  } catch (_) {
+    // Non-fatal JSON parse failure
+  }
+  return const {};
+}
+
+String? _lookupContext(GhPr pr, Map<String, String>? contextMap) {
+  if (contextMap == null || contextMap.isEmpty) return null;
+  return contextMap[pr.url] ??
+      contextMap['${pr.repository}#${pr.number}'] ??
+      contextMap['#${pr.number}'];
+}
+
 /// Main execution function for `gh-view`.
 Future<void> runGhView({
   required GhViewOptions options,
   ProcessRunner? processRunner,
+  EnricherRunner? enricherRunner,
   DateTime? now,
 }) async {
   final runner = processRunner ?? Process.run;
   final currentTime = now ?? DateTime.now();
 
-  final rawPrs = await fetchOpenPullRequests(
+  var rawPrs = await fetchOpenPullRequests(
     user: options.user,
     repo: options.repo,
     limit: options.limit,
     processRunner: runner,
   );
 
+  if (options.lastNDays != null) {
+    final cutoff = currentTime.subtract(Duration(days: options.lastNDays!));
+    rawPrs = rawPrs.where((pr) => !pr.updatedAt.isBefore(cutoff)).toList();
+  }
+
+  Map<String, String>? contextMap;
+  if (options.enricher != null && options.enricher!.trim().isNotEmpty) {
+    contextMap = await fetchEnrichedContext(
+      enricherCommand: options.enricher!,
+      prs: rawPrs,
+      enricherRunner: enricherRunner,
+    );
+  }
+
   final localMap = options.checkLocal
       ? _discoverLocalRepositories(options.localRoot)
       : null;
-  final prs = rawPrs.map((pr) => _attachLocalStatus(pr, localMap)).toList();
+  final prs = rawPrs
+      .map(
+        (pr) => _attachLocalStatus(
+          pr,
+          localMap,
+          context: _lookupContext(pr, contextMap),
+        ),
+      )
+      .toList();
 
   if (options.json) {
     print(renderJsonOutput(prs, currentTime: currentTime));
@@ -163,8 +297,9 @@ Map<String, List<LocalBranchInfo>>? _discoverLocalRepositories(
 
 GhPr _attachLocalStatus(
   GhPr pr,
-  Map<String, List<LocalBranchInfo>>? localMap,
-) => (
+  Map<String, List<LocalBranchInfo>>? localMap, {
+  String? context,
+}) => (
   number: pr.number,
   title: pr.title,
   url: pr.url,
@@ -185,6 +320,7 @@ GhPr _attachLocalStatus(
   ciStatus: pr.ciStatus,
   updatedAt: pr.updatedAt,
   localStatus: _matchLocalStatus(pr, localMap),
+  context: context ?? pr.context,
 );
 
 /// Fetches open PRs via GitHub GraphQL.
@@ -371,6 +507,7 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     ciStatus: ciStatus,
     updatedAt: updatedAt,
     localStatus: null,
+    context: null,
   );
 }
 
@@ -915,6 +1052,10 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
     ..writeln('    Branch:  ${pr.headRefName} ➔ ${pr.baseRefName}')
     ..writeln('    Touched: $touched');
 
+  if (pr.context != null && pr.context!.trim().isNotEmpty) {
+    buffer.writeln('    Context: ${pr.context!.trim()}');
+  }
+
   if (pr.localStatus != null) {
     final loc = pr.localStatus!;
     final locDesc = p.basename(loc.repoPath);
@@ -1108,8 +1249,16 @@ void _writeMarkdownPrRow(
       .trim();
 
   final prLines = <String>[
-    '[${pr.repository}]($repoUrl)',
+    if (pr.context != null && pr.context!.trim().isNotEmpty) ...[
+      pr.context!
+          .trim()
+          .replaceAll('|', '/')
+          .replaceAll('\r\n', '\n')
+          .replaceAll('\n', '<br>'),
+      '',
+    ],
     '[#${pr.number}](${pr.url}) $queuePrefix$sanitizedTitle',
+    '[${pr.repository}]($repoUrl)',
     '`${pr.headRefName}`',
     _formatLocalMappingMarkdown(pr.localStatus),
   ];
@@ -1227,6 +1376,7 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'baseRefName': pr.baseRefName,
     'updatedAt': pr.updatedAt.toIso8601String(),
     'touched': formatTimeAgo(pr.updatedAt, currentTime: now),
+    'context': pr.context,
     'local': pr.localStatus == null
         ? null
         : {
