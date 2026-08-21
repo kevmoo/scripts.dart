@@ -38,10 +38,11 @@ jobs:
 
   test:
     needs: analyze
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         # TODO: put back 3.13 when it's stable!
         sdk: [dev]
     steps:

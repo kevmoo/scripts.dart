@@ -63,14 +63,16 @@ authenticated in your `PATH`.
 ```shell
 gh-view [options]
 
--u, --user          The GitHub user to inspect. (defaults to "@me")
--R, --repo          Filter PRs to a specific repository (owner/repo).
--l, --limit         Maximum number of PRs to retrieve. (defaults to "50")
-    --json          Output results in JSON format.
--m, --[no-]markdown Output results as GitHub Flavored Markdown.
-    --[no-]local    Cross-reference local workspace checkouts and worktrees. (defaults to on)
-    --local-root    Base directory for local Git repositories (defaults to ~/github).
--h, --help          Print this usage information.
+-u, --user           The GitHub user to inspect. (defaults to "@me")
+-R, --repo           Filter PRs to a specific repository (owner/repo).
+-l, --limit          Maximum number of PRs to retrieve. (defaults to "50")
+-d, --last-n-days    Filter PRs touched in the last N days (positive integer).
+    --json           Output results in JSON format.
+-m, --[no-]markdown  Output results as GitHub Flavored Markdown.
+    --[no-]local     Cross-reference local workspace checkouts and worktrees. (defaults to on)
+    --local-root     Base directory for local Git repositories (defaults to ~/github).
+-e, --enricher       External command or script to enrich PRs with project/context metadata.
+-h, --help           Print this usage information.
 ```
 
 ### `git-org-clean`

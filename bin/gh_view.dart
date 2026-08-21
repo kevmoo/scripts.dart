@@ -28,14 +28,34 @@ Future<void> main(List<String> arguments) async {
   }
 
   final limit = int.tryParse(results['limit'] as String) ?? 50;
+
+  int? lastNDays;
+  final lastNDaysRaw = results['last-n-days'] as String?;
+  if (lastNDaysRaw != null) {
+    final parsed = int.tryParse(lastNDaysRaw);
+    if (parsed == null || parsed <= 0) {
+      setError(
+        message:
+            'Invalid value for --last-n-days: "$lastNDaysRaw". '
+            'Must be a positive integer.',
+        exitCode: ExitCode.usage.code,
+      );
+      print(parser.usage);
+      return;
+    }
+    lastNDays = parsed;
+  }
+
   final options = GhViewOptions(
     user: results['user'] as String,
     repo: results['repo'] as String?,
     limit: limit,
+    lastNDays: lastNDays,
     json: results['json'] as bool,
     markdown: results['markdown'] as bool,
     checkLocal: results['local'] as bool,
     localRoot: results['local-root'] as String?,
+    enricher: results['enricher'] as String?,
   );
 
   try {
