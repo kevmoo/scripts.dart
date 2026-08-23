@@ -21,7 +21,7 @@ jobs:
         uses: dart-lang/setup-dart@v1
 
       - name: Run Complexity Scanner
-        uses: kevmoo/analytica.dart@main
+        uses: kevmoo/analytica.dart/packages/cognitive_complexity@main
         with:
           diff-base: origin/${{ github.base_ref }}
           fail-threshold: 15
