@@ -1,4 +1,4 @@
-name: Cognitive Complexity Audit
+name: Dependency Lower-Bound Validation
 
 on:
   pull_request:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 jobs:
-  audit:
+  validate:
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -14,15 +14,12 @@ jobs:
     steps:
       - name: Checkout Codebase
         uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
 
       - name: Setup Dart SDK
         uses: dart-lang/setup-dart@v1
 
-      - name: Run Complexity Scanner
-        uses: kevmoo/analytica.dart/packages/cognitive_complexity@main
+      - name: Run Lower-Bound Validator
+        uses: kevmoo/analytica.dart/packages/lower_bound@main
         with:
-          diff-base: origin/${{ github.base_ref }}
-          fail-threshold: 15
-          fail-on-increase: true
+          format: 'github'
+          fail-on-error: 'true'
