@@ -19,10 +19,10 @@ Future<void> main(List<String> args) async {
 
     await runDartClean(options);
   } on FormatException catch (e) {
-    print(e.message);
-    print('');
-    print(dartCleanOptionsUsage);
-    exitCode = ExitCode.usage.code;
+    setError(
+      message: '${e.message}\n\n$dartCleanOptionsUsage',
+      exitCode: ExitCode.usage.code,
+    );
   } on DartCleanException catch (e) {
     setError(message: e.message, exitCode: ExitCode.software.code);
   } catch (e, stack) {

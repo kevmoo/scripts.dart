@@ -36,7 +36,8 @@ const _testStateKey = #_testState;
 bool get isTesting => Zone.current[_testStateKey] != null;
 
 abstract final class _HelperState {
-  int exitCode = 0;
+  int get exitCode;
+  set exitCode(int value);
   void printError(Object value, {bool boldRed = false});
   void doPrint(Object value);
 }
@@ -44,6 +45,14 @@ abstract final class _HelperState {
 final _runtimeState = _RuntimeState();
 
 final class _RuntimeState extends _HelperState {
+  @override
+  int get exitCode => io.exitCode;
+
+  @override
+  set exitCode(int value) {
+    io.exitCode = value;
+  }
+
   @override
   void printError(Object value, {bool boldRed = false}) {
     final message = boldRed
@@ -59,6 +68,9 @@ final class _RuntimeState extends _HelperState {
 }
 
 final class _TestState extends _HelperState {
+  @override
+  int exitCode = 0;
+
   @override
   void printError(Object value, {bool boldRed = false}) {
     print(value.toString());
