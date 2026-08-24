@@ -11,8 +11,10 @@ Future<void> main(List<String> arguments) async {
   try {
     options = parseLintCleanupOptions(arguments);
   } on UsageException catch (e) {
-    setError(message: e.message, exitCode: ExitCode.usage.code);
-    print(e.usage);
+    setError(
+      message: '${e.message}\n\n${e.usage}',
+      exitCode: ExitCode.usage.code,
+    );
     return;
   }
 

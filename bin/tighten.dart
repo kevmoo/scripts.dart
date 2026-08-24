@@ -8,8 +8,10 @@ void main(List<String> args) async {
   try {
     options = parseTightenOptions(args);
   } on UsageException catch (e) {
-    setError(message: e.message, exitCode: ExitCode.usage.code);
-    print(e.usage);
+    setError(
+      message: '${e.message}\n\n${e.usage}',
+      exitCode: ExitCode.usage.code,
+    );
     return;
   }
 

@@ -23,8 +23,10 @@ Future<void> main(List<String> arguments) async {
   try {
     results = parser.parse(arguments);
   } on FormatException catch (e) {
-    setError(message: e.message, exitCode: ExitCode.usage.code);
-    print(parser.usage);
+    setError(
+      message: '${e.message}\n\n${parser.usage}',
+      exitCode: ExitCode.usage.code,
+    );
     return;
   }
 
