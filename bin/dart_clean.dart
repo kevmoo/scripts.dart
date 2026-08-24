@@ -1,7 +1,5 @@
 #!/usr/bin/env dart
 
-import 'dart:io';
-
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/dart_clean.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
