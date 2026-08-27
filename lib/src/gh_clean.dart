@@ -160,6 +160,22 @@ Future<void> runGhClean({
   final rootDir = Directory(rootPath);
 
   final localRepos = scanLocalGitRepositories(rootDir, processRunner: runner);
+  final repoMap = _buildRepoMap(localRepos);
+
+  final results = [
+    for (final pr in landedPrs)
+      _processPr(
+        pr,
+        repoMap[pr.repository.toLowerCase()],
+        options: options,
+        runner: runner,
+      ),
+  ];
+
+  _outputReport(results, options);
+}
+
+Map<String, LocalRepoInfo> _buildRepoMap(List<LocalRepoInfo> localRepos) {
   final repoMap = <String, LocalRepoInfo>{};
   for (final repo in localRepos) {
     for (final name in repo.repoNames) {
@@ -171,47 +187,52 @@ Future<void> runGhClean({
       }
     }
   }
+  return repoMap;
+}
 
-  final results = <PrCleanResult>[];
+PrCleanResult _processPr(
+  LandedPr pr,
+  LocalRepoInfo? localRepo, {
+  required GhCleanOptions options,
+  required SyncProcessRunner runner,
+}) {
+  final planned = planCleanup(
+    pr,
+    localRepo,
+    skipSync: options.skipSync,
+    skipWorktrees: options.skipWorktrees,
+    processRunner: runner,
+  );
 
-  for (final pr in landedPrs) {
-    final localRepo = repoMap[pr.repository.toLowerCase()];
-    final planned = planCleanup(
+  var executed = <CleanAction>[];
+  var status = 'Pending';
+
+  if (localRepo == null) {
+    status = 'Not cloned locally';
+  } else if (planned.isEmpty) {
+    status = 'Clean (nothing to do)';
+  } else if (options.apply) {
+    executed = executeCleanup(
       pr,
       localRepo,
       skipSync: options.skipSync,
       skipWorktrees: options.skipWorktrees,
       processRunner: runner,
     );
-
-    var executed = <CleanAction>[];
-    var status = 'Pending';
-
-    if (localRepo == null) {
-      status = 'Not cloned locally';
-    } else if (planned.isEmpty) {
-      status = 'Clean (nothing to do)';
-    } else if (options.apply) {
-      executed = executeCleanup(
-        pr,
-        localRepo,
-        skipSync: options.skipSync,
-        skipWorktrees: options.skipWorktrees,
-        processRunner: runner,
-      );
-      final allSucceeded = executed.every((a) => a.success);
-      status = allSucceeded ? 'Applied' : 'Partial Failure';
-    }
-
-    results.add((
-      pr: pr,
-      localRepo: localRepo,
-      plannedActions: planned,
-      executedActions: executed,
-      status: status,
-    ));
+    final allSucceeded = executed.every((a) => a.success);
+    status = allSucceeded ? 'Applied' : 'Partial Failure';
   }
 
+  return (
+    pr: pr,
+    localRepo: localRepo,
+    plannedActions: planned,
+    executedActions: executed,
+    status: status,
+  );
+}
+
+void _outputReport(List<PrCleanResult> results, GhCleanOptions options) {
   if (options.json) {
     print(jsonEncode(formatJsonReport(results, applied: options.apply)));
   } else if (options.markdown) {
