@@ -1,15 +1,21 @@
 This repository contains various scripts and utilities for development.
 I don't plan on publishing this as a package (at least not any time soon).
 
-To activate these scripts globally, run:
+To install these scripts as native AOT executables, run:
 
 ```shell
-dart pub global activate --source git https://github.com/kevmoo/scripts.dart
+dart install 'kevmoo_scripts@{git: https://github.com/kevmoo/scripts.dart}'
+```
+
+Or for local development:
+
+```shell
+dart install 'kevmoo_scripts@{path: /path/to/scripts.dart}'
 ```
 
 ## Summary
 
-| Activated As | Script | Description |
+| Executable | Script | Description |
 |---|---|---|
 | [`dart-clean`](#dart-clean) | `bin/dart_clean.dart` | Find and kill orphaned Dart processes. |
 | [`gerrit-view`](#gerrit-view) | `bin/gerrit_view.dart` | Complete overview of your active work on Gerrit. |
