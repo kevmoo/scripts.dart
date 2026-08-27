@@ -128,6 +128,8 @@ void main() {
       check(isDartSdkRemote('sso://dart/sdk.git')).isTrue();
       check(isDartSdkRemote('sso://dart/sdk')).isTrue();
       check(isDartSdkRemote('https://dart.googlesource.com/sdk')).isTrue();
+      check(isDartSdkRemote('https://dart-review.googlesource.com/sdk'))
+          .isTrue();
       check(isDartSdkRemote('https://github.com/flutter/flutter.git'))
           .isFalse();
       check(isDartSdkRemote('https://github.com/kevmoo/scripts.dart.git'))

@@ -130,6 +130,7 @@ bool isDartSdkRemote(String remoteUrl) {
   if (lower.isEmpty) return false;
   return lower.contains('dart-lang/sdk') ||
       lower.contains('dart.googlesource.com') ||
+      lower.contains('dart-review.googlesource.com') ||
       lower.contains('sso://dart/');
 }
 
@@ -173,16 +174,12 @@ Set<String>? _extractRepoNames(String rawOutput) {
     if (parts.length < 2) continue;
     final remoteUrl = parts[1];
     if (isDartSdkRemote(remoteUrl)) return null;
-    final name = _resolveRepoRemote(remoteUrl);
-    if (name != null) repoNames.add(name);
+    final name = normalizeRepoName(remoteUrl);
+    if (name == null) continue;
+    if (isDartSdkRepositoryName(name)) return null;
+    repoNames.add(name);
   }
   return repoNames.isEmpty ? null : repoNames;
-}
-
-String? _resolveRepoRemote(String remoteUrl) {
-  final name = normalizeRepoName(remoteUrl);
-  if (name == null || isDartSdkRepositoryName(name)) return null;
-  return name;
 }
 
 String? _getCurrentBranch(String repoPath, SyncProcessRunner runner) {
