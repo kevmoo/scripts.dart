@@ -141,9 +141,11 @@ class GhCleanOptions {
 Future<void> runGhClean({
   required GhCleanOptions options,
   SyncProcessRunner? processRunner,
+  void Function(String message)? onProgress,
 }) async {
   final runner = processRunner ?? defaultSyncProcessRunner;
 
+  onProgress?.call('Fetching landed pull requests from GitHub...');
   final landedPrs = await fetchLandedPrs(
     user: options.user,
     repo: options.repo,
@@ -152,6 +154,7 @@ Future<void> runGhClean({
     includeOwned: options.includeOwned,
     processRunner: runner,
   );
+  onProgress?.call('Found ${landedPrs.length} landed pull request(s).');
 
   final rootPath =
       options.localRoot ??
@@ -159,8 +162,12 @@ Future<void> runGhClean({
       '${Platform.environment['HOME']}/github';
   final rootDir = Directory(rootPath);
 
+  onProgress?.call('Scanning local Git repositories in $rootPath...');
   final localRepos = scanLocalGitRepositories(rootDir, processRunner: runner);
   final repoMap = _buildRepoMap(localRepos);
+  onProgress?.call(
+    'Indexed ${localRepos.length} local repository checkout(s).',
+  );
 
   final results = [
     for (final pr in landedPrs)
@@ -169,6 +176,7 @@ Future<void> runGhClean({
         repoMap[pr.repository.toLowerCase()],
         options: options,
         runner: runner,
+        onProgress: onProgress,
       ),
   ];
 
@@ -195,6 +203,7 @@ PrCleanResult _processPr(
   LocalRepoInfo? localRepo, {
   required GhCleanOptions options,
   required SyncProcessRunner runner,
+  void Function(String message)? onProgress,
 }) {
   final planned = planCleanup(
     pr,
@@ -212,12 +221,16 @@ PrCleanResult _processPr(
   } else if (planned.isEmpty) {
     status = 'Clean (nothing to do)';
   } else if (options.apply) {
+    onProgress?.call(
+      '[apply] Cleaning ${pr.repository} #${pr.number} (${pr.headRefName})...',
+    );
     executed = executeCleanup(
       pr,
       localRepo,
       skipSync: options.skipSync,
       skipWorktrees: options.skipWorktrees,
       processRunner: runner,
+      onProgress: onProgress,
     );
     final allSucceeded = executed.every((a) => a.success);
     status = allSucceeded ? 'Applied' : 'Partial Failure';
@@ -456,6 +469,7 @@ List<CleanAction> executeCleanup(
   bool skipSync = false,
   bool skipWorktrees = false,
   SyncProcessRunner? processRunner,
+  void Function(String message)? onProgress,
 }) {
   final runner = processRunner ?? defaultSyncProcessRunner;
   final actions = <CleanAction>[];
@@ -470,7 +484,12 @@ List<CleanAction> executeCleanup(
       repoShortName,
       runner,
     );
-    if (wtAction != null) actions.add(wtAction);
+    if (wtAction != null) {
+      actions.add(wtAction);
+      onProgress?.call(
+        '  ${wtAction.success ? "✓" : "✗"} ${wtAction.description}',
+      );
+    }
   }
 
   final checkoutAction = _executeBranchCheckout(
@@ -479,7 +498,12 @@ List<CleanAction> executeCleanup(
     trunkBranch,
     runner,
   );
-  if (checkoutAction != null) actions.add(checkoutAction);
+  if (checkoutAction != null) {
+    actions.add(checkoutAction);
+    onProgress?.call(
+      '  ${checkoutAction.success ? "✓" : "✗"} ${checkoutAction.description}',
+    );
+  }
 
   final deleteAction = _executeBranchDeletion(
     localRepo,
@@ -488,10 +512,24 @@ List<CleanAction> executeCleanup(
     pr.headRefOid,
     runner,
   );
-  if (deleteAction != null) actions.add(deleteAction);
+  if (deleteAction != null) {
+    actions.add(deleteAction);
+    onProgress?.call(
+      '  ${deleteAction.success ? "✓" : "✗"} ${deleteAction.description}',
+    );
+  }
 
   if (!skipSync) {
-    actions.add(_executeTrunkSync(localRepo, headBranch, trunkBranch, runner));
+    final syncAction = _executeTrunkSync(
+      localRepo,
+      headBranch,
+      trunkBranch,
+      runner,
+    );
+    actions.add(syncAction);
+    onProgress?.call(
+      '  ${syncAction.success ? "✓" : "✗"} ${syncAction.description}',
+    );
   }
 
   return actions;

@@ -66,7 +66,7 @@ Future<void> main(List<String> arguments) async {
   );
 
   try {
-    await runGhClean(options: options);
+    await runGhClean(options: options, onProgress: stderr.writeln);
   } on GhCleanException catch (e, stack) {
     setError(message: e.message, exitCode: e.exitCode, stack: stack);
   } on ProcessException catch (e, stack) {
