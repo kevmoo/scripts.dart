@@ -89,6 +89,7 @@ void main() {
     test('plans branch deletion and sync when local branch exists', () {
       final localRepo = (
         repoName: 'invertase/melos',
+        repoNames: ['invertase/melos'],
         repoPath: '/path/to/melos',
         currentBranch: 'main',
         branches: [(name: 'feat-branch', sha: '123')],
@@ -104,6 +105,7 @@ void main() {
     test('plans worktree pruning when worktree exists', () {
       final localRepo = (
         repoName: 'invertase/melos',
+        repoNames: ['invertase/melos'],
         repoPath: '/path/to/melos',
         currentBranch: 'main',
         branches: [(name: 'main', sha: '000')],
@@ -128,6 +130,7 @@ void main() {
     test('planCleanup skips dirty worktrees', () {
       final localRepo = (
         repoName: 'invertase/melos',
+        repoNames: ['invertase/melos'],
         repoPath: '/path/to/melos',
         currentBranch: 'main',
         branches: [(name: 'main', sha: '000')],
@@ -195,6 +198,7 @@ void main() {
 
       final localInfo = (
         repoName: 'test/local',
+        repoNames: ['test/local'],
         repoPath: localPath,
         currentBranch: 'main',
         branches: [(name: 'feature-x', sha: '111'), (name: 'main', sha: '000')],
@@ -236,6 +240,7 @@ void main() {
         pr: pr,
         localRepo: (
           repoName: 'invertase/melos',
+          repoNames: ['invertase/melos'],
           repoPath: '/home/user/github/melos',
           currentBranch: 'main',
           branches: <LocalBranchEntry>[],
@@ -243,7 +248,7 @@ void main() {
         ),
         plannedActions: [
           'Prune worktree at /home/user/github/_melos-feat',
-          'Sync `main`',
+          'Sync `main` to `origin/main`',
         ],
         executedActions: <CleanAction>[],
         status: 'Pending',

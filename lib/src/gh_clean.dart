@@ -162,11 +162,13 @@ Future<void> runGhClean({
   final localRepos = scanLocalGitRepositories(rootDir, processRunner: runner);
   final repoMap = <String, LocalRepoInfo>{};
   for (final repo in localRepos) {
-    final key = repo.repoName.toLowerCase();
-    final isRoot = isRootGitRepository(Directory(repo.repoPath));
-    final existing = repoMap[key];
-    if (existing == null || isRoot) {
-      repoMap[key] = repo;
+    for (final name in repo.repoNames) {
+      final key = name.toLowerCase();
+      final isRoot = isRootGitRepository(Directory(repo.repoPath));
+      final existing = repoMap[key];
+      if (existing == null || isRoot) {
+        repoMap[key] = repo;
+      }
     }
   }
 
@@ -698,6 +700,11 @@ bool _isProtectedBranch(String branch) {
 }
 
 /// Formats output as GitHub Flavored Markdown.
+///
+/// Actionable PRs (requiring worktree pruning or branch deletion) are rendered
+/// as individual rows with their specific PR link and actions. PRs with no
+/// local branch/worktree mutations are clustered into a single summary row
+/// per repository.
 String formatMarkdownReport(
   List<PrCleanResult> results, {
   required bool applied,
@@ -719,40 +726,95 @@ String formatMarkdownReport(
 
   buffer
     ..writeln('<!-- mdformat off -->')
-    ..writeln(
-      '| Repository | PR # | Local Directory | Landed (UTC) | Status / Actions |',
-    )
-    ..writeln('| :--- | :---: | :--- | :---: | :--- |');
+    ..writeln('| Repository | PR(s) | Local Directory | Actions / Status |')
+    ..writeln('| :--- | :--- | :--- | :--- |');
 
+  final repoMap = <String, List<PrCleanResult>>{};
   for (final r in results) {
-    buffer.writeln(_formatMarkdownRow(r, applied: applied));
+    repoMap.putIfAbsent(r.pr.repository, () => []).add(r);
+  }
+
+  for (final entry in repoMap.entries) {
+    final list = entry.value;
+    final actionable = list.where(_hasLocalBranchOrWorktreeAction).toList();
+    final noOps = list
+        .where((r) => !_hasLocalBranchOrWorktreeAction(r))
+        .toList();
+
+    // 1. Render individual rows for actionable PRs
+    for (final r in actionable) {
+      buffer.writeln(_formatActionableMarkdownRow(r, applied: applied));
+    }
+
+    // 2. Render a clustered row for no-op / sync-only PRs in this repo
+    if (noOps.isNotEmpty) {
+      buffer.writeln(_formatNoOpClusterMarkdownRow(noOps, applied: applied));
+    }
   }
 
   buffer.writeln('<!-- mdformat on -->');
   return buffer.toString();
 }
 
-String _formatMarkdownRow(PrCleanResult r, {required bool applied}) {
+bool _hasLocalBranchOrWorktreeAction(PrCleanResult r) {
+  if (r.localRepo == null) return false;
+  return r.plannedActions.any(
+        (a) =>
+            a.startsWith('Prune worktree') ||
+            a.startsWith('Delete local branch'),
+      ) ||
+      r.executedActions.any(
+        (a) =>
+            a.description.contains('worktree') ||
+            a.description.contains('branch'),
+      );
+}
+
+String _formatActionableMarkdownRow(PrCleanResult r, {required bool applied}) {
   final pr = r.pr;
   final repoLink = '[**${pr.repository}**](${pr.repoUrl})';
   final prLink = '[#${pr.number}](${pr.url})';
   final localDir = r.localRepo != null
       ? '[`${r.localRepo!.repoPath}`](file://${r.localRepo!.repoPath})'
       : '_Not cloned_';
-  final landedDate = pr.mergedAt != null
-      ? pr.mergedAt!.toUtc().toString().substring(0, 16)
-      : 'N/A';
 
-  var statusDetail = r.status;
-  if (applied && r.executedActions.isNotEmpty) {
+  String statusDetail;
+  if (applied) {
     statusDetail = r.executedActions
         .map((a) => '${a.success ? "✅" : "❌"} ${a.description}')
         .join('<br>');
-  } else if (!applied && r.plannedActions.isNotEmpty) {
+  } else {
     statusDetail = r.plannedActions.map((a) => '• $a').join('<br>');
   }
 
-  return '| $repoLink | $prLink | $localDir | $landedDate | $statusDetail |';
+  return '| $repoLink | $prLink | $localDir | $statusDetail |';
+}
+
+String _formatNoOpClusterMarkdownRow(
+  List<PrCleanResult> list, {
+  required bool applied,
+}) {
+  final first = list.first;
+  final repoLink = '[**${first.pr.repository}**](${first.pr.repoUrl})';
+  final prLinks = list.map((r) => '[#${r.pr.number}](${r.pr.url})').join(', ');
+  final prLabel = list.length == 1
+      ? '[#${first.pr.number}](${first.pr.url})'
+      : '${list.length} PRs: $prLinks';
+
+  final localDir = first.localRepo != null
+      ? '[`${first.localRepo!.repoPath}`](file://${first.localRepo!.repoPath})'
+      : '_Not cloned_';
+
+  String statusDetail;
+  if (first.localRepo == null) {
+    statusDetail = '_Not cloned locally_';
+  } else if (applied) {
+    statusDetail = '✅ Up to date (no local branches)';
+  } else {
+    statusDetail = '• Sync `main` to `origin/main` (no local branches)';
+  }
+
+  return '| $repoLink | $prLabel | $localDir | $statusDetail |';
 }
 
 /// Formats output for terminal viewing.

@@ -17,10 +17,14 @@ void main() {
           .equals('owner/repo');
     });
 
-    test('normalizes HTTPS URLs', () {
+    test('normalizes HTTPS URLs with trailing slashes and www', () {
       check(normalizeRepoName('https://github.com/owner/repo.git'))
           .equals('owner/repo');
-      check(normalizeRepoName('https://github.com/owner/repo'))
+      check(normalizeRepoName('https://github.com/owner/repo/'))
+          .equals('owner/repo');
+      check(normalizeRepoName('https://www.github.com/owner/repo.git'))
+          .equals('owner/repo');
+      check(normalizeRepoName('http://github.com/owner/repo'))
           .equals('owner/repo');
     });
 

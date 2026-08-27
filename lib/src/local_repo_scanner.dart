@@ -7,6 +7,7 @@ import 'process_utils.dart';
 /// Information about a discovered local Git repository.
 typedef LocalRepoInfo = ({
   String repoName,
+  List<String> repoNames,
   String repoPath,
   String? currentBranch,
   List<LocalBranchEntry> branches,
@@ -32,22 +33,46 @@ bool isGitRepository(Directory dir) {
   return gitType != FileSystemEntityType.notFound;
 }
 
-/// Normalizes a remote Git URL (SSH or HTTPS) to `owner/repo`.
+/// Normalizes a remote Git URL (SSH, HTTPS, HTTP, SCP-style) to `owner/repo`.
 String? normalizeRepoName(String raw) {
-  var url = raw.trim();
-  if (url.startsWith('git@github.com:')) {
-    url = url.substring('git@github.com:'.length);
-  } else if (url.startsWith('https://github.com/')) {
-    url = url.substring('https://github.com/'.length);
-  } else if (url.startsWith('ssh://git@github.com/')) {
-    url = url.substring('ssh://git@github.com/'.length);
-  } else {
-    return null;
+  final text = raw.trim();
+  if (text.isEmpty) return null;
+
+  if (text.startsWith('git@github.com:')) {
+    return _normalizeScpGitUrl(text);
   }
-  if (url.endsWith('.git')) {
-    url = url.substring(0, url.length - 4);
+  return _normalizeUriGitUrl(text);
+}
+
+String? _normalizeScpGitUrl(String text) {
+  final path = text.substring('git@github.com:'.length);
+  final segments = p.posix
+      .split(path)
+      .where((s) => s.isNotEmpty && s != '.')
+      .toList();
+  if (segments.length != 2) return null;
+  final owner = segments[0];
+  var repo = segments[1];
+  if (repo.endsWith('.git')) repo = repo.substring(0, repo.length - 4);
+  return repo.isNotEmpty ? '$owner/$repo' : null;
+}
+
+String? _normalizeUriGitUrl(String text) {
+  final uri = Uri.tryParse(text);
+  if (uri == null) return null;
+
+  final host = uri.host.toLowerCase();
+  if (host != 'github.com' && host != 'www.github.com') return null;
+
+  final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+  if (segments.length != 2) return null;
+
+  final owner = segments[0];
+  var repo = segments[1];
+  if (repo.endsWith('.git')) {
+    repo = repo.substring(0, repo.length - 4);
   }
-  return url.trim();
+  return repo.isNotEmpty ? '$owner/$repo' : null;
 }
 
 /// Recursively scans [root] for Git repositories and worktrees, stopping
@@ -100,22 +125,31 @@ void _walkSubdirectories(
 }
 
 LocalRepoInfo? _indexRepository(Directory dir, SyncProcessRunner runner) {
-  final originResult = runner('git', [
+  final remoteResult = runner('git', [
     'remote',
-    'get-url',
-    'origin',
+    '-v',
   ], workingDirectory: dir.path);
 
-  if (originResult.exitCode != 0) return null;
+  if (remoteResult.exitCode != 0) return null;
 
-  final repoName = normalizeRepoName(originResult.stdout as String);
-  if (repoName == null) return null;
+  final repoNames = <String>{};
+  for (final line in (remoteResult.stdout as String).trim().split('\n')) {
+    if (line.isEmpty) continue;
+    final parts = line.split(RegExp(r'\s+'));
+    if (parts.length >= 2) {
+      final name = normalizeRepoName(parts[1]);
+      if (name != null) repoNames.add(name);
+    }
+  }
+
+  if (repoNames.isEmpty) return null;
 
   final branches = _parseBranchRefs(dir.path, runner);
   final worktrees = _parseWorktrees(dir.path, runner);
 
   return (
-    repoName: repoName,
+    repoName: repoNames.first,
+    repoNames: repoNames.toList(),
     repoPath: dir.path,
     currentBranch: _getCurrentBranch(dir.path, runner),
     branches: branches,
