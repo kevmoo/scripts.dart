@@ -533,4 +533,30 @@ extension GitDirExtensions on GitDir {
     if (result.exitCode != 0) return true;
     return (result.stdout as String).trim().isNotEmpty;
   }
+
+  /// Returns the path of the primary (main) worktree in the repository.
+  Future<String?> getMainWorktreePath() async {
+    final result = await runCommand([
+      'worktree',
+      'list',
+      '--porcelain',
+    ], throwOnError: false);
+    if (result.exitCode != 0) return null;
+
+    final lines = LineSplitter.split(result.stdout as String);
+    for (final line in lines) {
+      if (line.startsWith('worktree ')) {
+        return line.substring('worktree '.length).trim();
+      }
+    }
+    return null;
+  }
+
+  /// Checks whether this [GitDir] represents a secondary (linked) worktree
+  /// rather than the primary/main repository root.
+  Future<bool> isSecondaryWorktree() async {
+    final mainPath = await getMainWorktreePath();
+    if (mainPath == null) return false;
+    return path != mainPath;
+  }
 }

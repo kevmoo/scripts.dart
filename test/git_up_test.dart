@@ -929,4 +929,50 @@ void main() {
     check(branches.map((b) => b.branchName))
         .not((it) => it.contains('feature-wt-merged'));
   });
+
+  test(
+    'getMainWorktreePath and isSecondaryWorktree identify worktree roles',
+    () async {
+      check(await localGitDir.getMainWorktreePath()).equals(localPath);
+      check(await localGitDir.isSecondaryWorktree()).isFalse();
+
+      final worktreePath = p.join(d.sandbox, 'wt-check');
+      await localGitDir.runCommand([
+        'worktree',
+        'add',
+        '-b',
+        'feature-wt-check',
+        worktreePath,
+      ]);
+
+      final wtGitDir = await GitDir.fromExisting(worktreePath);
+      check(await wtGitDir.getMainWorktreePath()).equals(localPath);
+      check(await wtGitDir.isSecondaryWorktree()).isTrue();
+    },
+  );
+
+  test(
+    'gitUp fails with clear error when run from inside a secondary worktree',
+    () async {
+      final worktreePath = p.join(d.sandbox, 'wt-secondary');
+      await localGitDir.runCommand([
+        'worktree',
+        'add',
+        '-b',
+        'feature-secondary',
+        worktreePath,
+      ]);
+
+      final prints = await capturePrints(() async {
+        final exitCode = await wrappedForTesting(
+          () => gitUp(workingDirectory: worktreePath),
+        );
+        check(exitCode).equals(1);
+      });
+
+      check(prints.join('\n'))
+        ..contains('Cannot run git-up from inside a secondary worktree.')
+        ..contains('Please move to "$localPath" and run git-up again.');
+    },
+  );
 }
