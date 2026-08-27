@@ -265,6 +265,57 @@ void main() {
         );
     });
 
+    test('formatMarkdownReport sorts by org -> repo -> oldest PR number', () {
+      final prKevmoo8 = (
+        number: 8,
+        title: 'pr 8',
+        url: 'https://github.com/kevmoo/private_life/pull/8',
+        repository: 'kevmoo/private_life',
+        repoUrl: 'https://github.com/kevmoo/private_life',
+        headRefName: 'branch-8',
+        headRefOid: '888',
+        baseRefName: 'main',
+        mergeSha: '888',
+        mergedAt: DateTime.utc(2026, 8, 25),
+        closedAt: DateTime.utc(2026, 8, 25),
+      );
+
+      final prDart1 = (
+        number: 1,
+        title: 'pr 1',
+        url: 'https://github.com/dart-lang/ecosystem/pull/1',
+        repository: 'dart-lang/ecosystem',
+        repoUrl: 'https://github.com/dart-lang/ecosystem',
+        headRefName: 'branch-1',
+        headRefOid: '111',
+        baseRefName: 'main',
+        mergeSha: '111',
+        mergedAt: DateTime.utc(2026, 8, 25),
+        closedAt: DateTime.utc(2026, 8, 25),
+      );
+
+      final report = formatMarkdownReport([
+        (
+          pr: prKevmoo8,
+          localRepo: null,
+          plannedActions: <String>[],
+          executedActions: <CleanAction>[],
+          status: 'Not cloned locally',
+        ),
+        (
+          pr: prDart1,
+          localRepo: null,
+          plannedActions: <String>[],
+          executedActions: <CleanAction>[],
+          status: 'Not cloned locally',
+        ),
+      ], applied: false);
+
+      final dartIndex = report.indexOf('dart-lang/ecosystem');
+      final kevmooIndex = report.indexOf('kevmoo/private_life');
+      check(dartIndex).isLessThan(kevmooIndex);
+    });
+
     test('formatJsonReport produces valid JSON schema', () {
       final pr = (
         number: 1063,

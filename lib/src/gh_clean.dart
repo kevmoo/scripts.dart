@@ -722,6 +722,7 @@ bool _isProtectedBranch(String branch) {
 
 /// Formats output as GitHub Flavored Markdown.
 ///
+/// Rows are sorted by `org` -> `repo` -> `oldest PR number`.
 /// Actionable PRs (requiring worktree pruning or branch deletion) are rendered
 /// as individual rows with their specific PR link and actions. PRs with no
 /// local branch/worktree mutations are clustered into a single summary row
@@ -750,32 +751,74 @@ String formatMarkdownReport(
     ..writeln('| Repository | PR(s) | Local Directory | Actions / Status |')
     ..writeln('| :--- | :--- | :--- | :--- |');
 
-  final repoMap = <String, List<PrCleanResult>>{};
-  for (final r in results) {
-    repoMap.putIfAbsent(r.pr.repository, () => []).add(r);
-  }
-
-  for (final entry in repoMap.entries) {
-    final list = entry.value;
-    final actionable = list.where(_hasLocalBranchOrWorktreeAction).toList();
-    final noOps = list
-        .where((r) => !_hasLocalBranchOrWorktreeAction(r))
-        .toList();
-
-    // 1. Render individual rows for actionable PRs
-    for (final r in actionable) {
-      buffer.writeln(_formatActionableMarkdownRow(r, applied: applied));
-    }
-
-    // 2. Render a clustered row for no-op / sync-only PRs in this repo
-    if (noOps.isNotEmpty) {
-      buffer.writeln(_formatNoOpClusterMarkdownRow(noOps, applied: applied));
-    }
+  final rows = _buildSortedReportRows(results, applied: applied);
+  for (final row in rows) {
+    buffer.writeln(row.markdown);
   }
 
   buffer.writeln('<!-- mdformat on -->');
   return buffer.toString();
 }
+
+List<_ReportRow> _buildSortedReportRows(
+  List<PrCleanResult> results, {
+  required bool applied,
+}) {
+  final repoMap = <String, List<PrCleanResult>>{};
+  for (final r in results) {
+    repoMap.putIfAbsent(r.pr.repository, () => []).add(r);
+  }
+
+  final rows = <_ReportRow>[];
+
+  for (final entry in repoMap.entries) {
+    final list = entry.value;
+    final parts = entry.key.split('/');
+    final org = parts.isNotEmpty ? parts[0] : '';
+    final repo = parts.length > 1 ? parts[1] : '';
+
+    final actionable = list.where(_hasLocalBranchOrWorktreeAction).toList()
+      ..sort((a, b) => a.pr.number.compareTo(b.pr.number));
+    final noOps =
+        list.where((r) => !_hasLocalBranchOrWorktreeAction(r)).toList()
+          ..sort((a, b) => a.pr.number.compareTo(b.pr.number));
+
+    for (final r in actionable) {
+      rows.add((
+        org: org,
+        repo: repo,
+        minPrNumber: r.pr.number,
+        markdown: _formatActionableMarkdownRow(r, applied: applied),
+      ));
+    }
+
+    if (noOps.isNotEmpty) {
+      rows.add((
+        org: org,
+        repo: repo,
+        minPrNumber: noOps.first.pr.number,
+        markdown: _formatNoOpClusterMarkdownRow(noOps, applied: applied),
+      ));
+    }
+  }
+
+  rows.sort((a, b) {
+    final orgCmp = a.org.toLowerCase().compareTo(b.org.toLowerCase());
+    if (orgCmp != 0) return orgCmp;
+    final repoCmp = a.repo.toLowerCase().compareTo(b.repo.toLowerCase());
+    if (repoCmp != 0) return repoCmp;
+    return a.minPrNumber.compareTo(b.minPrNumber);
+  });
+
+  return rows;
+}
+
+typedef _ReportRow = ({
+  String org,
+  String repo,
+  int minPrNumber,
+  String markdown,
+});
 
 bool _hasLocalBranchOrWorktreeAction(PrCleanResult r) {
   if (r.localRepo == null) return false;
