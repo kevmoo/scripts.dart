@@ -763,11 +763,8 @@ LocalWorktreeEntry? findMatchingWorktree(
   return null;
 }
 
-bool _isDirDirty(String path, SyncProcessRunner runner) {
-  final res = runner('git', ['-C', path, 'status', '--porcelain']);
-  if (res.exitCode != 0) return true;
-  return (res.stdout as String).trim().isNotEmpty;
-}
+bool _isDirDirty(String path, SyncProcessRunner runner) =>
+    isRepoDirtySync(path, processRunner: runner);
 
 bool _isProtectedBranch(String branch) {
   final lower = branch.toLowerCase().trim();

@@ -48,6 +48,38 @@ bool isGitRepository(Directory dir) {
   return gitType != FileSystemEntityType.notFound;
 }
 
+/// Checks whether a local git repository or worktree directory has uncommitted
+/// changes (ignoring untracked files).
+Future<bool> isRepoDirty(String dirPath, {ProcessRunner? processRunner}) async {
+  final runner = processRunner ?? defaultProcessRunner;
+  try {
+    final res = await runner('git', [
+      'status',
+      '--porcelain',
+      '-uno',
+    ], workingDirectory: dirPath);
+    return res.exitCode == 0 && (res.stdout as String).trim().isNotEmpty;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Synchronously checks whether a local git repository or worktree directory
+/// has uncommitted changes (ignoring untracked files).
+bool isRepoDirtySync(String dirPath, {SyncProcessRunner? processRunner}) {
+  final runner = processRunner ?? defaultSyncProcessRunner;
+  try {
+    final res = runner('git', [
+      'status',
+      '--porcelain',
+      '-uno',
+    ], workingDirectory: dirPath);
+    return res.exitCode == 0 && (res.stdout as String).trim().isNotEmpty;
+  } catch (_) {
+    return false;
+  }
+}
+
 /// Normalizes a remote Git URL (SSH, HTTPS, HTTP, SCP-style) to `owner/repo`.
 String? normalizeRepoName(String raw) {
   final text = raw.trim();
