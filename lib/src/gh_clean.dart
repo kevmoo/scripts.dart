@@ -389,7 +389,7 @@ List<String> planCleanup(
   final actions = <String>[];
 
   final headBranch = pr.headRefName;
-  final baseBranch = pr.baseRefName.isNotEmpty ? pr.baseRefName : 'main';
+  final trunkBranch = _resolveTrunkBranch(pr, localRepo);
   final repoShortName = pr.repository.split('/').last;
 
   final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
@@ -404,18 +404,18 @@ List<String> planCleanup(
   }
 
   if (localRepo.currentBranch == headBranch && headBranch.isNotEmpty) {
-    actions.add('Switch branch: `$headBranch` -> `$baseBranch`');
+    actions.add('Switch branch: `$headBranch` -> `$trunkBranch`');
   }
 
   if (headBranch.isNotEmpty &&
-      headBranch != baseBranch &&
+      headBranch != trunkBranch &&
       !_isProtectedBranch(headBranch) &&
       localRepo.branches.any((b) => b.name == headBranch)) {
     actions.add('Delete local branch `$headBranch`');
   }
 
   if (!skipSync) {
-    actions.add('Sync `$baseBranch` to `origin/$baseBranch`');
+    actions.add('Sync `$trunkBranch` to `origin/$trunkBranch`');
   }
 
   return actions;
@@ -432,7 +432,7 @@ List<CleanAction> executeCleanup(
   final runner = processRunner ?? defaultSyncProcessRunner;
   final actions = <CleanAction>[];
   final headBranch = pr.headRefName;
-  final baseBranch = pr.baseRefName.isNotEmpty ? pr.baseRefName : 'main';
+  final trunkBranch = _resolveTrunkBranch(pr, localRepo);
   final repoShortName = pr.repository.split('/').last;
 
   if (!skipWorktrees) {
@@ -448,7 +448,7 @@ List<CleanAction> executeCleanup(
   final checkoutAction = _executeBranchCheckout(
     localRepo,
     headBranch,
-    baseBranch,
+    trunkBranch,
     runner,
   );
   if (checkoutAction != null) actions.add(checkoutAction);
@@ -456,17 +456,33 @@ List<CleanAction> executeCleanup(
   final deleteAction = _executeBranchDeletion(
     localRepo,
     headBranch,
-    baseBranch,
+    trunkBranch,
     runner,
   );
   if (deleteAction != null) actions.add(deleteAction);
 
   if (!skipSync) {
-    actions.add(_executeTrunkSync(localRepo, headBranch, baseBranch, runner));
+    actions.add(_executeTrunkSync(localRepo, headBranch, trunkBranch, runner));
   }
 
   return actions;
 }
+
+String _resolveTrunkBranch(LandedPr pr, LocalRepoInfo? localRepo) {
+  if (_isProtectedBranch(pr.baseRefName)) {
+    return pr.baseRefName;
+  }
+  if (localRepo != null) {
+    for (final candidate in _trunkCandidates) {
+      if (localRepo.branches.any((b) => b.name == candidate)) {
+        return candidate;
+      }
+    }
+  }
+  return 'main';
+}
+
+const _trunkCandidates = ['main', 'master', 'trunk', 'dev'];
 
 CleanAction? _executeWorktreePrune(
   LocalRepoInfo localRepo,
