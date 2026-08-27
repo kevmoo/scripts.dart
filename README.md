@@ -13,6 +13,7 @@ dart pub global activate --source git https://github.com/kevmoo/scripts.dart
 |---|---|---|
 | [`dart-clean`](#dart-clean) | `bin/dart_clean.dart` | Find and kill orphaned Dart processes. |
 | [`gerrit-view`](#gerrit-view) | `bin/gerrit_view.dart` | Complete overview of your active work on Gerrit. |
+| [`gh-clean`](#gh-clean) | `bin/gh_clean.dart` | Clean up local branches and worktrees for merged GitHub pull requests. |
 | [`gh-view`](#gh-view) | `bin/gh_view.dart` | Complete overview of your active pull requests on GitHub. |
 | [`git-org-clean`](#git-org-clean) | `bin/git_org_clean.dart` | Analyze a GitHub organization for archive/delete candidates. |
 | [`git-up`](#git-up) | `bin/git_up.dart` | Safely switch to and update the default branch. |
@@ -50,6 +51,31 @@ gerrit-view [options]
 
 -p, --path-to-gerrit-repo    Path to a local gerrit repo. Defaults to CWD.
 -h, --help                   Print this usage information.
+```
+
+### `gh-clean`
+Clean up local branches and worktrees for merged GitHub pull requests.
+
+**Requirements:**
+This tool wraps the GitHub CLI (`gh`) and requires it to be installed and
+authenticated in your `PATH`.
+
+**Usage:**
+```shell
+gh-clean [options]
+
+-u, --user               The GitHub user to inspect. (defaults to "@me")
+-R, --repo               Filter PRs to a specific repository (owner/repo).
+-l, --limit              Maximum number of PRs to retrieve. (defaults to "50")
+-d, --last-n-days        Filter PRs merged in the last N days (pass 0 for no time limit). (defaults to "7")
+    --apply              Execute worktree pruning, branch deletion, and trunk sync.
+    --json               Output results in JSON format.
+-m, --[no-]markdown      Output results as GitHub Flavored Markdown.
+    --local-root         Base directory for local Git repositories (defaults to ~/github).
+    --[no-]skip-sync     Skip fast-forwarding default branches against origin.
+    --[no-]skip-worktrees Skip pruning matching sibling worktrees.
+    --[no-]include-owned Include repositories owned by the user. (defaults to on)
+-h, --help               Print this usage information.
 ```
 
 ### `gh-view`

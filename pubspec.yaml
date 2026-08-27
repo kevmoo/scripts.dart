@@ -30,6 +30,7 @@ dev_dependencies:
 executables:
   dart-clean: dart_clean
   gerrit-view: gerrit_view
+  gh-clean: gh_clean
   gh-view: gh_view
   git-org-clean: git_org_clean
   git-up: git_up
