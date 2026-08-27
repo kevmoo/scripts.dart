@@ -634,40 +634,53 @@ Future<LocalBranchStatus?> _matchLocalStatus(
     (r) => r.repoNames.any((n) => n.toLowerCase() == repoKey),
   );
 
-  for (final repo in matchingRepos) {
+  final location = _findLocalBranchLocation(matchingRepos, pr.headRefName);
+  if (location == null) return null;
+
+  final shortSha = location.sha.length >= 7
+      ? location.sha.substring(0, 7)
+      : location.sha;
+  final isHeadMatching =
+      pr.headRefOid.isNotEmpty &&
+      (location.sha == pr.headRefOid || pr.headRefOid.startsWith(location.sha));
+
+  final isDirty = await isRepoDirty(
+    location.repoPath,
+    processRunner: processRunner,
+  );
+  var display = isHeadMatching ? '🟢 Synced' : '⚠️ Diverged';
+  if (isDirty) display = '$display (Dirty)';
+
+  return (
+    repoPath: location.repoPath,
+    branchName: pr.headRefName,
+    shortSha: shortSha,
+    isDirty: isDirty,
+    isHeadMatching: isHeadMatching,
+    isWorktree: location.isWorktree,
+    displayStatus: display,
+  );
+}
+
+({String repoPath, String sha, bool isWorktree})? _findLocalBranchLocation(
+  Iterable<LocalRepoInfo> repos,
+  String branchName,
+) {
+  for (final repo in repos) {
     final wtMatch = repo.worktrees
-        .where((wt) => wt.branch == pr.headRefName)
+        .where((wt) => wt.branch == branchName)
         .firstOrNull;
+    if (wtMatch != null) {
+      return (repoPath: wtMatch.path, sha: wtMatch.sha, isWorktree: true);
+    }
+
     final branchMatch = repo.branches
-        .where((b) => b.name == pr.headRefName)
+        .where((b) => b.name == branchName)
         .firstOrNull;
-
-    if (wtMatch == null && branchMatch == null) continue;
-
-    final repoPath = wtMatch != null ? wtMatch.path : repo.repoPath;
-    final sha = wtMatch != null ? wtMatch.sha : branchMatch!.sha;
-    final isWorktree = wtMatch != null;
-
-    final shortSha = sha.length >= 7 ? sha.substring(0, 7) : sha;
-    final isHeadMatching =
-        pr.headRefOid.isNotEmpty &&
-        (sha == pr.headRefOid || pr.headRefOid.startsWith(sha));
-
-    final isDirty = await isRepoDirty(repoPath, processRunner: processRunner);
-    var display = isHeadMatching ? '🟢 Synced' : '⚠️ Diverged';
-    if (isDirty) display = '$display (Dirty)';
-
-    return (
-      repoPath: repoPath,
-      branchName: pr.headRefName,
-      shortSha: shortSha,
-      isDirty: isDirty,
-      isHeadMatching: isHeadMatching,
-      isWorktree: isWorktree,
-      displayStatus: display,
-    );
+    if (branchMatch != null) {
+      return (repoPath: repo.repoPath, sha: branchMatch.sha, isWorktree: false);
+    }
   }
-
   return null;
 }
 
