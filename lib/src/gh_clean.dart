@@ -430,6 +430,13 @@ LandedPr? parseLandedPrNode(Map<String, dynamic> node) {
   );
 }
 
+bool _isTrunkSynced(LocalRepoInfo localRepo, String trunkBranch) {
+  final trunk = localRepo.branches
+      .where((b) => b.name == trunkBranch)
+      .firstOrNull;
+  return trunk != null && trunk.isUpToDateWithUpstream;
+}
+
 /// Identifies candidate cleanup actions without performing mutations.
 List<String> planCleanup(
   LandedPr pr,
@@ -468,7 +475,7 @@ List<String> planCleanup(
     actions.add('Delete local branch `$headBranch`');
   }
 
-  if (!skipSync) {
+  if (!skipSync && !_isTrunkSynced(localRepo, trunkBranch)) {
     actions.add('Sync `$trunkBranch` to `origin/$trunkBranch`');
   }
 
@@ -926,7 +933,14 @@ String _formatNoOpClusterMarkdownRow(
   } else if (applied) {
     statusDetail = '✅ Up to date (no local branches)';
   } else {
-    statusDetail = '• Sync `main` to `origin/main` (no local branches)';
+    final hasPendingSync = list.any(
+      (r) => r.plannedActions.any((a) => a.startsWith('Sync ')),
+    );
+    if (hasPendingSync) {
+      statusDetail = '• Sync `main` to `origin/main` (no local branches)';
+    } else {
+      statusDetail = '✅ Up to date (no local branches)';
+    }
   }
 
   return '| $repoLink | $prLabel | $localDir | $statusDetail |';

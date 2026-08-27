@@ -15,7 +15,22 @@ typedef LocalRepoInfo = ({
 });
 
 /// Information about a branch in a local Git repository.
-typedef LocalBranchEntry = ({String name, String sha});
+typedef LocalBranchEntry = ({
+  String name,
+  String sha,
+  String? upstream,
+  String? upstreamTrack,
+});
+
+/// Extension on [LocalBranchEntry] providing tracking status inspection.
+extension LocalBranchEntryExtension on LocalBranchEntry {
+  /// Returns `true` if the branch tracks an upstream remote branch and is
+  /// completely up to date with it (zero commits ahead or behind).
+  bool get isUpToDateWithUpstream =>
+      upstream != null &&
+      upstream!.isNotEmpty &&
+      (upstreamTrack == null || upstreamTrack!.isEmpty);
+}
 
 /// Information about a registered Git worktree.
 typedef LocalWorktreeEntry = ({String path, String branch, String sha});
@@ -198,7 +213,7 @@ List<LocalBranchEntry> _parseBranchRefs(
 ) {
   final branchResult = runner('git', [
     'for-each-ref',
-    '--format=%(refname:short)\t%(objectname)',
+    '--format=%(refname:short)\t%(objectname)\t%(upstream:short)\t%(upstream:track)',
     'refs/heads/',
   ], workingDirectory: repoPath);
   if (branchResult.exitCode != 0) return const [];
@@ -207,8 +222,13 @@ List<LocalBranchEntry> _parseBranchRefs(
   for (final line in (branchResult.stdout as String).trim().split('\n')) {
     if (line.isEmpty) continue;
     final parts = line.split('\t');
-    if (parts.length == 2) {
-      branches.add((name: parts[0], sha: parts[1]));
+    if (parts.length >= 2) {
+      branches.add((
+        name: parts[0],
+        sha: parts[1],
+        upstream: parts.length > 2 && parts[2].isNotEmpty ? parts[2] : null,
+        upstreamTrack: parts.length > 3 ? parts[3] : '',
+      ));
     }
   }
   return branches;

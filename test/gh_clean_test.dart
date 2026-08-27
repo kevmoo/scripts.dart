@@ -87,13 +87,26 @@ void main() {
       check(plan).isEmpty();
     });
 
-    test('plans branch deletion and sync when local branch exists', () {
+    test('plans branch deletion and sync when local branch exists and trunk is behind', () {
       final localRepo = (
         repoName: 'invertase/melos',
         repoNames: ['invertase/melos'],
         repoPath: '/path/to/melos',
         currentBranch: 'main',
-        branches: [(name: 'feat-branch', sha: '123')],
+        branches: [
+          (
+            name: 'feat-branch',
+            sha: '123',
+            upstream: null,
+            upstreamTrack: null,
+          ),
+          (
+            name: 'main',
+            sha: '000',
+            upstream: 'origin/main',
+            upstreamTrack: '[behind 1]',
+          ),
+        ],
         worktrees: <LocalWorktreeEntry>[],
       );
 
@@ -103,13 +116,49 @@ void main() {
         ..contains('Sync `main` to `origin/main`');
     });
 
+    test('omits trunk sync when main is already up to date with upstream', () {
+      final localRepo = (
+        repoName: 'invertase/melos',
+        repoNames: ['invertase/melos'],
+        repoPath: '/path/to/melos',
+        currentBranch: 'main',
+        branches: [
+          (
+            name: 'feat-branch',
+            sha: '123',
+            upstream: null,
+            upstreamTrack: null,
+          ),
+          (
+            name: 'main',
+            sha: '123',
+            upstream: 'origin/main',
+            upstreamTrack: '',
+          ),
+        ],
+        worktrees: <LocalWorktreeEntry>[],
+      );
+
+      final plan = planCleanup(samplePr, localRepo);
+      check(plan)
+        ..contains('Delete local branch `feat-branch`')
+        ..not((it) => it.contains('Sync `main` to `origin/main`'));
+    });
+
     test('plans worktree pruning when worktree exists', () {
       final localRepo = (
         repoName: 'invertase/melos',
         repoNames: ['invertase/melos'],
         repoPath: '/path/to/melos',
         currentBranch: 'main',
-        branches: [(name: 'main', sha: '000')],
+        branches: [
+          (
+            name: 'main',
+            sha: '000',
+            upstream: 'origin/main',
+            upstreamTrack: '',
+          ),
+        ],
         worktrees: [
           (
             path: '/path/to/_melos-feat-branch',
@@ -134,7 +183,14 @@ void main() {
         repoNames: ['invertase/melos'],
         repoPath: '/path/to/melos',
         currentBranch: 'main',
-        branches: [(name: 'main', sha: '000')],
+        branches: [
+          (
+            name: 'main',
+            sha: '000',
+            upstream: 'origin/main',
+            upstreamTrack: '',
+          ),
+        ],
         worktrees: [
           (
             path: '/path/to/_melos-feat-branch',
@@ -202,7 +258,15 @@ void main() {
         repoNames: ['test/local'],
         repoPath: localPath,
         currentBranch: 'main',
-        branches: [(name: 'feature-x', sha: '111'), (name: 'main', sha: '000')],
+        branches: [
+          (name: 'feature-x', sha: '111', upstream: null, upstreamTrack: null),
+          (
+            name: 'main',
+            sha: '000',
+            upstream: 'origin/main',
+            upstreamTrack: '[behind 1]',
+          ),
+        ],
         worktrees: [(path: wtPath, branch: 'feature-x', sha: '111')],
       );
 
