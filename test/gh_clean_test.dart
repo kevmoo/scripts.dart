@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:checks/checks.dart';
@@ -344,6 +345,73 @@ void main() {
       check(json['applied']).equals(false);
       final resultsList = json['results'] as List<dynamic>;
       check(resultsList.length).equals(1);
+    });
+
+    test('fetchLandedPrs excludes Dart SDK and fork repositories', () async {
+      final mockJson = jsonEncode({
+        'data': {
+          'search': {
+            'nodes': [
+              {
+                'number': 32,
+                'title': 'feat: vm parseUtf8 intrinsic',
+                'url': 'https://github.com/kevmoo/sdk/pull/32',
+                'state': 'MERGED',
+                'headRefName': 'json-utf8-decode',
+                'headRefOid': 'abc1234',
+                'baseRefName': 'main',
+                'repository': {
+                  'nameWithOwner': 'kevmoo/sdk',
+                  'url': 'https://github.com/kevmoo/sdk',
+                  'isArchived': false,
+                },
+                'mergeCommit': {'oid': '1234567890abcdef'},
+              },
+              {
+                'number': 100,
+                'title': 'feat: dart-lang sdk fix',
+                'url': 'https://github.com/dart-lang/sdk/pull/100',
+                'state': 'MERGED',
+                'headRefName': 'fix-branch',
+                'headRefOid': 'def5678',
+                'baseRefName': 'main',
+                'repository': {
+                  'nameWithOwner': 'dart-lang/sdk',
+                  'url': 'https://github.com/dart-lang/sdk',
+                  'isArchived': false,
+                },
+                'mergeCommit': {'oid': 'abcdef1234567890'},
+              },
+              {
+                'number': 445,
+                'title': 'feat: ecosystem feature',
+                'url': 'https://github.com/dart-lang/ecosystem/pull/445',
+                'state': 'MERGED',
+                'headRefName': 'feat-eco',
+                'headRefOid': '9998887',
+                'baseRefName': 'main',
+                'repository': {
+                  'nameWithOwner': 'dart-lang/ecosystem',
+                  'url': 'https://github.com/dart-lang/ecosystem',
+                  'isArchived': false,
+                },
+                'mergeCommit': {'oid': '1112223334445556'},
+              },
+            ],
+          },
+        },
+      });
+
+      final prs = await fetchLandedPrs(
+        user: 'kevmoo',
+        processRunner: (exe, args, {workingDirectory}) =>
+            ProcessResult(1, 0, mockJson, ''),
+      );
+
+      check(prs.map((p) => p.repository))
+        ..contains('dart-lang/ecosystem')
+        ..not((it) => it.contains('kevmoo/sdk'))
+        ..not((it) => it.contains('dart-lang/sdk'));
     });
   });
 }
