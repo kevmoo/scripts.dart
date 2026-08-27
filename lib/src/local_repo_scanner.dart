@@ -19,7 +19,14 @@ typedef LocalBranchEntry = ({String name, String sha});
 /// Information about a registered Git worktree.
 typedef LocalWorktreeEntry = ({String path, String branch, String sha});
 
-/// Checks if [dir] is a Git repository or linked worktree root.
+/// Checks if [dir] is a primary root Git repository (where `.git` is a
+/// directory).
+bool isRootGitRepository(Directory dir) {
+  final gitType = FileSystemEntity.typeSync('${dir.path}/.git');
+  return gitType == FileSystemEntityType.directory;
+}
+
+/// Checks if [dir] is either a primary Git repository or a linked worktree.
 bool isGitRepository(Directory dir) {
   final gitType = FileSystemEntity.typeSync('${dir.path}/.git');
   return gitType != FileSystemEntityType.notFound;
@@ -44,12 +51,9 @@ String? normalizeRepoName(String raw) {
 }
 
 /// Recursively scans [root] for Git repositories and worktrees, stopping
-/// traversal in any folder once a Git repository is discovered.
+/// traversal in any folder once a Git repository or worktree is discovered.
 ///
-/// Directories starting with `.` (hidden/caches) or `_` (sibling worktrees)
-/// are skipped immediately to ensure primary checkouts are indexed as root
-/// repositories rather than linked worktrees.
-///
+/// Directories starting with `.` (hidden/caches) are skipped immediately.
 /// Traversal terminates if [maxDepth] is exceeded (default: 5).
 List<LocalRepoInfo> scanLocalGitRepositories(
   Directory root, {
@@ -61,8 +65,7 @@ List<LocalRepoInfo> scanLocalGitRepositories(
 
   void walk(Directory dir, int depth) {
     if (depth > maxDepth) return;
-    final baseName = p.basename(dir.path);
-    if (baseName.startsWith('.') || baseName.startsWith('_')) return;
+    if (p.basename(dir.path).startsWith('.')) return;
 
     if (isGitRepository(dir)) {
       final info = _indexRepository(dir, runner);
@@ -87,8 +90,7 @@ void _walkSubdirectories(
 ) {
   try {
     for (final sub in dir.listSync().whereType<Directory>()) {
-      final base = p.basename(sub.path);
-      if (!base.startsWith('.') && !base.startsWith('_')) {
+      if (!p.basename(sub.path).startsWith('.')) {
         walk(sub, depth + 1);
       }
     }

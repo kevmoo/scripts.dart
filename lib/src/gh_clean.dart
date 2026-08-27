@@ -162,7 +162,12 @@ Future<void> runGhClean({
   final localRepos = scanLocalGitRepositories(rootDir, processRunner: runner);
   final repoMap = <String, LocalRepoInfo>{};
   for (final repo in localRepos) {
-    repoMap[repo.repoName.toLowerCase()] = repo;
+    final key = repo.repoName.toLowerCase();
+    final isRoot = isRootGitRepository(Directory(repo.repoPath));
+    final existing = repoMap[key];
+    if (existing == null || isRoot) {
+      repoMap[key] = repo;
+    }
   }
 
   final results = <PrCleanResult>[];
