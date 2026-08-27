@@ -344,6 +344,14 @@ query($q: String!, $limit: Int!) {
   }
 
   final stdoutStr = result.stdout as String;
+  return _parseGraphQLData(stdoutStr, user: user, includeOwned: includeOwned);
+}
+
+List<LandedPr> _parseGraphQLData(
+  String stdoutStr, {
+  required String user,
+  required bool includeOwned,
+}) {
   Map<String, dynamic> decoded;
   try {
     decoded = jsonDecode(stdoutStr) as Map<String, dynamic>;
@@ -364,24 +372,26 @@ query($q: String!, $limit: Int!) {
   final search = data?['search'] as Map<String, dynamic>?;
   final nodes = search?['nodes'] as List<dynamic>? ?? [];
 
-  final prs = <LandedPr>[];
-  for (final node in nodes.whereType<Map<String, dynamic>>()) {
-    final parsed = parseLandedPrNode(node);
-    if (parsed != null) {
-      if (isDartSdkRepositoryName(parsed.repository)) {
-        continue;
-      }
-      if (!includeOwned && user.isNotEmpty && user != '@me') {
-        final prefix = '${user.toLowerCase()}/';
-        if (parsed.repository.toLowerCase().startsWith(prefix)) {
-          continue;
-        }
-      }
-      prs.add(parsed);
-    }
-  }
+  return [
+    for (final node in nodes.whereType<Map<String, dynamic>>())
+      if (parseLandedPrNode(node) case final parsed?)
+        if (!isDartSdkRepositoryName(parsed.repository) &&
+            _isAllowedUserPr(
+              parsed.repository,
+              user,
+              includeOwned: includeOwned,
+            ))
+          parsed,
+  ];
+}
 
-  return prs;
+bool _isAllowedUserPr(
+  String repository,
+  String user, {
+  required bool includeOwned,
+}) {
+  if (includeOwned || user.isEmpty || user == '@me') return true;
+  return !repository.toLowerCase().startsWith('${user.toLowerCase()}/');
 }
 
 /// Parses a landed PR node from GraphQL.
