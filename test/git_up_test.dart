@@ -964,10 +964,16 @@ void main() {
       ]);
 
       final prints = await capturePrints(() async {
-        final exitCode = await wrappedForTesting(
-          () => gitUp(workingDirectory: worktreePath),
+        await check(
+          wrappedForTesting(() => gitUp(workingDirectory: worktreePath)),
+        ).throws<GitUpException>(
+          (it) => it
+            ..has((e) => e.exitCode, 'exitCode').equals(1)
+            ..has(
+              (e) => e.message,
+              'message',
+            ).contains('Cannot run git-up from inside a secondary worktree.'),
         );
-        check(exitCode).equals(1);
       });
 
       check(prints.join('\n'))
