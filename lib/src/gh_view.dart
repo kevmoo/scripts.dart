@@ -6,6 +6,11 @@ import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 
+import 'local_repo_scanner.dart';
+import 'process_utils.dart';
+
+export 'local_repo_scanner.dart' show normalizeRepoName;
+
 /// Exception thrown by `gh-view` operations.
 class GhViewException implements Exception {
   final String message;
@@ -262,18 +267,19 @@ Future<void> runGhView({
     );
   }
 
-  final localMap = options.checkLocal
-      ? _discoverLocalRepositories(options.localRoot)
+  final localRepos = options.checkLocal
+      ? await _discoverLocalRepositories(options.localRoot)
       : null;
-  final prs = rawPrs
-      .map(
-        (pr) => _attachLocalStatus(
-          pr,
-          localMap,
-          context: _lookupContext(pr, contextMap),
-        ),
-      )
-      .toList();
+  final prs = await Future.wait(
+    rawPrs.map(
+      (pr) => _attachLocalStatus(
+        pr,
+        localRepos,
+        context: _lookupContext(pr, contextMap),
+        processRunner: runner,
+      ),
+    ),
+  );
 
   if (options.json) {
     print(renderJsonOutput(prs, currentTime: currentTime));
@@ -284,22 +290,27 @@ Future<void> runGhView({
   }
 }
 
-Map<String, List<LocalBranchInfo>>? _discoverLocalRepositories(
-  String? customRoot,
-) {
+Future<List<LocalRepoInfo>?> _discoverLocalRepositories(
+  String? customRoot, {
+  SyncProcessRunner? processRunner,
+}) async {
   final localRootPath =
       customRoot ?? '${Platform.environment['HOME'] ?? ''}/github';
   if (localRootPath.isNotEmpty && Directory(localRootPath).existsSync()) {
-    return scanLocalRepositories(Directory(localRootPath));
+    return scanLocalGitRepositories(
+      Directory(localRootPath),
+      processRunner: processRunner,
+    );
   }
   return null;
 }
 
-GhPr _attachLocalStatus(
+Future<GhPr> _attachLocalStatus(
   GhPr pr,
-  Map<String, List<LocalBranchInfo>>? localMap, {
+  List<LocalRepoInfo>? localRepos, {
   String? context,
-}) => (
+  ProcessRunner? processRunner,
+}) async => (
   number: pr.number,
   title: pr.title,
   url: pr.url,
@@ -319,7 +330,11 @@ GhPr _attachLocalStatus(
   isRepoArchived: pr.isRepoArchived,
   ciStatus: pr.ciStatus,
   updatedAt: pr.updatedAt,
-  localStatus: _matchLocalStatus(pr, localMap),
+  localStatus: await _matchLocalStatus(
+    pr,
+    localRepos,
+    processRunner: processRunner,
+  ),
   context: context ?? pr.context,
 );
 
@@ -607,209 +622,66 @@ _FlutterContextStatus _evaluateFlutterContext(Map<String, dynamic> ctx) {
   return _FlutterContextStatus.ok;
 }
 
-/// Metadata discovered about local Git repositories.
-typedef LocalBranchInfo = ({
-  String repoName,
-  String repoPath,
-  String branchName,
-  String sha,
-  bool isWorktree,
-});
-
-/// Scans local directories under [root] for Git repositories and worktrees.
-Map<String, List<LocalBranchInfo>> scanLocalRepositories(
-  Directory root, {
-  ProcessRunner? processRunner,
-}) {
-  final map = <String, List<LocalBranchInfo>>{};
-
-  try {
-    for (final entity in root.listSync().whereType<Directory>()) {
-      _scanDirectoryEntry(entity, map);
-    }
-  } catch (_) {}
-
-  return map;
-}
-
-void _scanDirectoryEntry(
-  Directory dir,
-  Map<String, List<LocalBranchInfo>> map,
-) {
-  final name = p.basename(dir.path);
-  if (name.startsWith('.')) return;
-
-  final isGit =
-      FileSystemEntity.typeSync('${dir.path}/.git') !=
-      FileSystemEntityType.notFound;
-  if (isGit) {
-    _indexGitRepo(dir, map);
-  } else {
-    try {
-      for (final sub in dir.listSync().whereType<Directory>()) {
-        final subName = p.basename(sub.path);
-        if (!subName.startsWith('.') &&
-            FileSystemEntity.typeSync('${sub.path}/.git') !=
-                FileSystemEntityType.notFound) {
-          _indexGitRepo(sub, map);
-        }
-      }
-    } catch (_) {}
-  }
-}
-
-void _indexGitRepo(Directory dir, Map<String, List<LocalBranchInfo>> map) {
-  final originResult = Process.runSync('git', [
-    'remote',
-    'get-url',
-    'origin',
-  ], workingDirectory: dir.path);
-  if (originResult.exitCode != 0) return;
-
-  final repoName = normalizeRepoName(originResult.stdout as String);
-  if (repoName == null) return;
-
-  final branches = <LocalBranchInfo>[
-    ..._parseBranchRefs(dir.path, repoName),
-    ..._parseWorktrees(dir.path, repoName),
-  ];
-
-  map.putIfAbsent(repoName.toLowerCase(), () => []).addAll(branches);
-}
-
-List<LocalBranchInfo> _parseBranchRefs(String repoPath, String repoName) {
-  final branchResult = Process.runSync('git', [
-    'for-each-ref',
-    '--format=%(refname:short)\t%(objectname)',
-    'refs/heads/',
-  ], workingDirectory: repoPath);
-  if (branchResult.exitCode != 0) return const [];
-
-  final branches = <LocalBranchInfo>[];
-  for (final line in (branchResult.stdout as String).trim().split('\n')) {
-    if (line.isEmpty) continue;
-    final parts = line.split('\t');
-    if (parts.length == 2) {
-      branches.add((
-        repoName: repoName,
-        repoPath: repoPath,
-        branchName: parts[0],
-        sha: parts[1],
-        isWorktree: false,
-      ));
-    }
-  }
-  return branches;
-}
-
-List<LocalBranchInfo> _parseWorktrees(String repoPath, String repoName) {
-  final wtResult = Process.runSync('git', [
-    'worktree',
-    'list',
-    '--porcelain',
-  ], workingDirectory: repoPath);
-  if (wtResult.exitCode != 0) return const [];
-
-  final branches = <LocalBranchInfo>[];
-  String? currentWtPath;
-  String? currentBranch;
-  String? currentSha;
-
-  void flush() {
-    if (currentWtPath != null && currentBranch != null) {
-      branches.add((
-        repoName: repoName,
-        repoPath: currentWtPath!,
-        branchName: currentBranch!,
-        sha: currentSha ?? '',
-        isWorktree: true,
-      ));
-    }
-    currentWtPath = null;
-    currentBranch = null;
-    currentSha = null;
-  }
-
-  for (final line in (wtResult.stdout as String).trim().split('\n')) {
-    if (line.startsWith('worktree ')) {
-      currentWtPath = line.substring('worktree '.length).trim();
-    } else if (line.startsWith('HEAD ')) {
-      currentSha = line.substring('HEAD '.length).trim();
-    } else if (line.startsWith('branch refs/heads/')) {
-      currentBranch = line.substring('branch refs/heads/'.length).trim();
-    } else if (line.isEmpty) {
-      flush();
-    }
-  }
-  flush();
-  return branches;
-}
-
-/// Normalizes a remote Git URL to `owner/repo`.
-String? normalizeRepoName(String raw) {
-  var url = raw.trim();
-  if (url.startsWith('git@github.com:')) {
-    url = url.substring('git@github.com:'.length);
-  } else if (url.startsWith('https://github.com/')) {
-    url = url.substring('https://github.com/'.length);
-  } else {
-    return null;
-  }
-  if (url.endsWith('.git')) {
-    url = url.substring(0, url.length - 4);
-  }
-  return url.trim();
-}
-
-LocalBranchStatus? _matchLocalStatus(
+Future<LocalBranchStatus?> _matchLocalStatus(
   GhPr pr,
-  Map<String, List<LocalBranchInfo>>? localMap,
-) {
-  if (localMap == null) return null;
+  List<LocalRepoInfo>? localRepos, {
+  ProcessRunner? processRunner,
+}) async {
+  if (localRepos == null || localRepos.isEmpty) return null;
 
   final repoKey = pr.repository.toLowerCase();
-  final branches = localMap[repoKey];
-  if (branches == null || branches.isEmpty) return null;
+  final matchingRepos = localRepos.where(
+    (r) => r.repoNames.any((n) => n.toLowerCase() == repoKey),
+  );
 
-  final match = branches
-      .where((b) => b.branchName == pr.headRefName)
-      .firstOrNull;
-  if (match == null) return null;
+  final location = _findLocalBranchLocation(matchingRepos, pr.headRefName);
+  if (location == null) return null;
 
-  final shortSha = match.sha.length >= 7
-      ? match.sha.substring(0, 7)
-      : match.sha;
+  final shortSha = location.sha.length >= 7
+      ? location.sha.substring(0, 7)
+      : location.sha;
   final isHeadMatching =
       pr.headRefOid.isNotEmpty &&
-      (match.sha == pr.headRefOid || pr.headRefOid.startsWith(match.sha));
+      (location.sha == pr.headRefOid || pr.headRefOid.startsWith(location.sha));
 
-  final isDirty = _isRepoDirty(match.repoPath);
+  final isDirty = await isRepoDirty(
+    location.repoPath,
+    processRunner: processRunner,
+  );
   var display = isHeadMatching ? '🟢 Synced' : '⚠️ Diverged';
   if (isDirty) display = '$display (Dirty)';
 
   return (
-    repoPath: match.repoPath,
-    branchName: match.branchName,
+    repoPath: location.repoPath,
+    branchName: pr.headRefName,
     shortSha: shortSha,
     isDirty: isDirty,
     isHeadMatching: isHeadMatching,
-    isWorktree: match.isWorktree,
+    isWorktree: location.isWorktree,
     displayStatus: display,
   );
 }
 
-bool _isRepoDirty(String repoPath) {
-  try {
-    final statusRes = Process.runSync('git', [
-      'status',
-      '--porcelain',
-      '-uno',
-    ], workingDirectory: repoPath);
-    return statusRes.exitCode == 0 &&
-        (statusRes.stdout as String).trim().isNotEmpty;
-  } catch (_) {
-    return false;
+({String repoPath, String sha, bool isWorktree})? _findLocalBranchLocation(
+  Iterable<LocalRepoInfo> repos,
+  String branchName,
+) {
+  for (final repo in repos) {
+    final wtMatch = repo.worktrees
+        .where((wt) => wt.branch == branchName)
+        .firstOrNull;
+    if (wtMatch != null) {
+      return (repoPath: wtMatch.path, sha: wtMatch.sha, isWorktree: true);
+    }
+
+    final branchMatch = repo.branches
+        .where((b) => b.name == branchName)
+        .firstOrNull;
+    if (branchMatch != null) {
+      return (repoPath: repo.repoPath, sha: branchMatch.sha, isWorktree: false);
+    }
   }
+  return null;
 }
 
 /// Categorizes PRs into logical operational buckets.

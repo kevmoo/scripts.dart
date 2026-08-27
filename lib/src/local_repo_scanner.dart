@@ -48,6 +48,54 @@ bool isGitRepository(Directory dir) {
   return gitType != FileSystemEntityType.notFound;
 }
 
+/// Checks whether a local git repository or worktree directory has uncommitted
+/// changes.
+///
+/// If [includeUntracked] is `false` (default), only tracked modifications and
+/// staged changes are checked (`-uno`).
+/// If [failClosedOnProcessError] is `true`, any non-zero exit code or exception
+/// is treated as dirty (safe for destructive pruning contexts).
+Future<bool> isRepoDirty(
+  String dirPath, {
+  ProcessRunner? processRunner,
+  bool includeUntracked = false,
+  bool failClosedOnProcessError = false,
+}) async {
+  final runner = processRunner ?? defaultProcessRunner;
+  final args = ['status', '--porcelain', if (!includeUntracked) '-uno'];
+  try {
+    final res = await runner('git', args, workingDirectory: dirPath);
+    if (res.exitCode != 0) return failClosedOnProcessError;
+    return (res.stdout as String).trim().isNotEmpty;
+  } catch (_) {
+    return failClosedOnProcessError;
+  }
+}
+
+/// Synchronously checks whether a local git repository or worktree directory
+/// has uncommitted changes.
+///
+/// If [includeUntracked] is `false` (default), only tracked modifications and
+/// staged changes are checked (`-uno`).
+/// If [failClosedOnProcessError] is `true`, any non-zero exit code or exception
+/// is treated as dirty (safe for destructive pruning contexts).
+bool isRepoDirtySync(
+  String dirPath, {
+  SyncProcessRunner? processRunner,
+  bool includeUntracked = false,
+  bool failClosedOnProcessError = false,
+}) {
+  final runner = processRunner ?? defaultSyncProcessRunner;
+  final args = ['status', '--porcelain', if (!includeUntracked) '-uno'];
+  try {
+    final res = runner('git', args, workingDirectory: dirPath);
+    if (res.exitCode != 0) return failClosedOnProcessError;
+    return (res.stdout as String).trim().isNotEmpty;
+  } catch (_) {
+    return failClosedOnProcessError;
+  }
+}
+
 /// Normalizes a remote Git URL (SSH, HTTPS, HTTP, SCP-style) to `owner/repo`.
 String? normalizeRepoName(String raw) {
   final text = raw.trim();
