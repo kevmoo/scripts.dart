@@ -46,7 +46,10 @@ String? normalizeRepoName(String raw) {
 /// Recursively scans [root] for Git repositories and worktrees, stopping
 /// traversal in any folder once a Git repository is discovered.
 ///
-/// Directories starting with `.` (hidden/caches) are skipped immediately.
+/// Directories starting with `.` (hidden/caches) or `_` (sibling worktrees)
+/// are skipped immediately to ensure primary checkouts are indexed as root
+/// repositories rather than linked worktrees.
+///
 /// Traversal terminates if [maxDepth] is exceeded (default: 5).
 List<LocalRepoInfo> scanLocalGitRepositories(
   Directory root, {
@@ -58,7 +61,8 @@ List<LocalRepoInfo> scanLocalGitRepositories(
 
   void walk(Directory dir, int depth) {
     if (depth > maxDepth) return;
-    if (p.basename(dir.path).startsWith('.')) return;
+    final baseName = p.basename(dir.path);
+    if (baseName.startsWith('.') || baseName.startsWith('_')) return;
 
     if (isGitRepository(dir)) {
       final info = _indexRepository(dir, runner);
@@ -83,7 +87,8 @@ void _walkSubdirectories(
 ) {
   try {
     for (final sub in dir.listSync().whereType<Directory>()) {
-      if (!p.basename(sub.path).startsWith('.')) {
+      final base = p.basename(sub.path);
+      if (!base.startsWith('.') && !base.startsWith('_')) {
         walk(sub, depth + 1);
       }
     }
@@ -165,10 +170,10 @@ List<LocalWorktreeEntry> _parseWorktrees(
   String? currentSha;
 
   void flush() {
-    if (currentWtPath != null && currentBranch != null) {
+    if (currentWtPath != null) {
       worktrees.add((
         path: currentWtPath!,
-        branch: currentBranch!,
+        branch: currentBranch ?? '',
         sha: currentSha ?? '',
       ));
     }
@@ -184,6 +189,8 @@ List<LocalWorktreeEntry> _parseWorktrees(
       currentSha = line.substring('HEAD '.length).trim();
     } else if (line.startsWith('branch refs/heads/')) {
       currentBranch = line.substring('branch refs/heads/'.length).trim();
+    } else if (line == 'detached') {
+      currentBranch = 'DETACHED';
     } else if (line.isEmpty) {
       flush();
     }

@@ -116,8 +116,39 @@ void main() {
         ],
       );
 
-      final plan = planCleanup(samplePr, localRepo);
+      final plan = planCleanup(
+        samplePr,
+        localRepo,
+        processRunner: (exe, args, {workingDirectory}) =>
+            ProcessResult(0, 0, '', ''),
+      );
       check(plan).contains('Prune worktree at /path/to/_melos-feat-branch');
+    });
+
+    test('planCleanup skips dirty worktrees', () {
+      final localRepo = (
+        repoName: 'invertase/melos',
+        repoPath: '/path/to/melos',
+        currentBranch: 'main',
+        branches: [(name: 'main', sha: '000')],
+        worktrees: [
+          (
+            path: '/path/to/_melos-feat-branch',
+            branch: 'feat-branch',
+            sha: '123',
+          ),
+        ],
+      );
+
+      final plan = planCleanup(
+        samplePr,
+        localRepo,
+        processRunner: (exe, args, {workingDirectory}) =>
+            ProcessResult(0, 0, ' M dirty.txt\n', ''),
+      );
+      check(plan).contains(
+        'Skip worktree at /path/to/_melos-feat-branch (has uncommitted changes)',
+      );
     });
   });
 

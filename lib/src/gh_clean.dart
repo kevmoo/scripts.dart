@@ -457,6 +457,7 @@ List<CleanAction> executeCleanup(
     localRepo,
     headBranch,
     trunkBranch,
+    pr.headRefOid,
     runner,
   );
   if (deleteAction != null) actions.add(deleteAction);
@@ -547,14 +548,32 @@ CleanAction? _executeBranchCheckout(
 CleanAction? _executeBranchDeletion(
   LocalRepoInfo localRepo,
   String headBranch,
-  String baseBranch,
+  String trunkBranch,
+  String? headRefOid,
   SyncProcessRunner runner,
 ) {
   if (headBranch.isEmpty ||
-      headBranch == baseBranch ||
+      headBranch == trunkBranch ||
       _isProtectedBranch(headBranch) ||
       !localRepo.branches.any((b) => b.name == headBranch)) {
     return null;
+  }
+
+  if (headRefOid != null && headRefOid.isNotEmpty) {
+    final logRes = runner('git', [
+      '-C',
+      localRepo.repoPath,
+      'log',
+      '$headRefOid..$headBranch',
+      '--oneline',
+    ]);
+    if (logRes.exitCode == 0 && (logRes.stdout as String).trim().isNotEmpty) {
+      return (
+        description: 'Delete local branch `$headBranch`',
+        success: false,
+        error: 'Branch has unpushed commits past PR HEAD ($headRefOid).',
+      );
+    }
   }
 
   final res = runner('git', [
@@ -580,13 +599,18 @@ CleanAction? _executeBranchDeletion(
 CleanAction _executeTrunkSync(
   LocalRepoInfo localRepo,
   String headBranch,
-  String baseBranch,
+  String trunkBranch,
   SyncProcessRunner runner,
 ) {
   final repoPath = localRepo.repoPath;
-  final isOnTrunk =
-      localRepo.currentBranch == baseBranch ||
-      localRepo.currentBranch == headBranch;
+  final currentResult = runner('git', [
+    'branch',
+    '--show-current',
+  ], workingDirectory: repoPath);
+  final currentBranch = currentResult.exitCode == 0
+      ? (currentResult.stdout as String).trim()
+      : localRepo.currentBranch;
+  final isOnTrunk = currentBranch == trunkBranch;
 
   if (isOnTrunk) {
     runner('git', ['-C', repoPath, 'fetch', 'origin']);
@@ -595,16 +619,16 @@ CleanAction _executeTrunkSync(
       repoPath,
       'merge',
       '--ff-only',
-      'origin/$baseBranch',
+      'origin/$trunkBranch',
     ]);
     return res.exitCode == 0
         ? (
-            description: 'Synced `$baseBranch` to `origin/$baseBranch`',
+            description: 'Synced `$trunkBranch` to `origin/$trunkBranch`',
             success: true,
             error: null,
           )
         : (
-            description: 'Failed to fast-forward `$baseBranch`',
+            description: 'Failed to fast-forward `$trunkBranch`',
             success: false,
             error: (res.stderr as String).trim(),
           );
@@ -615,16 +639,16 @@ CleanAction _executeTrunkSync(
     repoPath,
     'fetch',
     'origin',
-    '$baseBranch:$baseBranch',
+    '$trunkBranch:$trunkBranch',
   ]);
   return res.exitCode == 0
       ? (
-          description: 'Synced `$baseBranch` to `origin/$baseBranch`',
+          description: 'Synced `$trunkBranch` to `origin/$trunkBranch`',
           success: true,
           error: null,
         )
       : (
-          description: 'Failed to fetch `$baseBranch`',
+          description: 'Failed to fetch `$trunkBranch`',
           success: false,
           error: (res.stderr as String).trim(),
         );
@@ -655,13 +679,17 @@ LocalWorktreeEntry? findMatchingWorktree(
 
 bool _isDirDirty(String path, SyncProcessRunner runner) {
   final res = runner('git', ['-C', path, 'status', '--porcelain']);
-  if (res.exitCode != 0) return false;
+  if (res.exitCode != 0) return true;
   return (res.stdout as String).trim().isNotEmpty;
 }
 
 bool _isProtectedBranch(String branch) {
-  const protected = {'main', 'master', 'trunk', 'dev', 'release', 'HEAD'};
-  return protected.contains(branch.toLowerCase());
+  final lower = branch.toLowerCase().trim();
+  if (lower.startsWith('release/') || lower.startsWith('release-')) {
+    return true;
+  }
+  const protected = {'main', 'master', 'trunk', 'dev', 'release', 'head'};
+  return protected.contains(lower);
 }
 
 /// Formats output as GitHub Flavored Markdown.
