@@ -1,0 +1,753 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:args/args.dart';
+import 'package:io/ansi.dart';
+import 'package:path/path.dart' as p;
+
+import 'local_repo_scanner.dart';
+import 'process_utils.dart';
+
+/// Exception thrown by `gh-clean` operations.
+class GhCleanException implements Exception {
+  final String message;
+  final int exitCode;
+
+  new(this.message, {this.exitCode = 1});
+
+  @override
+  String toString() => message;
+}
+
+/// Representation of a merged GitHub Pull Request.
+typedef LandedPr = ({
+  int number,
+  String title,
+  String url,
+  String repository,
+  String repoUrl,
+  String headRefName,
+  String headRefOid,
+  String baseRefName,
+  String? mergeSha,
+  DateTime? mergedAt,
+  DateTime? closedAt,
+});
+
+/// A single cleanup action executed on a repository.
+typedef CleanAction = ({String description, bool success, String? error});
+
+/// Full status and cleanup result for a landed PR.
+typedef PrCleanResult = ({
+  LandedPr pr,
+  LocalRepoInfo? localRepo,
+  List<String> plannedActions,
+  List<CleanAction> executedActions,
+  String status,
+});
+
+/// Options for configuring `gh-clean`.
+class GhCleanOptions {
+  final String user;
+  final String? repo;
+  final int limit;
+  final int? lastNDays;
+  final bool apply;
+  final bool json;
+  final bool markdown;
+  final String? localRoot;
+  final bool skipSync;
+  final bool skipWorktrees;
+  final bool includeOwned;
+
+  const new({
+    this.user = '@me',
+    this.repo,
+    this.limit = 50,
+    this.lastNDays = 7,
+    this.apply = false,
+    this.json = false,
+    this.markdown = false,
+    this.localRoot,
+    this.skipSync = false,
+    this.skipWorktrees = false,
+    this.includeOwned = true,
+  });
+
+  static ArgParser createArgParser() => ArgParser()
+    ..addOption(
+      'user',
+      abbr: 'u',
+      defaultsTo: '@me',
+      help: 'The GitHub user to inspect.',
+    )
+    ..addOption(
+      'repo',
+      abbr: 'R',
+      help: 'Filter PRs to a specific repository (owner/repo).',
+    )
+    ..addOption(
+      'limit',
+      abbr: 'l',
+      defaultsTo: '50',
+      help: 'Maximum number of PRs to retrieve.',
+    )
+    ..addOption(
+      'last-n-days',
+      abbr: 'd',
+      defaultsTo: '7',
+      help: 'Filter PRs merged in the last N days (pass 0 for no time limit).',
+    )
+    ..addFlag(
+      'apply',
+      negatable: false,
+      help: 'Execute worktree pruning, branch deletion, and trunk sync.',
+    )
+    ..addFlag('json', negatable: false, help: 'Output results in JSON format.')
+    ..addFlag(
+      'markdown',
+      abbr: 'm',
+      negatable: false,
+      help: 'Output results as GitHub Flavored Markdown.',
+    )
+    ..addOption(
+      'local-root',
+      help: 'Base directory for local Git repositories (defaults to ~/github).',
+    )
+    ..addFlag(
+      'skip-sync',
+      negatable: false,
+      help: 'Skip fast-forwarding default branches against origin.',
+    )
+    ..addFlag(
+      'skip-worktrees',
+      negatable: false,
+      help: 'Skip pruning matching sibling worktrees.',
+    )
+    ..addFlag(
+      'include-owned',
+      defaultsTo: true,
+      help: 'Include repositories owned by the user.',
+    )
+    ..addFlag(
+      'help',
+      abbr: 'h',
+      negatable: false,
+      help: 'Print this usage information.',
+    );
+}
+
+/// Main orchestration logic for `gh-clean`.
+Future<void> runGhClean({
+  required GhCleanOptions options,
+  SyncProcessRunner? processRunner,
+}) async {
+  final runner = processRunner ?? defaultSyncProcessRunner;
+
+  final landedPrs = await fetchLandedPrs(
+    user: options.user,
+    repo: options.repo,
+    lastNDays: options.lastNDays,
+    limit: options.limit,
+    includeOwned: options.includeOwned,
+    processRunner: runner,
+  );
+
+  final rootPath =
+      options.localRoot ??
+      Platform.environment['GH_LOCAL_ROOT'] ??
+      '${Platform.environment['HOME']}/github';
+  final rootDir = Directory(rootPath);
+
+  final localRepos = scanLocalGitRepositories(rootDir, processRunner: runner);
+  final repoMap = <String, LocalRepoInfo>{};
+  for (final repo in localRepos) {
+    repoMap[repo.repoName.toLowerCase()] = repo;
+  }
+
+  final results = <PrCleanResult>[];
+
+  for (final pr in landedPrs) {
+    final localRepo = repoMap[pr.repository.toLowerCase()];
+    final planned = planCleanup(
+      pr,
+      localRepo,
+      skipSync: options.skipSync,
+      skipWorktrees: options.skipWorktrees,
+      processRunner: runner,
+    );
+
+    var executed = <CleanAction>[];
+    var status = 'Pending';
+
+    if (localRepo == null) {
+      status = 'Not cloned locally';
+    } else if (planned.isEmpty) {
+      status = 'Clean (nothing to do)';
+    } else if (options.apply) {
+      executed = executeCleanup(
+        pr,
+        localRepo,
+        skipSync: options.skipSync,
+        skipWorktrees: options.skipWorktrees,
+        processRunner: runner,
+      );
+      final allSucceeded = executed.every((a) => a.success);
+      status = allSucceeded ? 'Applied' : 'Partial Failure';
+    }
+
+    results.add((
+      pr: pr,
+      localRepo: localRepo,
+      plannedActions: planned,
+      executedActions: executed,
+      status: status,
+    ));
+  }
+
+  if (options.json) {
+    print(jsonEncode(formatJsonReport(results, applied: options.apply)));
+  } else if (options.markdown) {
+    print(formatMarkdownReport(results, applied: options.apply));
+  } else {
+    printTerminalReport(results, applied: options.apply);
+  }
+}
+
+/// Builds the GraphQL search query for merged PRs.
+String buildLandedSearchQuery({
+  required String user,
+  String? repo,
+  int? lastNDays,
+  DateTime? now,
+}) {
+  final buffer = StringBuffer('is:pr is:merged');
+  if (user.isNotEmpty) buffer.write(' author:$user');
+  if (repo != null && repo.isNotEmpty) buffer.write(' repo:$repo');
+
+  if (lastNDays != null && lastNDays > 0) {
+    final reference = now ?? DateTime.now();
+    final cutoff = reference.subtract(Duration(days: lastNDays));
+    final y = cutoff.year.toString().padLeft(4, '0');
+    final m = cutoff.month.toString().padLeft(2, '0');
+    final d = cutoff.day.toString().padLeft(2, '0');
+    buffer.write(' merged:>=$y-$m-$d');
+  }
+
+  buffer.write(' sort:updated-desc');
+  return buffer.toString();
+}
+
+/// Fetches merged pull requests via GitHub CLI (`gh api graphql`).
+Future<List<LandedPr>> fetchLandedPrs({
+  required String user,
+  String? repo,
+  int? lastNDays = 7,
+  int limit = 50,
+  bool includeOwned = true,
+  SyncProcessRunner? processRunner,
+}) async {
+  final runner = processRunner ?? defaultSyncProcessRunner;
+  final queryStr = buildLandedSearchQuery(
+    user: user,
+    repo: repo,
+    lastNDays: lastNDays,
+  );
+
+  const gqlQuery = r'''
+query($q: String!, $limit: Int!) {
+  search(query: $q, type: ISSUE, first: $limit) {
+    nodes {
+      ... on PullRequest {
+        number
+        title
+        url
+        state
+        merged
+        mergedAt
+        closedAt
+        headRefName
+        headRefOid
+        baseRefName
+        repository {
+          nameWithOwner
+          url
+          isArchived
+        }
+        mergeCommit {
+          oid
+        }
+      }
+    }
+  }
+}
+''';
+
+  final result = runner('gh', [
+    'api',
+    'graphql',
+    '-f',
+    'query=$gqlQuery',
+    '-F',
+    'q=$queryStr',
+    '-F',
+    'limit=$limit',
+  ]);
+
+  if (result.exitCode != 0) {
+    throw GhCleanException(
+      'GitHub CLI (`gh`) failed with exit code ${result.exitCode}:\n'
+      '${result.stderr}',
+      exitCode: result.exitCode,
+    );
+  }
+
+  final stdoutStr = result.stdout as String;
+  Map<String, dynamic> decoded;
+  try {
+    decoded = jsonDecode(stdoutStr) as Map<String, dynamic>;
+  } catch (e) {
+    throw GhCleanException('Failed to parse GitHub GraphQL output: $e');
+  }
+
+  if (decoded.containsKey('errors')) {
+    final errors = decoded['errors'] as List<dynamic>? ?? [];
+    final errorMessages = errors
+        .whereType<Map<String, dynamic>>()
+        .map((e) => e['message'] as String? ?? 'Unknown GraphQL error')
+        .join('\n');
+    throw GhCleanException('GraphQL query returned errors:\n$errorMessages');
+  }
+
+  final data = decoded['data'] as Map<String, dynamic>?;
+  final search = data?['search'] as Map<String, dynamic>?;
+  final nodes = search?['nodes'] as List<dynamic>? ?? [];
+
+  final prs = <LandedPr>[];
+  for (final node in nodes.whereType<Map<String, dynamic>>()) {
+    final parsed = parseLandedPrNode(node);
+    if (parsed != null) {
+      if (!includeOwned && user.isNotEmpty && user != '@me') {
+        final prefix = '${user.toLowerCase()}/';
+        if (parsed.repository.toLowerCase().startsWith(prefix)) {
+          continue;
+        }
+      }
+      prs.add(parsed);
+    }
+  }
+
+  return prs;
+}
+
+/// Parses a landed PR node from GraphQL.
+LandedPr? parseLandedPrNode(Map<String, dynamic> node) {
+  final number = node['number'] as int?;
+  final title = node['title'] as String?;
+  final url = node['url'] as String?;
+  final repoMap = node['repository'] as Map<String, dynamic>?;
+  final repository = repoMap?['nameWithOwner'] as String? ?? '';
+
+  if (number == null || title == null || url == null || repository.isEmpty) {
+    return null;
+  }
+
+  final mergedAtStr = node['mergedAt'] as String?;
+  final mergedAt = mergedAtStr != null ? DateTime.tryParse(mergedAtStr) : null;
+
+  final closedAtStr = node['closedAt'] as String?;
+  final closedAt = closedAtStr != null ? DateTime.tryParse(closedAtStr) : null;
+
+  final mergeCommit = node['mergeCommit'] as Map<String, dynamic>?;
+  final mergeSha = mergeCommit?['oid'] as String?;
+
+  return (
+    number: number,
+    title: title,
+    url: url,
+    repository: repository,
+    repoUrl: repoMap?['url'] as String? ?? '',
+    headRefName: node['headRefName'] as String? ?? '',
+    headRefOid: node['headRefOid'] as String? ?? '',
+    baseRefName: node['baseRefName'] as String? ?? 'main',
+    mergeSha: mergeSha,
+    mergedAt: mergedAt,
+    closedAt: closedAt,
+  );
+}
+
+/// Identifies candidate cleanup actions without performing mutations.
+List<String> planCleanup(
+  LandedPr pr,
+  LocalRepoInfo? localRepo, {
+  bool skipSync = false,
+  bool skipWorktrees = false,
+  SyncProcessRunner? processRunner,
+}) {
+  if (localRepo == null) return const [];
+  final runner = processRunner ?? defaultSyncProcessRunner;
+  final actions = <String>[];
+
+  final headBranch = pr.headRefName;
+  final baseBranch = pr.baseRefName.isNotEmpty ? pr.baseRefName : 'main';
+  final repoShortName = pr.repository.split('/').last;
+
+  // 1. Check matching worktree
+  final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
+  if (matchingWt != null && !skipWorktrees) {
+    final isDirty = _isDirDirty(matchingWt.path, runner);
+    if (isDirty) {
+      actions.add(
+        'Skip worktree at ${matchingWt.path} (has uncommitted changes)',
+      );
+    } else {
+      actions.add('Prune worktree at ${matchingWt.path}');
+    }
+  }
+
+  // 2. Check if main checkout is on feature branch
+  if (localRepo.currentBranch == headBranch && headBranch.isNotEmpty) {
+    actions.add('Switch branch: `$headBranch` -> `$baseBranch`');
+  }
+
+  // 3. Check if local feature branch exists to delete
+  if (headBranch.isNotEmpty &&
+      headBranch != baseBranch &&
+      !_isProtectedBranch(headBranch) &&
+      localRepo.branches.any((b) => b.name == headBranch)) {
+    actions.add('Delete local branch `$headBranch`');
+  }
+
+  // 4. Check base branch sync
+  if (!skipSync) {
+    actions.add('Sync `$baseBranch` to `origin/$baseBranch`');
+  }
+
+  return actions;
+}
+
+/// Executes worktree pruning, branch deletion, and default branch sync.
+List<CleanAction> executeCleanup(
+  LandedPr pr,
+  LocalRepoInfo localRepo, {
+  bool skipSync = false,
+  bool skipWorktrees = false,
+  SyncProcessRunner? processRunner,
+}) {
+  final runner = processRunner ?? defaultSyncProcessRunner;
+  final actions = <CleanAction>[];
+
+  final headBranch = pr.headRefName;
+  final baseBranch = pr.baseRefName.isNotEmpty ? pr.baseRefName : 'main';
+  final repoShortName = pr.repository.split('/').last;
+  final repoPath = localRepo.repoPath;
+
+  // 1. Remove matching worktree
+  final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
+  if (matchingWt != null && !skipWorktrees) {
+    final isDirty = _isDirDirty(matchingWt.path, runner);
+    if (isDirty) {
+      actions.add((
+        description: 'Pruning worktree at ${matchingWt.path}',
+        success: false,
+        error: 'Worktree has uncommitted changes (dirty).',
+      ));
+    } else {
+      final res = runner('git', [
+        '-C',
+        repoPath,
+        'worktree',
+        'remove',
+        matchingWt.path,
+      ]);
+      if (res.exitCode == 0) {
+        actions.add((
+          description: 'Pruned sibling worktree at ${matchingWt.path}',
+          success: true,
+          error: null,
+        ));
+      } else {
+        actions.add((
+          description: 'Failed to prune worktree at ${matchingWt.path}',
+          success: false,
+          error: (res.stderr as String).trim(),
+        ));
+      }
+    }
+  }
+
+  // 2. Checkout base branch if currently on feature branch
+  if (localRepo.currentBranch == headBranch && headBranch.isNotEmpty) {
+    final res = runner('git', ['-C', repoPath, 'checkout', baseBranch]);
+    if (res.exitCode == 0) {
+      actions.add((
+        description: 'Switched from `$headBranch` to `$baseBranch`',
+        success: true,
+        error: null,
+      ));
+    } else {
+      actions.add((
+        description: 'Failed to checkout `$baseBranch`',
+        success: false,
+        error: (res.stderr as String).trim(),
+      ));
+    }
+  }
+
+  // 3. Delete local feature branch
+  if (headBranch.isNotEmpty &&
+      headBranch != baseBranch &&
+      !_isProtectedBranch(headBranch) &&
+      localRepo.branches.any((b) => b.name == headBranch)) {
+    final res = runner('git', ['-C', repoPath, 'branch', '-D', headBranch]);
+    if (res.exitCode == 0) {
+      actions.add((
+        description: 'Deleted local feature branch `$headBranch`',
+        success: true,
+        error: null,
+      ));
+    } else {
+      actions.add((
+        description: 'Failed to delete local branch `$headBranch`',
+        success: false,
+        error: (res.stderr as String).trim(),
+      ));
+    }
+  }
+
+  // 4. Fast-forward base branch against origin
+  if (!skipSync) {
+    if (localRepo.currentBranch == baseBranch ||
+        localRepo.currentBranch == headBranch) {
+      runner('git', ['-C', repoPath, 'fetch', 'origin']);
+      final res = runner('git', [
+        '-C',
+        repoPath,
+        'merge',
+        '--ff-only',
+        'origin/$baseBranch',
+      ]);
+      if (res.exitCode == 0) {
+        actions.add((
+          description: 'Synced `$baseBranch` to `origin/$baseBranch`',
+          success: true,
+          error: null,
+        ));
+      } else {
+        actions.add((
+          description: 'Failed to fast-forward `$baseBranch`',
+          success: false,
+          error: (res.stderr as String).trim(),
+        ));
+      }
+    } else {
+      final res = runner('git', [
+        '-C',
+        repoPath,
+        'fetch',
+        'origin',
+        '$baseBranch:$baseBranch',
+      ]);
+      if (res.exitCode == 0) {
+        actions.add((
+          description: 'Synced `$baseBranch` to `origin/$baseBranch`',
+          success: true,
+          error: null,
+        ));
+      } else {
+        actions.add((
+          description: 'Failed to fetch `$baseBranch`',
+          success: false,
+          error: (res.stderr as String).trim(),
+        ));
+      }
+    }
+  }
+
+  return actions;
+}
+
+/// Discovers an attached worktree matching the PR branch or folder naming
+/// scheme.
+LocalWorktreeEntry? findMatchingWorktree(
+  LocalRepoInfo localRepo,
+  String branchName,
+  String repoShortName,
+) {
+  if (branchName.isEmpty) return null;
+
+  for (final wt in localRepo.worktrees) {
+    if (wt.path == localRepo.repoPath) continue;
+    if (wt.branch == branchName || wt.branch == 'refs/heads/$branchName') {
+      return wt;
+    }
+    final folder = p.basename(wt.path);
+    if (folder == '_$repoShortName-$branchName' ||
+        folder == '_${repoShortName}_$branchName') {
+      return wt;
+    }
+  }
+  return null;
+}
+
+bool _isDirDirty(String path, SyncProcessRunner runner) {
+  final res = runner('git', ['-C', path, 'status', '--porcelain']);
+  if (res.exitCode != 0) return false;
+  final out = (res.stdout as String).trim();
+  return out.isNotEmpty;
+}
+
+bool _isProtectedBranch(String branch) {
+  const protected = {'main', 'master', 'trunk', 'dev', 'release', 'HEAD'};
+  return protected.contains(branch.toLowerCase());
+}
+
+/// Formats output as GitHub Flavored Markdown.
+String formatMarkdownReport(
+  List<PrCleanResult> results, {
+  required bool applied,
+}) {
+  final buffer = StringBuffer()
+    ..writeln('# Landed Pull Requests Cleanup Report')
+    ..writeln()
+    ..writeln(
+      applied
+          ? '**Mode**: 🚀 Applied Cleanup'
+          : '**Mode**: 🔍 Preview Mode (Dry Run)',
+    )
+    ..writeln();
+
+  if (results.isEmpty) {
+    buffer.writeln('No recently landed pull requests found.');
+    return buffer.toString();
+  }
+
+  buffer
+    ..writeln('<!-- mdformat off -->')
+    ..writeln(
+      '| Repository | PR # | Local Directory | Landed (UTC) | Status / Actions |',
+    )
+    ..writeln('| :--- | :---: | :--- | :---: | :--- |');
+
+  for (final r in results) {
+    final pr = r.pr;
+    final repoLink = '[**${pr.repository}**](${pr.repoUrl})';
+    final prLink = '[#${pr.number}](${pr.url})';
+    final localDir = r.localRepo != null
+        ? '[`${r.localRepo!.repoPath}`](file://${r.localRepo!.repoPath})'
+        : '_Not cloned_';
+    final landedDate = pr.mergedAt != null
+        ? pr.mergedAt!.toUtc().toString().substring(0, 16)
+        : 'N/A';
+
+    var statusDetail = r.status;
+    if (applied && r.executedActions.isNotEmpty) {
+      statusDetail = r.executedActions
+          .map((a) => '${a.success ? "✅" : "❌"} ${a.description}')
+          .join('<br>');
+    } else if (!applied && r.plannedActions.isNotEmpty) {
+      statusDetail = r.plannedActions.map((a) => '• $a').join('<br>');
+    }
+
+    buffer.writeln(
+      '| $repoLink | $prLink | $localDir | $landedDate | $statusDetail |',
+    );
+  }
+
+  buffer.writeln('<!-- mdformat on -->');
+  return buffer.toString();
+}
+
+/// Formats output for terminal viewing.
+void printTerminalReport(List<PrCleanResult> results, {required bool applied}) {
+  final modeStr = applied
+      ? green.wrap('🚀 Applied Cleanup')!
+      : cyan.wrap('🔍 Preview Mode (Dry Run)')!;
+  print('${styleBold.wrap("Landed PR Cleanup")} [$modeStr]');
+  print('');
+
+  if (results.isEmpty) {
+    print(styleDim.wrap('No recently landed pull requests found.')!);
+    return;
+  }
+
+  for (final r in results) {
+    final pr = r.pr;
+    final statusColor = r.status == 'Applied'
+        ? green
+        : r.status == 'Not cloned locally'
+        ? styleDim
+        : r.status.contains('Failure')
+        ? red
+        : yellow;
+
+    print('${styleBold.wrap("${pr.repository} #${pr.number}")}: ${pr.title}');
+    print('  URL:    ${pr.url}');
+    print('  Branch: ${pr.headRefName} -> ${pr.baseRefName}');
+    if (r.localRepo != null) {
+      print('  Local:  ${r.localRepo!.repoPath}');
+    }
+
+    if (applied) {
+      for (final act in r.executedActions) {
+        final icon = act.success ? green.wrap('✅') : red.wrap('❌');
+        print('  $icon ${act.description}');
+        if (act.error != null) {
+          print('     ${red.wrap("Error: ${act.error}")}');
+        }
+      }
+    } else {
+      if (r.plannedActions.isEmpty) {
+        print('  Status: ${statusColor.wrap(r.status)}');
+      } else {
+        print('  Planned Actions:');
+        for (final plan in r.plannedActions) {
+          print('    • $plan');
+        }
+      }
+    }
+    print('');
+  }
+}
+
+/// Formats output as machine-readable JSON.
+Map<String, dynamic> formatJsonReport(
+  List<PrCleanResult> results, {
+  required bool applied,
+}) => {
+  'applied': applied,
+  'total': results.length,
+  'results': results
+      .map(
+        (r) => {
+          'pr': {
+            'number': r.pr.number,
+            'title': r.pr.title,
+            'url': r.pr.url,
+            'repository': r.pr.repository,
+            'headRefName': r.pr.headRefName,
+            'baseRefName': r.pr.baseRefName,
+            'mergedAt': r.pr.mergedAt?.toIso8601String(),
+          },
+          'localRepo': r.localRepo != null
+              ? {
+                  'repoName': r.localRepo!.repoName,
+                  'repoPath': r.localRepo!.repoPath,
+                  'currentBranch': r.localRepo!.currentBranch,
+                }
+              : null,
+          'status': r.status,
+          'plannedActions': r.plannedActions,
+          'executedActions': r.executedActions
+              .map(
+                (a) => {
+                  'description': a.description,
+                  'success': a.success,
+                  'error': a.error,
+                },
+              )
+              .toList(),
+        },
+      )
+      .toList(),
+};

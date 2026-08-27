@@ -6,6 +6,35 @@ import 'package:io/ansi.dart';
 
 import 'util.dart';
 
+/// Function signature for running an asynchronous process.
+typedef ProcessRunner = Future<ProcessResult> Function(
+  String executable,
+  List<String> arguments, {
+  String? workingDirectory,
+});
+
+/// Function signature for running a synchronous process.
+typedef SyncProcessRunner = ProcessResult Function(
+  String executable,
+  List<String> arguments, {
+  String? workingDirectory,
+});
+
+/// Default synchronous process runner.
+ProcessResult defaultSyncProcessRunner(
+  String executable,
+  List<String> arguments, {
+  String? workingDirectory,
+}) =>
+    Process.runSync(executable, arguments, workingDirectory: workingDirectory);
+
+/// Default asynchronous process runner.
+Future<ProcessResult> defaultProcessRunner(
+  String executable,
+  List<String> arguments, {
+  String? workingDirectory,
+}) => Process.run(executable, arguments, workingDirectory: workingDirectory);
+
 Future<String> getProcessCmdline(int pid) async {
   try {
     final output = await runProcess('ps', [
