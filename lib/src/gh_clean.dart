@@ -392,11 +392,9 @@ List<String> planCleanup(
   final baseBranch = pr.baseRefName.isNotEmpty ? pr.baseRefName : 'main';
   final repoShortName = pr.repository.split('/').last;
 
-  // 1. Check matching worktree
   final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
   if (matchingWt != null && !skipWorktrees) {
-    final isDirty = _isDirDirty(matchingWt.path, runner);
-    if (isDirty) {
+    if (_isDirDirty(matchingWt.path, runner)) {
       actions.add(
         'Skip worktree at ${matchingWt.path} (has uncommitted changes)',
       );
@@ -405,12 +403,10 @@ List<String> planCleanup(
     }
   }
 
-  // 2. Check if main checkout is on feature branch
   if (localRepo.currentBranch == headBranch && headBranch.isNotEmpty) {
     actions.add('Switch branch: `$headBranch` -> `$baseBranch`');
   }
 
-  // 3. Check if local feature branch exists to delete
   if (headBranch.isNotEmpty &&
       headBranch != baseBranch &&
       !_isProtectedBranch(headBranch) &&
@@ -418,7 +414,6 @@ List<String> planCleanup(
     actions.add('Delete local branch `$headBranch`');
   }
 
-  // 4. Check base branch sync
   if (!skipSync) {
     actions.add('Sync `$baseBranch` to `origin/$baseBranch`');
   }
@@ -436,135 +431,187 @@ List<CleanAction> executeCleanup(
 }) {
   final runner = processRunner ?? defaultSyncProcessRunner;
   final actions = <CleanAction>[];
-
   final headBranch = pr.headRefName;
   final baseBranch = pr.baseRefName.isNotEmpty ? pr.baseRefName : 'main';
   final repoShortName = pr.repository.split('/').last;
-  final repoPath = localRepo.repoPath;
 
-  // 1. Remove matching worktree
-  final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
-  if (matchingWt != null && !skipWorktrees) {
-    final isDirty = _isDirDirty(matchingWt.path, runner);
-    if (isDirty) {
-      actions.add((
-        description: 'Pruning worktree at ${matchingWt.path}',
-        success: false,
-        error: 'Worktree has uncommitted changes (dirty).',
-      ));
-    } else {
-      final res = runner('git', [
-        '-C',
-        repoPath,
-        'worktree',
-        'remove',
-        matchingWt.path,
-      ]);
-      if (res.exitCode == 0) {
-        actions.add((
-          description: 'Pruned sibling worktree at ${matchingWt.path}',
-          success: true,
-          error: null,
-        ));
-      } else {
-        actions.add((
-          description: 'Failed to prune worktree at ${matchingWt.path}',
-          success: false,
-          error: (res.stderr as String).trim(),
-        ));
-      }
-    }
+  if (!skipWorktrees) {
+    final wtAction = _executeWorktreePrune(
+      localRepo,
+      headBranch,
+      repoShortName,
+      runner,
+    );
+    if (wtAction != null) actions.add(wtAction);
   }
 
-  // 2. Checkout base branch if currently on feature branch
-  if (localRepo.currentBranch == headBranch && headBranch.isNotEmpty) {
-    final res = runner('git', ['-C', repoPath, 'checkout', baseBranch]);
-    if (res.exitCode == 0) {
-      actions.add((
-        description: 'Switched from `$headBranch` to `$baseBranch`',
-        success: true,
-        error: null,
-      ));
-    } else {
-      actions.add((
-        description: 'Failed to checkout `$baseBranch`',
-        success: false,
-        error: (res.stderr as String).trim(),
-      ));
-    }
-  }
+  final checkoutAction = _executeBranchCheckout(
+    localRepo,
+    headBranch,
+    baseBranch,
+    runner,
+  );
+  if (checkoutAction != null) actions.add(checkoutAction);
 
-  // 3. Delete local feature branch
-  if (headBranch.isNotEmpty &&
-      headBranch != baseBranch &&
-      !_isProtectedBranch(headBranch) &&
-      localRepo.branches.any((b) => b.name == headBranch)) {
-    final res = runner('git', ['-C', repoPath, 'branch', '-D', headBranch]);
-    if (res.exitCode == 0) {
-      actions.add((
-        description: 'Deleted local feature branch `$headBranch`',
-        success: true,
-        error: null,
-      ));
-    } else {
-      actions.add((
-        description: 'Failed to delete local branch `$headBranch`',
-        success: false,
-        error: (res.stderr as String).trim(),
-      ));
-    }
-  }
+  final deleteAction = _executeBranchDeletion(
+    localRepo,
+    headBranch,
+    baseBranch,
+    runner,
+  );
+  if (deleteAction != null) actions.add(deleteAction);
 
-  // 4. Fast-forward base branch against origin
   if (!skipSync) {
-    if (localRepo.currentBranch == baseBranch ||
-        localRepo.currentBranch == headBranch) {
-      runner('git', ['-C', repoPath, 'fetch', 'origin']);
-      final res = runner('git', [
-        '-C',
-        repoPath,
-        'merge',
-        '--ff-only',
-        'origin/$baseBranch',
-      ]);
-      if (res.exitCode == 0) {
-        actions.add((
-          description: 'Synced `$baseBranch` to `origin/$baseBranch`',
-          success: true,
-          error: null,
-        ));
-      } else {
-        actions.add((
-          description: 'Failed to fast-forward `$baseBranch`',
-          success: false,
-          error: (res.stderr as String).trim(),
-        ));
-      }
-    } else {
-      final res = runner('git', [
-        '-C',
-        repoPath,
-        'fetch',
-        'origin',
-        '$baseBranch:$baseBranch',
-      ]);
-      if (res.exitCode == 0) {
-        actions.add((
-          description: 'Synced `$baseBranch` to `origin/$baseBranch`',
-          success: true,
-          error: null,
-        ));
-      } else {
-        actions.add((
-          description: 'Failed to fetch `$baseBranch`',
-          success: false,
-          error: (res.stderr as String).trim(),
-        ));
-      }
-    }
+    actions.add(_executeTrunkSync(localRepo, headBranch, baseBranch, runner));
   }
 
   return actions;
+}
+
+CleanAction? _executeWorktreePrune(
+  LocalRepoInfo localRepo,
+  String headBranch,
+  String repoShortName,
+  SyncProcessRunner runner,
+) {
+  final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
+  if (matchingWt == null) return null;
+
+  if (_isDirDirty(matchingWt.path, runner)) {
+    return (
+      description: 'Pruning worktree at ${matchingWt.path}',
+      success: false,
+      error: 'Worktree has uncommitted changes (dirty).',
+    );
+  }
+
+  final res = runner('git', [
+    '-C',
+    localRepo.repoPath,
+    'worktree',
+    'remove',
+    matchingWt.path,
+  ]);
+
+  return res.exitCode == 0
+      ? (
+          description: 'Pruned sibling worktree at ${matchingWt.path}',
+          success: true,
+          error: null,
+        )
+      : (
+          description: 'Failed to prune worktree at ${matchingWt.path}',
+          success: false,
+          error: (res.stderr as String).trim(),
+        );
+}
+
+CleanAction? _executeBranchCheckout(
+  LocalRepoInfo localRepo,
+  String headBranch,
+  String baseBranch,
+  SyncProcessRunner runner,
+) {
+  if (localRepo.currentBranch != headBranch || headBranch.isEmpty) return null;
+
+  final res = runner('git', ['-C', localRepo.repoPath, 'checkout', baseBranch]);
+  return res.exitCode == 0
+      ? (
+          description: 'Switched from `$headBranch` to `$baseBranch`',
+          success: true,
+          error: null,
+        )
+      : (
+          description: 'Failed to checkout `$baseBranch`',
+          success: false,
+          error: (res.stderr as String).trim(),
+        );
+}
+
+CleanAction? _executeBranchDeletion(
+  LocalRepoInfo localRepo,
+  String headBranch,
+  String baseBranch,
+  SyncProcessRunner runner,
+) {
+  if (headBranch.isEmpty ||
+      headBranch == baseBranch ||
+      _isProtectedBranch(headBranch) ||
+      !localRepo.branches.any((b) => b.name == headBranch)) {
+    return null;
+  }
+
+  final res = runner('git', [
+    '-C',
+    localRepo.repoPath,
+    'branch',
+    '-D',
+    headBranch,
+  ]);
+  return res.exitCode == 0
+      ? (
+          description: 'Deleted local feature branch `$headBranch`',
+          success: true,
+          error: null,
+        )
+      : (
+          description: 'Failed to delete local branch `$headBranch`',
+          success: false,
+          error: (res.stderr as String).trim(),
+        );
+}
+
+CleanAction _executeTrunkSync(
+  LocalRepoInfo localRepo,
+  String headBranch,
+  String baseBranch,
+  SyncProcessRunner runner,
+) {
+  final repoPath = localRepo.repoPath;
+  final isOnTrunk =
+      localRepo.currentBranch == baseBranch ||
+      localRepo.currentBranch == headBranch;
+
+  if (isOnTrunk) {
+    runner('git', ['-C', repoPath, 'fetch', 'origin']);
+    final res = runner('git', [
+      '-C',
+      repoPath,
+      'merge',
+      '--ff-only',
+      'origin/$baseBranch',
+    ]);
+    return res.exitCode == 0
+        ? (
+            description: 'Synced `$baseBranch` to `origin/$baseBranch`',
+            success: true,
+            error: null,
+          )
+        : (
+            description: 'Failed to fast-forward `$baseBranch`',
+            success: false,
+            error: (res.stderr as String).trim(),
+          );
+  }
+
+  final res = runner('git', [
+    '-C',
+    repoPath,
+    'fetch',
+    'origin',
+    '$baseBranch:$baseBranch',
+  ]);
+  return res.exitCode == 0
+      ? (
+          description: 'Synced `$baseBranch` to `origin/$baseBranch`',
+          success: true,
+          error: null,
+        )
+      : (
+          description: 'Failed to fetch `$baseBranch`',
+          success: false,
+          error: (res.stderr as String).trim(),
+        );
 }
 
 /// Discovers an attached worktree matching the PR branch or folder naming
@@ -593,8 +640,7 @@ LocalWorktreeEntry? findMatchingWorktree(
 bool _isDirDirty(String path, SyncProcessRunner runner) {
   final res = runner('git', ['-C', path, 'status', '--porcelain']);
   if (res.exitCode != 0) return false;
-  final out = (res.stdout as String).trim();
-  return out.isNotEmpty;
+  return (res.stdout as String).trim().isNotEmpty;
 }
 
 bool _isProtectedBranch(String branch) {
@@ -630,32 +676,34 @@ String formatMarkdownReport(
     ..writeln('| :--- | :---: | :--- | :---: | :--- |');
 
   for (final r in results) {
-    final pr = r.pr;
-    final repoLink = '[**${pr.repository}**](${pr.repoUrl})';
-    final prLink = '[#${pr.number}](${pr.url})';
-    final localDir = r.localRepo != null
-        ? '[`${r.localRepo!.repoPath}`](file://${r.localRepo!.repoPath})'
-        : '_Not cloned_';
-    final landedDate = pr.mergedAt != null
-        ? pr.mergedAt!.toUtc().toString().substring(0, 16)
-        : 'N/A';
-
-    var statusDetail = r.status;
-    if (applied && r.executedActions.isNotEmpty) {
-      statusDetail = r.executedActions
-          .map((a) => '${a.success ? "✅" : "❌"} ${a.description}')
-          .join('<br>');
-    } else if (!applied && r.plannedActions.isNotEmpty) {
-      statusDetail = r.plannedActions.map((a) => '• $a').join('<br>');
-    }
-
-    buffer.writeln(
-      '| $repoLink | $prLink | $localDir | $landedDate | $statusDetail |',
-    );
+    buffer.writeln(_formatMarkdownRow(r, applied: applied));
   }
 
   buffer.writeln('<!-- mdformat on -->');
   return buffer.toString();
+}
+
+String _formatMarkdownRow(PrCleanResult r, {required bool applied}) {
+  final pr = r.pr;
+  final repoLink = '[**${pr.repository}**](${pr.repoUrl})';
+  final prLink = '[#${pr.number}](${pr.url})';
+  final localDir = r.localRepo != null
+      ? '[`${r.localRepo!.repoPath}`](file://${r.localRepo!.repoPath})'
+      : '_Not cloned_';
+  final landedDate = pr.mergedAt != null
+      ? pr.mergedAt!.toUtc().toString().substring(0, 16)
+      : 'N/A';
+
+  var statusDetail = r.status;
+  if (applied && r.executedActions.isNotEmpty) {
+    statusDetail = r.executedActions
+        .map((a) => '${a.success ? "✅" : "❌"} ${a.description}')
+        .join('<br>');
+  } else if (!applied && r.plannedActions.isNotEmpty) {
+    statusDetail = r.plannedActions.map((a) => '• $a').join('<br>');
+  }
+
+  return '| $repoLink | $prLink | $localDir | $landedDate | $statusDetail |';
 }
 
 /// Formats output for terminal viewing.
@@ -663,8 +711,7 @@ void printTerminalReport(List<PrCleanResult> results, {required bool applied}) {
   final modeStr = applied
       ? green.wrap('🚀 Applied Cleanup')!
       : cyan.wrap('🔍 Preview Mode (Dry Run)')!;
-  print('${styleBold.wrap("Landed PR Cleanup")} [$modeStr]');
-  print('');
+  print('${styleBold.wrap("Landed PR Cleanup")} [$modeStr]\n');
 
   if (results.isEmpty) {
     print(styleDim.wrap('No recently landed pull requests found.')!);
@@ -672,41 +719,50 @@ void printTerminalReport(List<PrCleanResult> results, {required bool applied}) {
   }
 
   for (final r in results) {
-    final pr = r.pr;
-    final statusColor = r.status == 'Applied'
-        ? green
-        : r.status == 'Not cloned locally'
-        ? styleDim
-        : r.status.contains('Failure')
-        ? red
-        : yellow;
-
-    print('${styleBold.wrap("${pr.repository} #${pr.number}")}: ${pr.title}');
-    print('  URL:    ${pr.url}');
-    print('  Branch: ${pr.headRefName} -> ${pr.baseRefName}');
-    if (r.localRepo != null) {
-      print('  Local:  ${r.localRepo!.repoPath}');
-    }
-
+    _printTerminalPrHeader(r);
     if (applied) {
-      for (final act in r.executedActions) {
-        final icon = act.success ? green.wrap('✅') : red.wrap('❌');
-        print('  $icon ${act.description}');
-        if (act.error != null) {
-          print('     ${red.wrap("Error: ${act.error}")}');
-        }
-      }
+      _printExecutedActions(r.executedActions);
     } else {
-      if (r.plannedActions.isEmpty) {
-        print('  Status: ${statusColor.wrap(r.status)}');
-      } else {
-        print('  Planned Actions:');
-        for (final plan in r.plannedActions) {
-          print('    • $plan');
-        }
-      }
+      _printPlannedActions(r.plannedActions, r.status);
     }
     print('');
+  }
+}
+
+void _printTerminalPrHeader(PrCleanResult r) {
+  final pr = r.pr;
+  print('${styleBold.wrap("${pr.repository} #${pr.number}")}: ${pr.title}');
+  print('  URL:    ${pr.url}');
+  print('  Branch: ${pr.headRefName} -> ${pr.baseRefName}');
+  if (r.localRepo != null) {
+    print('  Local:  ${r.localRepo!.repoPath}');
+  }
+}
+
+void _printExecutedActions(List<CleanAction> actions) {
+  for (final act in actions) {
+    final icon = act.success ? green.wrap('✅') : red.wrap('❌');
+    print('  $icon ${act.description}');
+    if (act.error != null) {
+      print('     ${red.wrap("Error: ${act.error}")}');
+    }
+  }
+}
+
+void _printPlannedActions(List<String> plannedActions, String status) {
+  if (plannedActions.isEmpty) {
+    final statusColor = status == 'Not cloned locally'
+        ? styleDim
+        : status.contains('Failure')
+        ? red
+        : yellow;
+    print('  Status: ${statusColor.wrap(status)}');
+    return;
+  }
+
+  print('  Planned Actions:');
+  for (final plan in plannedActions) {
+    print('    • $plan');
   }
 }
 

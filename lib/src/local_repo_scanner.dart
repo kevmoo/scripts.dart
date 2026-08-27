@@ -58,29 +58,15 @@ List<LocalRepoInfo> scanLocalGitRepositories(
 
   void walk(Directory dir, int depth) {
     if (depth > maxDepth) return;
-
-    final baseName = p.basename(dir.path);
-    if (baseName.startsWith('.')) return;
+    if (p.basename(dir.path).startsWith('.')) return;
 
     if (isGitRepository(dir)) {
       final info = _indexRepository(dir, runner);
-      if (info != null) {
-        repos.add(info);
-      }
+      if (info != null) repos.add(info);
       return;
     }
 
-    try {
-      final entries = dir.listSync().whereType<Directory>();
-      for (final sub in entries) {
-        final subName = p.basename(sub.path);
-        if (!subName.startsWith('.')) {
-          walk(sub, depth + 1);
-        }
-      }
-    } catch (_) {
-      // Ignore unreadable directories
-    }
+    _walkSubdirectories(dir, depth, walk);
   }
 
   if (root.existsSync()) {
@@ -88,6 +74,22 @@ List<LocalRepoInfo> scanLocalGitRepositories(
   }
 
   return repos;
+}
+
+void _walkSubdirectories(
+  Directory dir,
+  int depth,
+  void Function(Directory, int) walk,
+) {
+  try {
+    for (final sub in dir.listSync().whereType<Directory>()) {
+      if (!p.basename(sub.path).startsWith('.')) {
+        walk(sub, depth + 1);
+      }
+    }
+  } catch (_) {
+    // Ignore unreadable directories
+  }
 }
 
 LocalRepoInfo? _indexRepository(Directory dir, SyncProcessRunner runner) {
@@ -102,26 +104,26 @@ LocalRepoInfo? _indexRepository(Directory dir, SyncProcessRunner runner) {
   final repoName = normalizeRepoName(originResult.stdout as String);
   if (repoName == null) return null;
 
-  String? currentBranch;
-  final branchResult = runner('git', [
-    'branch',
-    '--show-current',
-  ], workingDirectory: dir.path);
-  if (branchResult.exitCode == 0) {
-    final out = (branchResult.stdout as String).trim();
-    if (out.isNotEmpty) currentBranch = out;
-  }
-
   final branches = _parseBranchRefs(dir.path, runner);
   final worktrees = _parseWorktrees(dir.path, runner);
 
   return (
     repoName: repoName,
     repoPath: dir.path,
-    currentBranch: currentBranch,
+    currentBranch: _getCurrentBranch(dir.path, runner),
     branches: branches,
     worktrees: worktrees,
   );
+}
+
+String? _getCurrentBranch(String repoPath, SyncProcessRunner runner) {
+  final branchResult = runner('git', [
+    'branch',
+    '--show-current',
+  ], workingDirectory: repoPath);
+  if (branchResult.exitCode != 0) return null;
+  final out = (branchResult.stdout as String).trim();
+  return out.isNotEmpty ? out : null;
 }
 
 List<LocalBranchEntry> _parseBranchRefs(
