@@ -47,10 +47,10 @@ String? normalizeRepoName(String raw) {
 /// traversal in any folder once a Git repository is discovered.
 ///
 /// Directories starting with `.` (hidden/caches) are skipped immediately.
-/// Traversal terminates if [maxDepth] is exceeded (default: 4).
+/// Traversal terminates if [maxDepth] is exceeded (default: 6).
 List<LocalRepoInfo> scanLocalGitRepositories(
   Directory root, {
-  int maxDepth = 4,
+  int maxDepth = 6,
   SyncProcessRunner? processRunner,
 }) {
   final runner = processRunner ?? defaultSyncProcessRunner;
