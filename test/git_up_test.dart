@@ -929,4 +929,106 @@ void main() {
     check(branches.map((b) => b.branchName))
         .not((it) => it.contains('feature-wt-merged'));
   });
+
+  test(
+    'getMainWorktreePath and isSecondaryWorktree identify worktree roles',
+    () async {
+      check(await localGitDir.getMainWorktreePath()).equals(localPath);
+      check(await localGitDir.isSecondaryWorktree()).isFalse();
+
+      final worktreePath = p.join(d.sandbox, 'wt-check');
+      await localGitDir.runCommand([
+        'worktree',
+        'add',
+        '-b',
+        'feature-wt-check',
+        worktreePath,
+      ]);
+
+      final wtGitDir = await GitDir.fromExisting(worktreePath);
+      check(await wtGitDir.getMainWorktreePath()).equals(localPath);
+      check(await wtGitDir.isSecondaryWorktree()).isTrue();
+    },
+  );
+
+  test(
+    'gitUp fails with clear error when run from inside a secondary worktree',
+    () async {
+      final worktreePath = p.join(d.sandbox, 'wt-secondary');
+      await localGitDir.runCommand([
+        'worktree',
+        'add',
+        '-b',
+        'feature-secondary',
+        worktreePath,
+      ]);
+
+      final prints = await capturePrints(() async {
+        await check(
+          wrappedForTesting(() => gitUp(workingDirectory: worktreePath)),
+        ).throws<GitUpException>(
+          (it) => it
+            ..has((e) => e.exitCode, 'exitCode').equals(1)
+            ..has(
+              (e) => e.message,
+              'message',
+            ).contains('Cannot run git-up from inside a secondary worktree.'),
+        );
+      });
+
+      check(prints.join('\n'))
+          .contains('Please move to "$localPath" and run git-up again.');
+    },
+  );
+
+  test('isSecondaryWorktree returns false in a Git submodule', () async {
+    // 1. Create a parent repo and add localPath as a submodule
+    final parentPath = p.join(d.sandbox, 'parent-repo');
+    await d.dir('parent-repo', [d.file('README.md', 'parent')]).create();
+    final parentGitDir = await GitDir.init(parentPath, allowContent: true);
+    await parentGitDir.configureTestIdentity();
+    await parentGitDir.runCommand(['branch', '-M', 'main']);
+    await parentGitDir.runCommand(['add', '.']);
+    await parentGitDir.runCommand(['commit', '-m', 'Parent initial commit']);
+
+    // 2. Add localPath as submodule
+    await parentGitDir.runCommand([
+      '-c',
+      'protocol.file.allow=always',
+      'submodule',
+      'add',
+      localPath,
+      'sub',
+    ]);
+
+    final subPath = p.join(parentPath, 'sub');
+    final subGitDir = await GitDir.fromExisting(subPath);
+
+    check(await subGitDir.isSecondaryWorktree()).isFalse();
+  });
+
+  test('getMainWorktreePath skips bare repository entries', () async {
+    // 1. Create a bare repository
+    final barePath = p.join(d.sandbox, 'bare-repo.git');
+    await Process.run('git', ['init', '--bare', barePath]);
+
+    // 2. Add a worktree to the bare repo
+    final worktreePath = p.join(d.sandbox, 'bare-worktree');
+    await Process.run('git', [
+      '--git-dir',
+      barePath,
+      'worktree',
+      'add',
+      '-b',
+      'main',
+      worktreePath,
+    ]);
+
+    final wtGitDir = await GitDir.fromExisting(worktreePath);
+    await wtGitDir.configureTestIdentity();
+
+    // getMainWorktreePath should return bare-worktree (not bare-repo.git)
+    final mainPath = await wtGitDir.getMainWorktreePath();
+    check(mainPath).equals(worktreePath);
+  });
 }

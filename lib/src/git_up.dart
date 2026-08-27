@@ -27,6 +27,13 @@ Future<void> gitUp({String? workingDirectory, bool check = false}) async {
 
   final gitDir = await getGitDir(workingDirectory);
 
+  if (await gitDir.isSecondaryWorktree()) {
+    final mainPath =
+        await gitDir.getMainWorktreePath() ?? 'the main repository root';
+    printError('Please move to "$mainPath" and run git-up again.');
+    throw GitUpException('Cannot run git-up from inside a secondary worktree.');
+  }
+
   if (await gitDir.isDirty()) {
     printError('Please commit or stash your changes and try again.');
     throw GitUpException('Working tree is dirty.');

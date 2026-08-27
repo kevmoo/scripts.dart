@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:git/git.dart';
+import 'package:path/path.dart' as p;
 
 /// PR metadata retrieved from GitHub API.
 typedef PrInfo = ({
@@ -532,5 +533,70 @@ extension GitDirExtensions on GitDir {
     ], throwOnError: false);
     if (result.exitCode != 0) return true;
     return (result.stdout as String).trim().isNotEmpty;
+  }
+
+  /// Returns the path of the primary (main) worktree in the repository.
+  ///
+  /// Ignores bare worktree roots (such as in bare-clone repository layouts).
+  Future<String?> getMainWorktreePath() async {
+    final result = await runCommand([
+      'worktree',
+      'list',
+      '--porcelain',
+    ], throwOnError: false);
+    if (result.exitCode != 0) return null;
+
+    final lines = LineSplitter.split(result.stdout as String);
+    String? currentPath;
+    var isBare = false;
+
+    for (final line in lines) {
+      if (line.startsWith('worktree ')) {
+        if (currentPath != null && !isBare) {
+          return currentPath;
+        }
+        currentPath = line.substring('worktree '.length).trim();
+        isBare = false;
+      } else if (line == 'bare') {
+        isBare = true;
+      }
+    }
+    if (currentPath != null && !isBare) {
+      return currentPath;
+    }
+    return null;
+  }
+
+  /// Checks whether this [GitDir] represents a secondary (linked) worktree
+  /// rather than the primary/main repository root.
+  Future<bool> isSecondaryWorktree() async {
+    final gitDirResult = await Process.run('git', [
+      'rev-parse',
+      '--git-dir',
+    ], workingDirectory: path);
+    final gitCommonDirResult = await Process.run('git', [
+      'rev-parse',
+      '--git-common-dir',
+    ], workingDirectory: path);
+    if (gitDirResult.exitCode != 0 || gitCommonDirResult.exitCode != 0) {
+      return false;
+    }
+
+    final gitDir = (gitDirResult.stdout as String).trim();
+    final gitCommonDir = (gitCommonDirResult.stdout as String).trim();
+
+    final canonicalGitDir = p.canonicalize(
+      p.isAbsolute(gitDir) ? gitDir : p.join(path, gitDir),
+    );
+    final canonicalGitCommonDir = p.canonicalize(
+      p.isAbsolute(gitCommonDir) ? gitCommonDir : p.join(path, gitCommonDir),
+    );
+
+    if (canonicalGitDir == canonicalGitCommonDir) {
+      return false;
+    }
+
+    final expectedWorktreePrefix = p.join(canonicalGitCommonDir, 'worktrees');
+    return p.isWithin(expectedWorktreePrefix, canonicalGitDir);
   }
 }
