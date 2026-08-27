@@ -103,5 +103,42 @@ void main() {
       final repo1Info = repos.firstWhere((r) => r.repoName == 'external/repo1');
       check(repo1Info.worktrees.map((w) => w.branch)).contains('feat');
     });
+
+    test('excludes repositories with Dart SDK / Gerrit remotes', () async {
+      await d.dir('sdk_repo', [d.file('README.md', '# SDK')]).create();
+      final sdkPath = p.join(d.sandbox, 'sdk_repo');
+      final gitSdk = await GitDir.init(sdkPath, allowContent: true);
+      await gitSdk.configureTestIdentity();
+      await gitSdk.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/dart-lang/sdk.git',
+      ]);
+
+      final repos = scanLocalGitRepositories(Directory(d.sandbox));
+      check(repos.map((r) => r.repoName))
+          .not((it) => it.contains('dart-lang/sdk'));
+    });
+  });
+
+  group('isDartSdkRemote & isDartSdkRepositoryName', () {
+    test('identifies Dart SDK and Gerrit remotes', () {
+      check(isDartSdkRemote('https://github.com/dart-lang/sdk.git')).isTrue();
+      check(isDartSdkRemote('sso://dart/sdk.git')).isTrue();
+      check(isDartSdkRemote('sso://dart/sdk')).isTrue();
+      check(isDartSdkRemote('https://dart.googlesource.com/sdk')).isTrue();
+      check(isDartSdkRemote('https://github.com/flutter/flutter.git'))
+          .isFalse();
+      check(isDartSdkRemote('https://github.com/kevmoo/scripts.dart.git'))
+          .isFalse();
+    });
+
+    test('identifies Dart SDK repository names', () {
+      check(isDartSdkRepositoryName('dart-lang/sdk')).isTrue();
+      check(isDartSdkRepositoryName('kevmoo/sdk')).isTrue();
+      check(isDartSdkRepositoryName('kevmoo/dart-sdk-bazel')).isTrue();
+      check(isDartSdkRepositoryName('kevmoo/scripts.dart')).isFalse();
+    });
   });
 }

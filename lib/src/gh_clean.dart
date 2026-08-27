@@ -368,6 +368,9 @@ query($q: String!, $limit: Int!) {
   for (final node in nodes.whereType<Map<String, dynamic>>()) {
     final parsed = parseLandedPrNode(node);
     if (parsed != null) {
+      if (isDartSdkRepositoryName(parsed.repository)) {
+        continue;
+      }
       if (!includeOwned && user.isNotEmpty && user != '@me') {
         final prefix = '${user.toLowerCase()}/';
         if (parsed.repository.toLowerCase().startsWith(prefix)) {

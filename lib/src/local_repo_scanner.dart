@@ -124,6 +124,24 @@ void _walkSubdirectories(
   }
 }
 
+/// Checks if a remote Git URL points to the Dart SDK or its Gerrit remotes.
+bool isDartSdkRemote(String remoteUrl) {
+  final lower = remoteUrl.toLowerCase().trim();
+  if (lower.isEmpty) return false;
+  return lower.contains('dart-lang/sdk') ||
+      lower.contains('dart.googlesource.com') ||
+      lower.contains('sso://dart/');
+}
+
+/// Known Dart SDK GitHub repository names that should not be touched by
+/// `gh-clean` (since the SDK uses Gerrit for branch and worktree lifecycles).
+bool isDartSdkRepositoryName(String repoName) {
+  final lower = repoName.toLowerCase().trim();
+  return lower == 'dart-lang/sdk' ||
+      lower == 'kevmoo/sdk' ||
+      lower == 'kevmoo/dart-sdk-bazel';
+}
+
 LocalRepoInfo? _indexRepository(Directory dir, SyncProcessRunner runner) {
   final remoteResult = runner('git', [
     'remote',
@@ -137,8 +155,17 @@ LocalRepoInfo? _indexRepository(Directory dir, SyncProcessRunner runner) {
     if (line.isEmpty) continue;
     final parts = line.split(RegExp(r'\s+'));
     if (parts.length >= 2) {
-      final name = normalizeRepoName(parts[1]);
-      if (name != null) repoNames.add(name);
+      final remoteUrl = parts[1];
+      if (isDartSdkRemote(remoteUrl)) {
+        return null; // Exclude Dart SDK checkouts deterministically
+      }
+      final name = normalizeRepoName(remoteUrl);
+      if (name != null) {
+        if (isDartSdkRepositoryName(name)) {
+          return null; // Exclude known Dart SDK repo names
+        }
+        repoNames.add(name);
+      }
     }
   }
 
