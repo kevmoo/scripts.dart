@@ -211,9 +211,12 @@ List<LocalBranchEntry> _parseBranchRefs(
   String repoPath,
   SyncProcessRunner runner,
 ) {
+  const formatArg =
+      '--format=%(refname:short)\t%(objectname)\t'
+      '%(upstream:short)\t%(upstream:track)';
   final branchResult = runner('git', [
     'for-each-ref',
-    '--format=%(refname:short)\t%(objectname)\t%(upstream:short)\t%(upstream:track)',
+    formatArg,
     'refs/heads/',
   ], workingDirectory: repoPath);
   if (branchResult.exitCode != 0) return const [];

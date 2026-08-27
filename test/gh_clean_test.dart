@@ -87,7 +87,8 @@ void main() {
       check(plan).isEmpty();
     });
 
-    test('plans branch deletion and sync when local branch exists and trunk is behind', () {
+    test('plans branch deletion and sync when local branch exists and trunk is '
+        'behind', () {
       final localRepo = (
         repoName: 'invertase/melos',
         repoNames: ['invertase/melos'],
