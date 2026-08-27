@@ -630,42 +630,45 @@ Future<LocalBranchStatus?> _matchLocalStatus(
   if (localRepos == null || localRepos.isEmpty) return null;
 
   final repoKey = pr.repository.toLowerCase();
-  final repo = localRepos
-      .where((r) => r.repoNames.any((n) => n.toLowerCase() == repoKey))
-      .firstOrNull;
-  if (repo == null) return null;
-
-  final wtMatch = repo.worktrees
-      .where((wt) => wt.branch == pr.headRefName)
-      .firstOrNull;
-  final branchMatch = repo.branches
-      .where((b) => b.name == pr.headRefName)
-      .firstOrNull;
-
-  if (wtMatch == null && branchMatch == null) return null;
-
-  final repoPath = wtMatch != null ? wtMatch.path : repo.repoPath;
-  final sha = wtMatch != null ? wtMatch.sha : branchMatch!.sha;
-  final isWorktree = wtMatch != null;
-
-  final shortSha = sha.length >= 7 ? sha.substring(0, 7) : sha;
-  final isHeadMatching =
-      pr.headRefOid.isNotEmpty &&
-      (sha == pr.headRefOid || pr.headRefOid.startsWith(sha));
-
-  final isDirty = await isRepoDirty(repoPath, processRunner: processRunner);
-  var display = isHeadMatching ? '🟢 Synced' : '⚠️ Diverged';
-  if (isDirty) display = '$display (Dirty)';
-
-  return (
-    repoPath: repoPath,
-    branchName: pr.headRefName,
-    shortSha: shortSha,
-    isDirty: isDirty,
-    isHeadMatching: isHeadMatching,
-    isWorktree: isWorktree,
-    displayStatus: display,
+  final matchingRepos = localRepos.where(
+    (r) => r.repoNames.any((n) => n.toLowerCase() == repoKey),
   );
+
+  for (final repo in matchingRepos) {
+    final wtMatch = repo.worktrees
+        .where((wt) => wt.branch == pr.headRefName)
+        .firstOrNull;
+    final branchMatch = repo.branches
+        .where((b) => b.name == pr.headRefName)
+        .firstOrNull;
+
+    if (wtMatch == null && branchMatch == null) continue;
+
+    final repoPath = wtMatch != null ? wtMatch.path : repo.repoPath;
+    final sha = wtMatch != null ? wtMatch.sha : branchMatch!.sha;
+    final isWorktree = wtMatch != null;
+
+    final shortSha = sha.length >= 7 ? sha.substring(0, 7) : sha;
+    final isHeadMatching =
+        pr.headRefOid.isNotEmpty &&
+        (sha == pr.headRefOid || pr.headRefOid.startsWith(sha));
+
+    final isDirty = await isRepoDirty(repoPath, processRunner: processRunner);
+    var display = isHeadMatching ? '🟢 Synced' : '⚠️ Diverged';
+    if (isDirty) display = '$display (Dirty)';
+
+    return (
+      repoPath: repoPath,
+      branchName: pr.headRefName,
+      shortSha: shortSha,
+      isDirty: isDirty,
+      isHeadMatching: isHeadMatching,
+      isWorktree: isWorktree,
+      displayStatus: display,
+    );
+  }
+
+  return null;
 }
 
 /// Categorizes PRs into logical operational buckets.

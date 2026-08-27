@@ -143,4 +143,41 @@ void main() {
       check(isDartSdkRepositoryName('kevmoo/scripts.dart')).isFalse();
     });
   });
+
+  group('isRepoDirty & isRepoDirtySync', () {
+    test('accurately detects clean, modified, and untracked states', () async {
+      await d.dir('dirty_test', [d.file('tracked.txt', 'hello')]).create();
+      final repoPath = p.join(d.sandbox, 'dirty_test');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'initial']);
+
+      // 1. Clean repo
+      check(await isRepoDirty(repoPath)).isFalse();
+      check(isRepoDirtySync(repoPath)).isFalse();
+
+      // 2. Untracked file (with includeUntracked: false vs true)
+      File(p.join(repoPath, 'untracked.txt')).writeAsStringSync('new content');
+      check(await isRepoDirty(repoPath)).isFalse();
+      check(isRepoDirtySync(repoPath)).isFalse();
+      check(await isRepoDirty(repoPath, includeUntracked: true)).isTrue();
+      check(isRepoDirtySync(repoPath, includeUntracked: true)).isTrue();
+
+      // 3. Tracked modification
+      File(p.join(repoPath, 'tracked.txt'))
+          .writeAsStringSync('modified content');
+      check(await isRepoDirty(repoPath)).isTrue();
+      check(isRepoDirtySync(repoPath)).isTrue();
+
+      // 4. Non-existent directory / process failure
+      const nonExistent = '/non/existent/directory';
+      check(await isRepoDirty(nonExistent)).isFalse();
+      check(isRepoDirtySync(nonExistent)).isFalse();
+      check(await isRepoDirty(nonExistent, failClosedOnProcessError: true))
+          .isTrue();
+      check(isRepoDirtySync(nonExistent, failClosedOnProcessError: true))
+          .isTrue();
+    });
+  });
 }
