@@ -423,6 +423,10 @@ void main() {
 
       final md = renderMarkdownReport([pr], currentTime: now);
       check(md).contains('# 🐙 GitHub Pull Request Overview Dashboard');
+      check(md).contains(
+        '| PR & Repository | Branch & Local Mapping | Review & CI Status | '
+        'Last Touched | Action / Ping Status |',
+      );
       check(md).contains('## 🚀 1. Ready to Merge');
       check(md).contains('[#100](https://github.com/org/repo/pull/100)');
       check(md).contains('`[🔀 Merge Queue]`');

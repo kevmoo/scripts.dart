@@ -1056,7 +1056,6 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
         '## ⚪ 4. Drafts & Work In Progress (${categorized.drafts.length} PRs)',
     prs: categorized.drafts,
     now: now,
-    isDraftSection: true,
   );
 
   _writeMarkdownSection(
@@ -1076,7 +1075,6 @@ void _writeMarkdownSection(
   required String title,
   required List<GhPr> prs,
   required DateTime now,
-  bool isDraftSection = false,
 }) {
   if (prs.isEmpty) return;
   const tableHeader = '''
@@ -1089,19 +1087,14 @@ void _writeMarkdownSection(
     ..writeln()
     ..writeln(tableHeader);
   for (final pr in prs) {
-    _writeMarkdownPrRow(buffer, pr, now, isDraftSection: isDraftSection);
+    _writeMarkdownPrRow(buffer, pr, now);
   }
   buffer
     ..writeln('<!-- mdformat on -->')
     ..writeln();
 }
 
-void _writeMarkdownPrRow(
-  StringBuffer buffer,
-  GhPr pr,
-  DateTime now, {
-  bool isDraftSection = false,
-}) {
+void _writeMarkdownPrRow(StringBuffer buffer, GhPr pr, DateTime now) {
   final repoUrl = pr.repoUrl.isNotEmpty
       ? pr.repoUrl
       : 'https://github.com/${pr.repository}';
