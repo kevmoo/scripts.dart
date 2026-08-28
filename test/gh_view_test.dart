@@ -458,7 +458,7 @@ void main() {
         );
 
         final md = renderMarkdownReport([pr], currentTime: now);
-        check(md).contains('🔄&nbsp;Re-review&nbsp;Needed');
+        check(md).contains('🔄 **Re-review Needed** (threads resolved)');
         check(md).contains('🔴&nbsp;Changes&nbsp;Requested&nbsp;(Resolved)');
       },
     );
@@ -490,8 +490,37 @@ void main() {
       );
 
       final md = renderMarkdownReport([pr], currentTime: now);
-      check(md)
-          .contains('🟡&nbsp;Re-review&nbsp;Requested&nbsp;(@harryterkelsen)');
+      check(md).contains('🟡 **Re-review Requested** (@harryterkelsen)');
+    });
+
+    test('renders Ping Reviewer when review required and threads resolved', () {
+      final now = DateTime.parse('2026-08-13T20:00:00Z');
+      final pr = (
+        number: 2598,
+        title: 'Move to Safari drive',
+        url: 'https://github.com/dart-lang/test/pull/2598',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: 'REVIEW_REQUIRED',
+        requestedReviewers: ['natebosch'],
+        totalReviewThreads: 3,
+        unresolvedReviewThreads: 0,
+        mergeable: 'MERGEABLE',
+        isInMergeQueue: false,
+        headRefName: 'safari_sily',
+        headRefOid: 'abcdef1234567890',
+        baseRefName: 'master',
+        repository: 'dart-lang/test',
+        repoUrl: 'https://github.com/dart-lang/test',
+        isRepoArchived: false,
+        ciStatus: 'SUCCESS',
+        updatedAt: now.subtract(const Duration(days: 1)),
+        localStatus: null,
+        context: null,
+      );
+
+      final md = renderMarkdownReport([pr], currentTime: now);
+      check(md).contains('🔔 **Ping Reviewer** (@natebosch)');
     });
   });
 

@@ -1041,7 +1041,6 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
     title: '## ⚠️ 2. Action Needed (Blocked / Failing CI / Conflicts / Changes Requested)',
     prs: categorized.actionNeeded,
     now: now,
-    includeIssueType: true,
   );
 
   _writeMarkdownSection(
@@ -1077,27 +1076,20 @@ void _writeMarkdownSection(
   required String title,
   required List<GhPr> prs,
   required DateTime now,
-  bool includeIssueType = false,
   bool isDraftSection = false,
 }) {
   if (prs.isEmpty) return;
   const tableHeader = '''
 <!-- mdformat off(prevent table wrapping) -->
-| Pull Request | Status |
-| :--- | :--- |''';
+| PR & Repository | Branch & Local Mapping | Review & CI Status | Last Touched | Action / Ping Status |
+| :--- | :--- | :--- | :--- | :--- |''';
 
   buffer
     ..writeln(title)
     ..writeln()
     ..writeln(tableHeader);
   for (final pr in prs) {
-    _writeMarkdownPrRow(
-      buffer,
-      pr,
-      now,
-      includeIssueType: includeIssueType,
-      isDraftSection: isDraftSection,
-    );
+    _writeMarkdownPrRow(buffer, pr, now, isDraftSection: isDraftSection);
   }
   buffer
     ..writeln('<!-- mdformat on -->')
@@ -1108,7 +1100,6 @@ void _writeMarkdownPrRow(
   StringBuffer buffer,
   GhPr pr,
   DateTime now, {
-  bool includeIssueType = false,
   bool isDraftSection = false,
 }) {
   final repoUrl = pr.repoUrl.isNotEmpty
@@ -1131,50 +1122,89 @@ void _writeMarkdownPrRow(
     ],
     '[#${pr.number}](${pr.url}) $queuePrefix$sanitizedTitle',
     '[${pr.repository}]($repoUrl)',
+  ];
+
+  final branchLines = <String>[
     '`${pr.headRefName}`',
     _formatLocalMappingMarkdown(pr.localStatus),
   ];
 
   final areThreadsResolved =
       pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0;
-  final statusLines = <String>[];
+  final isReady = _isReadyToMerge(pr);
 
-  if (includeIssueType) {
-    statusLines.add('Issue: ${_resolveIssueType(pr, areThreadsResolved)}');
-  }
-
-  statusLines
-    ..add('Review: ${_formatReviewBadgeMarkdown(pr, areThreadsResolved)}')
-    ..add('CI: ${_formatCiBadgeMarkdown(pr.ciStatus)}');
-
-  final mergeableCell = _formatMergeableBadgeMarkdown(pr);
-  statusLines.add('Merge: $mergeableCell');
+  final statusLines = <String>[
+    'Review: ${_formatReviewBadgeMarkdown(pr, areThreadsResolved)}',
+    'CI: ${_formatCiBadgeMarkdown(pr.ciStatus)}',
+    'Merge: ${_formatMergeableBadgeMarkdown(pr)}',
+  ];
 
   final touched = formatTouchedMarkdown(pr.updatedAt, currentTime: now);
-  statusLines.add('Touched: $touched');
+  final actionItem = _resolveActionItemMarkdown(
+    pr,
+    areThreadsResolved: areThreadsResolved,
+    isReadyToMerge: isReady,
+  );
 
   final prCell = prLines.join('<br>');
+  final branchCell = branchLines.join('<br>');
   final statusCell = statusLines
       .map((line) => line.replaceAll(' ', '&nbsp;'))
       .join('<br>');
 
-  buffer.writeln('| $prCell | $statusCell |');
+  buffer.writeln(
+    '| $prCell | $branchCell | $statusCell | $touched | $actionItem |',
+  );
 }
 
-String _resolveIssueType(GhPr pr, bool areThreadsResolved) => switch ((
-  pr.reviewDecision == 'CHANGES_REQUESTED',
-  pr.requestedReviewers.isNotEmpty,
-  areThreadsResolved,
-  pr.ciStatus == 'FAILURE',
-  pr.mergeable == 'CONFLICTING',
-)) {
-  (true, true, _, _, _) => '🟡 Re-review Requested',
-  (true, false, true, _, _) => '🔄 Re-review Needed',
-  (true, false, false, _, _) => '🔴 Changes Requested',
-  (_, _, _, true, _) => '🔴 CI Failing',
-  (_, _, _, _, true) => '⚠️ Conflicting',
-  _ => '🟡 Attention Needed',
-};
+String _resolveActionItemMarkdown(
+  GhPr pr, {
+  required bool areThreadsResolved,
+  required bool isReadyToMerge,
+}) {
+  if (pr.isRepoArchived) return '📦 Archived repo (read-only)';
+  if (isReadyToMerge) return '🚀 **Ready to merge**';
+
+  if (pr.mergeable == 'CONFLICTING') {
+    return pr.isDraft
+        ? '⚠️ **Conflicting** (draft)'
+        : '⚠️ **Conflicting** (needs rebase)';
+  }
+  if (pr.ciStatus == 'FAILURE') {
+    return pr.isDraft
+        ? '🔴 **CI Failing** (draft)'
+        : '🔴 **CI Failing** (needs fix)';
+  }
+  if (pr.reviewDecision == 'CHANGES_REQUESTED') {
+    if (pr.requestedReviewers.isNotEmpty) {
+      return '🟡 **Re-review Requested** (@${pr.requestedReviewers.join(', @')})';
+    }
+    if (areThreadsResolved) {
+      return '🔄 **Re-review Needed** (threads resolved)';
+    }
+    if (pr.unresolvedReviewThreads > 0) {
+      final s = pr.unresolvedReviewThreads > 1 ? 's' : '';
+      return '🔴 **Changes Requested** (${pr.unresolvedReviewThreads} open thread$s)';
+    }
+    return '🔴 **Changes Requested**';
+  }
+  if (pr.reviewDecision == 'REVIEW_REQUIRED' || pr.reviewDecision == 'NONE') {
+    if (areThreadsResolved) {
+      if (pr.requestedReviewers.isNotEmpty) {
+        return '🔔 **Ping Reviewer** (@${pr.requestedReviewers.join(', @')})';
+      }
+      return '🔔 **Ping Reviewer** (threads resolved)';
+    }
+    if (pr.requestedReviewers.isNotEmpty) {
+      return '⏳ **Awaiting @${pr.requestedReviewers.join(', @')}**';
+    }
+    return pr.isDraft ? '⚪ **Work in progress**' : '⏳ **Awaiting review**';
+  }
+  if (pr.isDraft) {
+    return '⚪ **Work in progress**';
+  }
+  return '⚪ **Active**';
+}
 
 String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) {
   if (pr.reviewDecision == 'APPROVED') return '🟢 Approved';
