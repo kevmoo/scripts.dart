@@ -1165,45 +1165,41 @@ String _resolveActionItemMarkdown(
   if (pr.isRepoArchived) return '📦 Archived repo (read-only)';
   if (isReadyToMerge) return '🚀 **Ready to merge**';
 
-  if (pr.mergeable == 'CONFLICTING') {
-    return pr.isDraft
-        ? '⚠️ **Conflicting** (draft)'
-        : '⚠️ **Conflicting** (needs rebase)';
-  }
-  if (pr.ciStatus == 'FAILURE') {
-    return pr.isDraft
-        ? '🔴 **CI Failing** (draft)'
-        : '🔴 **CI Failing** (needs fix)';
-  }
-  if (pr.reviewDecision == 'CHANGES_REQUESTED') {
-    if (pr.requestedReviewers.isNotEmpty) {
-      return '🟡 **Re-review Requested** (@${pr.requestedReviewers.join(', @')})';
-    }
-    if (areThreadsResolved) {
-      return '🔄 **Re-review Needed** (threads resolved)';
-    }
-    if (pr.unresolvedReviewThreads > 0) {
-      final s = pr.unresolvedReviewThreads > 1 ? 's' : '';
-      return '🔴 **Changes Requested** (${pr.unresolvedReviewThreads} open thread$s)';
-    }
-    return '🔴 **Changes Requested**';
-  }
-  if (pr.reviewDecision == 'REVIEW_REQUIRED' || pr.reviewDecision == 'NONE') {
-    if (areThreadsResolved) {
-      if (pr.requestedReviewers.isNotEmpty) {
-        return '🔔 **Ping Reviewer** (@${pr.requestedReviewers.join(', @')})';
-      }
-      return '🔔 **Ping Reviewer** (threads resolved)';
-    }
-    if (pr.requestedReviewers.isNotEmpty) {
-      return '⏳ **Awaiting @${pr.requestedReviewers.join(', @')}**';
-    }
-    return pr.isDraft ? '⚪ **Work in progress**' : '⏳ **Awaiting review**';
-  }
-  if (pr.isDraft) {
-    return '⚪ **Work in progress**';
-  }
-  return '⚪ **Active**';
+  return switch ((
+    pr.mergeable == 'CONFLICTING',
+    pr.ciStatus == 'FAILURE',
+    pr.reviewDecision,
+    pr.requestedReviewers.isNotEmpty,
+    areThreadsResolved,
+    pr.unresolvedReviewThreads,
+    pr.isDraft,
+  )) {
+    (true, _, _, _, _, _, true) => '⚠️ **Conflicting** (draft)',
+    (true, _, _, _, _, _, false) => '⚠️ **Conflicting** (needs rebase)',
+    (_, true, _, _, _, _, true) => '🔴 **CI Failing** (draft)',
+    (_, true, _, _, _, _, false) => '🔴 **CI Failing** (needs fix)',
+    (_, _, 'CHANGES_REQUESTED', true, _, _, _) =>
+      '🟡 **Re-review Requested** (@${pr.requestedReviewers.join(', @')})',
+    (_, _, 'CHANGES_REQUESTED', false, true, _, _) =>
+      '🔄 **Re-review Needed** (threads resolved)',
+    (_, _, 'CHANGES_REQUESTED', false, false, > 0, _) =>
+      '🔴 **Changes Requested** (${pr.unresolvedReviewThreads} open '
+          'thread${pr.unresolvedReviewThreads > 1 ? 's' : ''})',
+    (_, _, 'CHANGES_REQUESTED', false, false, _, _) =>
+      '🔴 **Changes Requested**',
+    (_, _, 'REVIEW_REQUIRED' || 'NONE', true, true, _, _) =>
+      '🔔 **Ping Reviewer** (@${pr.requestedReviewers.join(', @')})',
+    (_, _, 'REVIEW_REQUIRED' || 'NONE', false, true, _, _) =>
+      '🔔 **Ping Reviewer** (threads resolved)',
+    (_, _, 'REVIEW_REQUIRED' || 'NONE', true, false, _, _) =>
+      '⏳ **Awaiting @${pr.requestedReviewers.join(', @')}**',
+    (_, _, 'REVIEW_REQUIRED' || 'NONE', false, false, _, true) =>
+      '⚪ **Work in progress**',
+    (_, _, 'REVIEW_REQUIRED' || 'NONE', false, false, _, false) =>
+      '⏳ **Awaiting review**',
+    (_, _, _, _, _, _, true) => '⚪ **Work in progress**',
+    _ => '⚪ **Active**',
+  };
 }
 
 String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) {
