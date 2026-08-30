@@ -6,8 +6,6 @@ include: package:dart_flutter_team_lints/analysis_options.yaml
 
 analyzer:
   language:
-    strict-casts: true
-    strict-inference: true
     strict-raw-types: true
 
 linter:

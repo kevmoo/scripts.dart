@@ -36,31 +36,77 @@ Future<void> lintCleanup({
 
   final bundle = _lintsFromUri(analysisOptionsUri, config);
 
-  final toKeep = bundle.explicit.toSet()..removeAll(bundle.included);
+  final toKeepLints = bundle.explicit.toSet()..removeAll(bundle.included);
+  final removedLints = bundle.explicit.toSet()..removeAll(toKeepLints);
 
-  final removed = bundle.explicit.toSet()..removeAll(toKeep);
-
-  stderr.writeln(ansi.styleBold.wrap('removed:'));
-  if (removed.isEmpty) {
-    stderr.writeln('NONE!');
-  } else {
-    stderr.writeln(removed.join('\n'));
+  final removedLanguage = <String, dynamic>{};
+  final toKeepLanguage = <String, dynamic>{};
+  for (final entry in bundle.explicitLanguage.entries) {
+    if (bundle.includedLanguage[entry.key] == entry.value) {
+      removedLanguage[entry.key] = entry.value;
+    } else {
+      toKeepLanguage[entry.key] = entry.value;
+    }
   }
 
-  stderr.writeln(ansi.styleBold.wrap('kept:'));
-
-  print(toKeep.join('\n'));
+  _printReport(
+    removedLints: removedLints,
+    toKeepLints: toKeepLints,
+    removedLanguage: removedLanguage,
+    toKeepLanguage: toKeepLanguage,
+  );
 
   if (rewrite) {
-    await _updateAnalysisOptions(p.fromUri(analysisOptionsUri), removed);
+    await _updateAnalysisOptions(
+      p.fromUri(analysisOptionsUri),
+      removedLints: removedLints,
+      removedLanguage: removedLanguage,
+    );
   }
 }
 
-class _LintBundle({
-  required final Set<String> explicit,
-  required final Set<String> included,
+void _printReport({
+  required Set<String> removedLints,
+  required Set<String> toKeepLints,
+  required Map<String, dynamic> removedLanguage,
+  required Map<String, dynamic> toKeepLanguage,
 }) {
+  stderr.writeln(ansi.styleBold.wrap('removed lints:'));
+  if (removedLints.isEmpty) {
+    stderr.writeln('NONE!');
+  } else {
+    stderr.writeln(removedLints.join('\n'));
+  }
+
+  if (removedLanguage.isNotEmpty) {
+    stderr.writeln(ansi.styleBold.wrap('removed language options:'));
+    for (final entry in removedLanguage.entries) {
+      stderr.writeln('${entry.key}: ${entry.value}');
+    }
+  }
+
+  stderr.writeln(ansi.styleBold.wrap('kept:'));
+  print(toKeepLints.join('\n'));
+}
+
+class _LintBundle {
+  final Set<String> explicit;
+  final Set<String> included;
+  final Map<String, dynamic> explicitLanguage;
+  final Map<String, dynamic> includedLanguage;
+
+  new({
+    required this.explicit,
+    required this.included,
+    required this.explicitLanguage,
+    required this.includedLanguage,
+  });
+
   Set<String> get allLints => explicit.union(included);
+  Map<String, dynamic> get allLanguage => {
+    ...includedLanguage,
+    ...explicitLanguage,
+  };
 }
 
 _LintBundle _lintsFromUri(Uri analysisOptionsUri, PackageConfig packageConfig) {
@@ -76,10 +122,11 @@ _LintBundle _lintsFromUri(Uri analysisOptionsUri, PackageConfig packageConfig) {
 }
 
 Future<void> _updateAnalysisOptions(
-  String analysisOptionsFile,
-  Set<String> toRemove,
-) async {
-  if (toRemove.isEmpty) {
+  String analysisOptionsFile, {
+  required Set<String> removedLints,
+  required Map<String, dynamic> removedLanguage,
+}) async {
+  if (removedLints.isEmpty && removedLanguage.isEmpty) {
     stderr.writeln(
       ansi.wrapWith('No changes need to be made!', [ansi.styleBold, ansi.red]),
     );
@@ -87,55 +134,107 @@ Future<void> _updateAnalysisOptions(
   }
 
   final file = File(analysisOptionsFile);
-
   final editor = YamlEditor(file.readAsStringSync());
-
   final yamlMap = _openYamlMap(analysisOptionsFile);
-  final rules = _getRules(yamlMap)!;
 
+  if (removedLints.isNotEmpty) {
+    _removeRules(editor, yamlMap, removedLints);
+  }
+
+  if (removedLanguage.isNotEmpty) {
+    _removeLanguageEntries(editor, removedLanguage.keys);
+  }
+
+  file.writeAsStringSync(editor.toString());
+}
+
+void _removeRules(YamlEditor editor, YamlMap yamlMap, Set<String> toRemove) {
+  final rules = _getRules(yamlMap);
   if (rules is YamlList) {
     final indices = Map<int, String>.fromIterable(toRemove, key: rules.indexOf);
-
     final sortedIndices = indices.entries.toList()
       ..sort((a, b) => b.key.compareTo(a.key));
 
-    for (var index in sortedIndices) {
+    for (final index in sortedIndices) {
       editor.remove(['linter', 'rules', index.key]);
     }
-  } else {
+  } else if (rules != null) {
     throw UnimplementedError(
       'Still need to add support for rules as ${rules.runtimeType}',
     );
   }
+}
 
-  file.writeAsStringSync(editor.toString());
+void _removeLanguageEntries(YamlEditor editor, Iterable<String> keysToRemove) {
+  for (final key in keysToRemove) {
+    editor.remove(['analyzer', 'language', key]);
+  }
+
+  final currentYaml = loadYaml(editor.toString()) as YamlMap?;
+  if (currentYaml == null) return;
+
+  final analyzer = currentYaml['analyzer'];
+  if (analyzer is Map) {
+    final lang = analyzer['language'];
+    if (lang is Map && lang.isEmpty) {
+      editor.remove(['analyzer', 'language']);
+    }
+  }
+
+  final updatedYaml = loadYaml(editor.toString()) as YamlMap?;
+  final updatedAnalyzer = updatedYaml?['analyzer'];
+  if (updatedAnalyzer is Map && updatedAnalyzer.isEmpty) {
+    editor.remove(['analyzer']);
+  }
 }
 
 _LintBundle _lintsFromFile(String path, PackageConfig packageConfig) {
   final yaml = _openYamlMap(path);
 
   final included = <String>{};
+  final includedLanguage = <String, dynamic>{};
   final includeKey = yaml['include'] as String?;
   if (includeKey != null) {
     final includeValue = _lintsFromUri(Uri.parse(includeKey), packageConfig);
     included.addAll(includeValue.allLints);
+    includedLanguage.addAll(includeValue.allLanguage);
   }
 
-  final rulesValue = _getRules(yaml);
+  final explicit = _extractExplicitLints(yaml);
+  final explicitLanguage = _extractExplicitLanguage(yaml);
 
+  return _LintBundle(
+    explicit: explicit,
+    included: included,
+    explicitLanguage: explicitLanguage,
+    includedLanguage: includedLanguage,
+  );
+}
+
+Set<String> _extractExplicitLints(YamlMap yaml) {
+  final rulesValue = _getRules(yaml);
   final explicit = <String>{};
   if (rulesValue is YamlList) {
     explicit.addAll(rulesValue.cast<String>());
-  }
-  if (rulesValue is YamlMap) {
+  } else if (rulesValue is YamlMap) {
     for (final rule in rulesValue.entries) {
       if (rule.value == true) {
         explicit.add(rule.key as String);
       }
     }
   }
+  return explicit;
+}
 
-  return _LintBundle(explicit: explicit, included: included);
+Map<String, dynamic> _extractExplicitLanguage(YamlMap yaml) {
+  final analyzer = yaml['analyzer'];
+  if (analyzer is Map) {
+    final language = analyzer['language'];
+    if (language is Map) {
+      return Map<String, dynamic>.from(language);
+    }
+  }
+  return const {};
 }
 
 YamlNode? _getRules(YamlMap yaml) {
@@ -145,14 +244,11 @@ YamlNode? _getRules(YamlMap yaml) {
 
 YamlMap _openYamlMap(String path) {
   final analysisOptionsFile = File(path);
-
   final analysisOptionsContent = analysisOptionsFile.readAsStringSync();
-
   final aoYaml = loadYaml(
     analysisOptionsContent,
     sourceUrl: analysisOptionsFile.uri,
   ) as YamlMap;
-
   return aoYaml;
 }
 
@@ -165,7 +261,6 @@ _LintBundle _analysisOptionsFromPackage(
   }
 
   final pkg = includeUri.pathSegments.first;
-
   final usedLintsPkg = packageConfig.packages.firstWhereOrNull(
     (p) => p.name == pkg,
   );
@@ -180,7 +275,6 @@ _LintBundle _analysisOptionsFromPackage(
   }
 
   final yamlPath = usedLintsPkg.root.resolve(p.joinAll(['lib', ...segments]));
-
   return _lintsFromFile(p.fromUri(yamlPath), packageConfig);
 }
 

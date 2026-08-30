@@ -227,6 +227,12 @@ class RepoAlignScanner {
       }
     } catch (_) {}
 
+    if (analysisInclude ==
+        'package:dart_flutter_team_lints/analysis_options.yaml') {
+      strictCasts = true;
+      strictInference = true;
+    }
+
     return (
       hasAnalysisOptions: true,
       analysisInclude: analysisInclude,
