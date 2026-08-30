@@ -252,37 +252,22 @@ class RepoAlignScanner {
       );
     }
 
-    final files = <String>[];
-    var hasCi = false;
-    var hasLowerBound = false;
-    var hasCogComp = false;
-    var hasAutosubmit = false;
-    var hasPublish = false;
-    var hasHealth = false;
-    var hasPostSummaries = false;
-
-    for (final wf in workflowsDir.listSync().whereType<File>()) {
-      final res = _inspectWorkflowFile(wf);
-      if (res == null) continue;
-      files.add(res.name);
-      if (res.hasCi) hasCi = true;
-      if (res.hasLowerBound) hasLowerBound = true;
-      if (res.hasCogComp) hasCogComp = true;
-      if (res.hasAutosubmit) hasAutosubmit = true;
-      if (res.hasPublish) hasPublish = true;
-      if (res.hasHealth) hasHealth = true;
-      if (res.hasPostSummaries) hasPostSummaries = true;
-    }
+    final inspected = workflowsDir
+        .listSync()
+        .whereType<File>()
+        .map(_inspectWorkflowFile)
+        .nonNulls
+        .toList();
 
     return (
-      files: files,
-      hasCi: hasCi,
-      hasLowerBound: hasLowerBound,
-      hasCogComp: hasCogComp,
-      hasAutosubmit: hasAutosubmit,
-      hasPublish: hasPublish,
-      hasHealth: hasHealth,
-      hasPostSummaries: hasPostSummaries,
+      files: inspected.map((w) => w.name).toList(),
+      hasCi: inspected.any((w) => w.hasCi),
+      hasLowerBound: inspected.any((w) => w.hasLowerBound),
+      hasCogComp: inspected.any((w) => w.hasCogComp),
+      hasAutosubmit: inspected.any((w) => w.hasAutosubmit),
+      hasPublish: inspected.any((w) => w.hasPublish),
+      hasHealth: inspected.any((w) => w.hasHealth),
+      hasPostSummaries: inspected.any((w) => w.hasPostSummaries),
     );
   }
 
