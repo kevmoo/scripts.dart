@@ -36,5 +36,6 @@ executables:
   git-up: git_up
   lint-cleanup: lint_cleanup
   puppy:
+  repo-align: repo_align
   tighten:
 

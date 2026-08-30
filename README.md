@@ -25,6 +25,7 @@ dart install 'kevmoo_scripts@{path: /path/to/scripts.dart}'
 | [`git-up`](#git-up) | `bin/git_up.dart` | Safely switch to and update the default branch. |
 | [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
 | [`puppy`](#puppy) | `bin/puppy.dart` | Run a command in all package directories. |
+| [`repo-align`](#repo-align) | `bin/repo_align.dart` | Personal GitHub Repositories Alignment & Audit Tool |
 | [`tighten`](#tighten) | `bin/tighten.dart` | Tighten workspace dependencies. |
 
 ## Scripts
@@ -184,6 +185,26 @@ puppy [arguments] <command to invoke>
 
 -d, --[no-]deep    Keep looking for "nested" pubspec files.
 -h, --help         Print this usage information.
+```
+
+### `repo-align`
+Personal GitHub Repositories Alignment & Audit Tool
+
+**Requirements:**
+This tool wraps the GitHub CLI (`gh`) and requires it to be installed and
+authenticated in your `PATH`.
+
+**Usage:**
+```shell
+repo-align <check|fix> [options]
+
+-r, --repo            Target a specific repository by name (e.g. stats, pubviz)
+    --json            Output check results in JSON format
+    --[no-]lints      Fix/synchronize analysis_options.yaml
+    --[no-]ci         Fix/synchronize CI workflows (lower_bound, complexity, autosubmit, dependabot)
+    --[no-]github     Fix/synchronize GitHub remote settings (auto-merge, rulesets)
+-n, --[no-]dry-run    Preview changes without modifying files or remote settings
+-h, --help            Show command usage
 ```
 
 ### `tighten`
