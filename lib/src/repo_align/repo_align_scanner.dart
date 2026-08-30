@@ -25,6 +25,7 @@ const Set<String> legacyOrIgnoredRepos = {
 
 /// Known published packages on pub.dev.
 const Set<String> publishedPackages = {
+  'bench_press',
   'build_cli',
   'build_verify',
   'build_version',
@@ -111,6 +112,8 @@ class RepoAlignScanner {
       hasAutosubmit: workflows.hasAutosubmit,
       hasDependabot: dependabot,
       hasPublish: workflows.hasPublish,
+      hasHealth: workflows.hasHealth,
+      hasPostSummaries: workflows.hasPostSummaries,
       autoMergeAllowed: ghInfo.autoMergeAllowed,
       hasRulesetOrProtection: ghInfo.hasRulesetOrProtection,
       requiredChecks: ghInfo.requiredChecks,
@@ -244,34 +247,27 @@ class RepoAlignScanner {
         hasCogComp: false,
         hasAutosubmit: false,
         hasPublish: false,
+        hasHealth: false,
+        hasPostSummaries: false,
       );
     }
 
-    final files = <String>[];
-    var hasCi = false;
-    var hasLowerBound = false;
-    var hasCogComp = false;
-    var hasAutosubmit = false;
-    var hasPublish = false;
-
-    for (final wf in workflowsDir.listSync().whereType<File>()) {
-      final res = _inspectWorkflowFile(wf);
-      if (res == null) continue;
-      files.add(res.name);
-      if (res.hasCi) hasCi = true;
-      if (res.hasLowerBound) hasLowerBound = true;
-      if (res.hasCogComp) hasCogComp = true;
-      if (res.hasAutosubmit) hasAutosubmit = true;
-      if (res.hasPublish) hasPublish = true;
-    }
+    final inspected = workflowsDir
+        .listSync()
+        .whereType<File>()
+        .map(_inspectWorkflowFile)
+        .nonNulls
+        .toList();
 
     return (
-      files: files,
-      hasCi: hasCi,
-      hasLowerBound: hasLowerBound,
-      hasCogComp: hasCogComp,
-      hasAutosubmit: hasAutosubmit,
-      hasPublish: hasPublish,
+      files: inspected.map((w) => w.name).toList(),
+      hasCi: inspected.any((w) => w.hasCi),
+      hasLowerBound: inspected.any((w) => w.hasLowerBound),
+      hasCogComp: inspected.any((w) => w.hasCogComp),
+      hasAutosubmit: inspected.any((w) => w.hasAutosubmit),
+      hasPublish: inspected.any((w) => w.hasPublish),
+      hasHealth: inspected.any((w) => w.hasHealth),
+      hasPostSummaries: inspected.any((w) => w.hasPostSummaries),
     );
   }
 
@@ -282,6 +278,8 @@ class RepoAlignScanner {
     bool hasCogComp,
     bool hasAutosubmit,
     bool hasPublish,
+    bool hasHealth,
+    bool hasPostSummaries,
   })?
   _inspectWorkflowFile(File wf) {
     final isYaml = wf.path.endsWith('.yml') || wf.path.endsWith('.yaml');
@@ -305,7 +303,19 @@ class RepoAlignScanner {
         content.contains('autosubmit') || name.contains('autosubmit');
     final hasPublish =
         name.contains('publish') ||
-        content.contains('dart-lang/setup-dart/.github/workflows/publish.yml');
+        content.contains(
+          'dart-lang/setup-dart/.github/workflows/publish.yml',
+        ) ||
+        content.contains('dart-lang/ecosystem/.github/workflows/publish.yaml');
+    final hasHealth =
+        name.contains('health') ||
+        content.contains('dart-lang/ecosystem/.github/workflows/health.yaml');
+    final hasPostSummaries =
+        name.contains('post_summaries') ||
+        name.contains('post-summaries') ||
+        content.contains(
+          'dart-lang/ecosystem/.github/workflows/post_summaries.yaml',
+        );
 
     return (
       name: name,
@@ -314,6 +324,8 @@ class RepoAlignScanner {
       hasCogComp: hasCogComp,
       hasAutosubmit: hasAutosubmit,
       hasPublish: hasPublish,
+      hasHealth: hasHealth,
+      hasPostSummaries: hasPostSummaries,
     );
   }
 
@@ -468,6 +480,8 @@ typedef _WorkflowsInfo = ({
   bool hasCogComp,
   bool hasAutosubmit,
   bool hasPublish,
+  bool hasHealth,
+  bool hasPostSummaries,
 });
 
 typedef _GitHubInfo = ({

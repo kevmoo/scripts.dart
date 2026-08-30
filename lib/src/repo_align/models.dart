@@ -39,6 +39,8 @@ class RepoAlignmentStatus {
   final bool hasAutosubmit;
   final bool hasDependabot;
   final bool hasPublish;
+  final bool hasHealth;
+  final bool hasPostSummaries;
 
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
@@ -69,6 +71,8 @@ class RepoAlignmentStatus {
     required this.hasAutosubmit,
     required this.hasDependabot,
     required this.hasPublish,
+    this.hasHealth = false,
+    this.hasPostSummaries = false,
     required this.autoMergeAllowed,
     required this.hasRulesetOrProtection,
     required this.requiredChecks,

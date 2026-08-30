@@ -129,3 +129,59 @@ updates:
     schedule:
       interval: "weekly"
 ''';
+
+const String canonicalPublishWorkflow = '''
+# A CI configuration to auto-publish pub packages.
+
+name: Publish
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    tags: [ 'v[0-9]+.[0-9]+.[0-9]+' ]
+
+jobs:
+  publish:
+    if: \${{ github.repository_owner == 'kevmoo' }}
+    uses: dart-lang/ecosystem/.github/workflows/publish.yaml@main
+    permissions:
+      id-token: write
+      pull-requests: write
+''';
+
+const String canonicalHealthWorkflow = '''
+name: Health
+
+on:
+  pull_request:
+    branches: [ main ]
+    types: [opened, synchronize, reopened, labeled, unlabeled]
+
+jobs:
+  health:
+    if: \${{ github.repository_owner == 'kevmoo' }}
+    uses: dart-lang/ecosystem/.github/workflows/health.yaml@main
+    with:
+      checks: "changelog,coverage,breaking,do-not-submit,leaking,unused-dependencies"
+    permissions:
+      pull-requests: write
+''';
+
+const String canonicalPostSummariesWorkflow = '''
+name: Comment on the pull request
+
+on:
+  workflow_run:
+    workflows:
+      - Publish
+      - Health
+    types:
+      - completed
+
+jobs:
+  upload:
+    uses: dart-lang/ecosystem/.github/workflows/post_summaries.yaml@main
+    permissions:
+      pull-requests: write
+''';

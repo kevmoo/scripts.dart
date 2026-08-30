@@ -106,6 +106,22 @@ void main() {
       check(canonicalDependabotConfig).contains('package-ecosystem: "pub"');
       check(canonicalAnalysisOptions)
           .contains('package:dart_flutter_team_lints/analysis_options.yaml');
+      check(canonicalPublishWorkflow)
+          .contains('dart-lang/ecosystem/.github/workflows/publish.yaml@main');
+      check(canonicalHealthWorkflow)
+          .contains('dart-lang/ecosystem/.github/workflows/health.yaml@main');
+      check(canonicalPostSummariesWorkflow).contains(
+        'dart-lang/ecosystem/.github/workflows/post_summaries.yaml@main',
+      );
+    });
+  });
+
+  group('publishedPackages', () {
+    test('contains bench_press and other known published packages', () {
+      check(publishedPackages).contains('bench_press');
+      check(publishedPackages).contains('build_cli');
+      check(publishedPackages).contains('pubviz');
+      check(publishedPackages).contains('stats');
     });
   });
 
