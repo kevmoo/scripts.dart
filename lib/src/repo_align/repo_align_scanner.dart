@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+import '../shared/analysis_options_resolver.dart';
 import 'models.dart';
 
 /// Known legacy or non-code repositories to ignore/mark legacy.
@@ -205,33 +206,23 @@ class RepoAlignScanner {
     }
 
     String? analysisInclude;
-    var strictCasts = false;
-    var strictInference = false;
-    var strictRawTypes = false;
-    final customLints = <String>[];
-
     try {
       final doc = loadYaml(analysisFile.readAsStringSync());
-      if (doc is YamlMap) {
-        if (doc['include'] != null) analysisInclude = doc['include'].toString();
-        final analyzer = doc['analyzer'];
-        if (analyzer is YamlMap) {
-          final lang = analyzer['language'];
-          if (lang is YamlMap) {
-            strictCasts = lang['strict-casts'] == true;
-            strictInference = lang['strict-inference'] == true;
-            strictRawTypes = lang['strict-raw-types'] == true;
-          }
-        }
-        _parseLinterRules(doc['linter'], customLints);
+      if (doc is YamlMap && doc['include'] != null) {
+        analysisInclude = doc['include'].toString();
       }
     } catch (_) {}
 
-    if (analysisInclude ==
-        'package:dart_flutter_team_lints/analysis_options.yaml') {
-      strictCasts = true;
-      strictInference = true;
-    }
+    final resolver = AnalysisOptionsResolver.createSync(
+      packageDirectory: dir,
+      fallbackDirectory: Directory(baseDirPath),
+    );
+    final resolved = resolver.resolveFromFile(analysisFile.path);
+
+    final allLang = resolved.allLanguage;
+    final strictCasts = allLang['strict-casts'] == true;
+    final strictInference = allLang['strict-inference'] == true;
+    final strictRawTypes = allLang['strict-raw-types'] == true;
 
     return (
       hasAnalysisOptions: true,
@@ -239,22 +230,8 @@ class RepoAlignScanner {
       strictCasts: strictCasts,
       strictInference: strictInference,
       strictRawTypes: strictRawTypes,
-      customLints: customLints,
+      customLints: resolved.explicitLints.toList()..sort(),
     );
-  }
-
-  void _parseLinterRules(dynamic linter, List<String> customLints) {
-    if (linter is! YamlMap) return;
-    final rules = linter['rules'];
-    if (rules is YamlList) {
-      for (final r in rules) {
-        customLints.add(r.toString());
-      }
-    } else if (rules is YamlMap) {
-      for (final entry in rules.entries) {
-        customLints.add(entry.value == true ? '${entry.key}' : '!${entry.key}');
-      }
-    }
   }
 
   _WorkflowsInfo _scanWorkflows(Directory dir) {
