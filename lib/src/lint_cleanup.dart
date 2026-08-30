@@ -1,7 +1,6 @@
 import 'dart:io';
 
 import 'package:build_cli_annotations/build_cli_annotations.dart';
-import 'package:collection/collection.dart';
 import 'package:io/ansi.dart' as ansi;
 import 'package:io/io.dart';
 import 'package:package_config/package_config.dart';
@@ -9,6 +8,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 import 'package:yaml_edit/yaml_edit.dart';
 
+import 'shared/analysis_options_resolver.dart';
 import 'testable_print.dart';
 
 part 'lint_cleanup.g.dart';
@@ -30,56 +30,73 @@ Future<void> lintCleanup({
 
   directoryWithAnalysisOptions ??= Directory.current;
 
-  final analysisOptionsUri = directoryWithAnalysisOptions.uri.resolve(
-    'analysis_options.yaml',
+  final analysisOptionsFile = File(
+    p.join(directoryWithAnalysisOptions.path, 'analysis_options.yaml'),
   );
 
-  final bundle = _lintsFromUri(analysisOptionsUri, config);
+  final resolver = AnalysisOptionsResolver(packageConfig: config);
+  final bundle = resolver.resolveFromFile(analysisOptionsFile.path);
 
-  final toKeep = bundle.explicit.toSet()..removeAll(bundle.included);
+  final toKeepLints = bundle.explicitLints.toSet()
+    ..removeAll(bundle.includedLints);
+  final removedLints = bundle.explicitLints.toSet()..removeAll(toKeepLints);
 
-  final removed = bundle.explicit.toSet()..removeAll(toKeep);
+  final removedLanguage = <String, dynamic>{};
+  final toKeepLanguage = <String, dynamic>{};
+  for (final entry in bundle.explicitLanguage.entries) {
+    if (bundle.includedLanguage[entry.key] == entry.value) {
+      removedLanguage[entry.key] = entry.value;
+    } else {
+      toKeepLanguage[entry.key] = entry.value;
+    }
+  }
 
-  stderr.writeln(ansi.styleBold.wrap('removed:'));
-  if (removed.isEmpty) {
+  _printReport(
+    removedLints: removedLints,
+    toKeepLints: toKeepLints,
+    removedLanguage: removedLanguage,
+    toKeepLanguage: toKeepLanguage,
+  );
+
+  if (rewrite) {
+    await _updateAnalysisOptions(
+      analysisOptionsFile.path,
+      removedLints: removedLints,
+      removedLanguage: removedLanguage,
+    );
+  }
+}
+
+void _printReport({
+  required Set<String> removedLints,
+  required Set<String> toKeepLints,
+  required Map<String, dynamic> removedLanguage,
+  required Map<String, dynamic> toKeepLanguage,
+}) {
+  stderr.writeln(ansi.styleBold.wrap('removed lints:'));
+  if (removedLints.isEmpty) {
     stderr.writeln('NONE!');
   } else {
-    stderr.writeln(removed.join('\n'));
+    stderr.writeln(removedLints.join('\n'));
+  }
+
+  if (removedLanguage.isNotEmpty) {
+    stderr.writeln(ansi.styleBold.wrap('removed language options:'));
+    for (final entry in removedLanguage.entries) {
+      stderr.writeln('${entry.key}: ${entry.value}');
+    }
   }
 
   stderr.writeln(ansi.styleBold.wrap('kept:'));
-
-  print(toKeep.join('\n'));
-
-  if (rewrite) {
-    await _updateAnalysisOptions(p.fromUri(analysisOptionsUri), removed);
-  }
-}
-
-class _LintBundle({
-  required final Set<String> explicit,
-  required final Set<String> included,
-}) {
-  Set<String> get allLints => explicit.union(included);
-}
-
-_LintBundle _lintsFromUri(Uri analysisOptionsUri, PackageConfig packageConfig) {
-  if (analysisOptionsUri.isScheme('file')) {
-    return _lintsFromFile(p.fromUri(analysisOptionsUri), packageConfig);
-  }
-
-  if (analysisOptionsUri.isScheme('package')) {
-    return _analysisOptionsFromPackage(analysisOptionsUri, packageConfig);
-  }
-
-  throw UnimplementedError('for uri $analysisOptionsUri');
+  print(toKeepLints.join('\n'));
 }
 
 Future<void> _updateAnalysisOptions(
-  String analysisOptionsFile,
-  Set<String> toRemove,
-) async {
-  if (toRemove.isEmpty) {
+  String analysisOptionsFile, {
+  required Set<String> removedLints,
+  required Map<String, dynamic> removedLanguage,
+}) async {
+  if (removedLints.isEmpty && removedLanguage.isEmpty) {
     stderr.writeln(
       ansi.wrapWith('No changes need to be made!', [ansi.styleBold, ansi.red]),
     );
@@ -87,101 +104,68 @@ Future<void> _updateAnalysisOptions(
   }
 
   final file = File(analysisOptionsFile);
-
   final editor = YamlEditor(file.readAsStringSync());
-
   final yamlMap = _openYamlMap(analysisOptionsFile);
-  final rules = _getRules(yamlMap)!;
 
-  if (rules is YamlList) {
-    final indices = Map<int, String>.fromIterable(toRemove, key: rules.indexOf);
+  if (removedLints.isNotEmpty) {
+    _removeRules(editor, yamlMap, removedLints);
+  }
 
-    final sortedIndices = indices.entries.toList()
-      ..sort((a, b) => b.key.compareTo(a.key));
-
-    for (var index in sortedIndices) {
-      editor.remove(['linter', 'rules', index.key]);
-    }
-  } else {
-    throw UnimplementedError(
-      'Still need to add support for rules as ${rules.runtimeType}',
-    );
+  if (removedLanguage.isNotEmpty) {
+    _removeLanguageEntries(editor, removedLanguage.keys);
   }
 
   file.writeAsStringSync(editor.toString());
 }
 
-_LintBundle _lintsFromFile(String path, PackageConfig packageConfig) {
-  final yaml = _openYamlMap(path);
+void _removeRules(YamlEditor editor, YamlMap yamlMap, Set<String> toRemove) {
+  final linter = yamlMap['linter'];
+  final rules = linter is Map ? linter['rules'] : null;
+  if (rules is YamlList) {
+    final indices = Map<int, String>.fromIterable(toRemove, key: rules.indexOf);
+    final sortedIndices = indices.entries.toList()
+      ..sort((a, b) => b.key.compareTo(a.key));
 
-  final included = <String>{};
-  final includeKey = yaml['include'] as String?;
-  if (includeKey != null) {
-    final includeValue = _lintsFromUri(Uri.parse(includeKey), packageConfig);
-    included.addAll(includeValue.allLints);
+    for (final index in sortedIndices) {
+      editor.remove(['linter', 'rules', index.key]);
+    }
+  } else if (rules != null) {
+    throw UnimplementedError(
+      'Still need to add support for rules as ${rules.runtimeType}',
+    );
+  }
+}
+
+void _removeLanguageEntries(YamlEditor editor, Iterable<String> keysToRemove) {
+  for (final key in keysToRemove) {
+    editor.remove(['analyzer', 'language', key]);
   }
 
-  final rulesValue = _getRules(yaml);
+  final currentYaml = loadYaml(editor.toString()) as YamlMap?;
+  if (currentYaml == null) return;
 
-  final explicit = <String>{};
-  if (rulesValue is YamlList) {
-    explicit.addAll(rulesValue.cast<String>());
-  }
-  if (rulesValue is YamlMap) {
-    for (final rule in rulesValue.entries) {
-      if (rule.value == true) {
-        explicit.add(rule.key as String);
-      }
+  final analyzer = currentYaml['analyzer'];
+  if (analyzer is Map) {
+    final lang = analyzer['language'];
+    if (lang is Map && lang.isEmpty) {
+      editor.remove(['analyzer', 'language']);
     }
   }
 
-  return _LintBundle(explicit: explicit, included: included);
-}
-
-YamlNode? _getRules(YamlMap yaml) {
-  final linterValue = yaml['linter'] as Map?;
-  return linterValue?['rules'] as YamlNode?;
+  final updatedYaml = loadYaml(editor.toString()) as YamlMap?;
+  final updatedAnalyzer = updatedYaml?['analyzer'];
+  if (updatedAnalyzer is Map && updatedAnalyzer.isEmpty) {
+    editor.remove(['analyzer']);
+  }
 }
 
 YamlMap _openYamlMap(String path) {
-  final analysisOptionsFile = File(path);
-
-  final analysisOptionsContent = analysisOptionsFile.readAsStringSync();
-
-  final aoYaml = loadYaml(
-    analysisOptionsContent,
-    sourceUrl: analysisOptionsFile.uri,
-  ) as YamlMap;
-
-  return aoYaml;
-}
-
-_LintBundle _analysisOptionsFromPackage(
-  Uri includeUri,
-  PackageConfig packageConfig,
-) {
-  if (!includeUri.isScheme('package')) {
-    throw ArgumentError('`$includeUri` is not a package!');
-  }
-
-  final pkg = includeUri.pathSegments.first;
-
-  final usedLintsPkg = packageConfig.packages.firstWhereOrNull(
-    (p) => p.name == pkg,
-  );
-
-  if (usedLintsPkg == null) {
-    throw StateError('Could not find the package `$pkg` in package config');
-  }
-
-  final segments = includeUri.pathSegments.skip(1).toList();
-  if (segments.any((s) => s == '..')) {
-    throw ArgumentError('Invalid path segments in include URI: $includeUri');
-  }
-
-  final yamlPath = usedLintsPkg.root.resolve(p.joinAll(['lib', ...segments]));
-
-  return _lintsFromFile(p.fromUri(yamlPath), packageConfig);
+  try {
+    final content = File(path).readAsStringSync();
+    final yaml = loadYaml(content, sourceUrl: Uri.file(path));
+    if (yaml is YamlMap) return yaml;
+  } catch (_) {}
+  return YamlMap();
 }
 
 @CliOptions()

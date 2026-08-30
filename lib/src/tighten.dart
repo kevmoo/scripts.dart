@@ -162,7 +162,7 @@ Future<Map<String, String>> _getWorkspacePackages({required String cwd}) async {
   final json = jsonDecode(process.stdout as String) as Map<String, dynamic>;
   final packages = json['packages'] as List<dynamic>;
   return {
-    for (final p in packages.cast<Map>())
+    for (final p in packages.cast<Map<String, dynamic>>())
       p['name'] as String: p['path'] as String,
   };
 }
