@@ -138,6 +138,14 @@ class RepoAlignmentStatus {
       result.add('No branch protection or ruleset on $defaultBranch');
     } else if (requiredChecks.isEmpty) {
       result.add('Branch ruleset has 0 required status checks');
+    } else {
+      final unclamped = requiredChecks.where((c) => c.length > 100).toList();
+      if (unclamped.isNotEmpty) {
+        result.add(
+          'Branch ruleset has ${unclamped.length} required check(s) >100 chars '
+          '(will fail to match truncated GHA check names)',
+        );
+      }
     }
   }
 
@@ -173,4 +181,11 @@ class RepoAlignmentStatus {
     'issues': issues,
     'isAligned': isAligned,
   };
+}
+
+/// Clamps a GitHub Actions check run name to 100 characters to match the
+/// GitHub Checks API truncation limit (100 chars with `...`).
+String clampGhaCheckName(String name) {
+  if (name.length <= 100) return name;
+  return '${name.substring(0, 97)}...';
 }
