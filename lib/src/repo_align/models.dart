@@ -41,6 +41,7 @@ class RepoAlignmentStatus {
   final bool hasPublish;
   final bool hasHealth;
   final bool hasPostSummaries;
+  final List<String> expectedCiCheckPrefixes;
 
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
@@ -73,6 +74,7 @@ class RepoAlignmentStatus {
     required this.hasPublish,
     this.hasHealth = false,
     this.hasPostSummaries = false,
+    this.expectedCiCheckPrefixes = const [],
     required this.autoMergeAllowed,
     required this.hasRulesetOrProtection,
     required this.requiredChecks,
@@ -161,21 +163,24 @@ class RepoAlignmentStatus {
     }
 
     if (hasCi && !_hasPrimaryCiCheck) {
+      final expectedStr = expectedCiCheckPrefixes.isNotEmpty
+          ? expectedCiCheckPrefixes.join('/')
+          : 'analyze/test/build/validate';
       result.add(
         'Branch ruleset missing primary CI check '
-        '(expected analyze/test/build/validate)',
+        '(expected: $expectedStr)',
       );
     }
   }
 
-  bool get _hasPrimaryCiCheck => requiredChecks.any(
-    (c) =>
-        c.contains('analyze') ||
-        c.contains('test') ||
-        c.contains('build') ||
-        c.contains('validate') ||
-        c.contains('_wynette'),
-  );
+  bool get _hasPrimaryCiCheck {
+    if (expectedCiCheckPrefixes.isEmpty) return true;
+    return requiredChecks.any(
+      (req) => expectedCiCheckPrefixes.any(
+        (prefix) => req == prefix || req.startsWith(prefix),
+      ),
+    );
+  }
 
   bool get isAligned => issues.isEmpty;
 

@@ -158,6 +158,7 @@ void main() {
         hasAutosubmit: true,
         hasDependabot: true,
         hasPublish: false,
+        expectedCiCheckPrefixes: ['analyze', 'test'],
         autoMergeAllowed: true,
         hasRulesetOrProtection: true,
         requiredChecks: ['some-random-non-ci-check'],
@@ -166,7 +167,7 @@ void main() {
       check(status.isAligned).isFalse();
       check(status.issues).contains(
         'Branch ruleset missing primary CI check '
-        '(expected analyze/test/build/validate)',
+        '(expected: analyze/test)',
       );
     });
   });
