@@ -140,18 +140,42 @@ class RepoAlignmentStatus {
 
     if (!hasRulesetOrProtection) {
       result.add('No branch protection or ruleset on $defaultBranch');
-    } else if (requiredChecks.isEmpty) {
-      result.add('Branch ruleset has 0 required status checks');
-    } else {
-      final unclamped = requiredChecks.where((c) => c.length > 100).toList();
-      if (unclamped.isNotEmpty) {
-        result.add(
-          'Branch ruleset has ${unclamped.length} required check(s) >100 chars '
-          '(will fail to match truncated GHA check names)',
-        );
-      }
+      return;
+    }
+
+    if (requiredChecks.isEmpty) {
+      final msg = autoMergeAllowed
+          ? 'CRITICAL: Auto-merge enabled with 0 required status checks '
+                '(ungated merging!)'
+          : 'Branch ruleset has 0 required status checks';
+      result.add(msg);
+      return;
+    }
+
+    final unclamped = requiredChecks.where((c) => c.length > 100).toList();
+    if (unclamped.isNotEmpty) {
+      result.add(
+        'Branch ruleset has ${unclamped.length} required check(s) >100 chars '
+        '(will fail to match truncated GHA check names)',
+      );
+    }
+
+    if (hasCi && !_hasPrimaryCiCheck) {
+      result.add(
+        'Branch ruleset missing primary CI check '
+        '(expected analyze/test/build/validate)',
+      );
     }
   }
+
+  bool get _hasPrimaryCiCheck => requiredChecks.any(
+    (c) =>
+        c.contains('analyze') ||
+        c.contains('test') ||
+        c.contains('build') ||
+        c.contains('validate') ||
+        c.contains('_wynette'),
+  );
 
   bool get isAligned => issues.isEmpty;
 
