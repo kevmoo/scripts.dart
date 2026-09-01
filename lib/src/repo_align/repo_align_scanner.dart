@@ -114,6 +114,7 @@ class RepoAlignScanner {
       hasPublish: workflows.hasPublish,
       hasHealth: workflows.hasHealth,
       hasPostSummaries: workflows.hasPostSummaries,
+      expectedCiCheckPrefixes: workflows.expectedCiCheckPrefixes,
       autoMergeAllowed: ghInfo.autoMergeAllowed,
       hasRulesetOrProtection: ghInfo.hasRulesetOrProtection,
       requiredChecks: ghInfo.requiredChecks,
@@ -249,6 +250,7 @@ class RepoAlignScanner {
         hasPublish: false,
         hasHealth: false,
         hasPostSummaries: false,
+        expectedCiCheckPrefixes: <String>[],
       );
     }
 
@@ -268,6 +270,9 @@ class RepoAlignScanner {
       hasPublish: inspected.any((w) => w.hasPublish),
       hasHealth: inspected.any((w) => w.hasHealth),
       hasPostSummaries: inspected.any((w) => w.hasPostSummaries),
+      expectedCiCheckPrefixes: inspected
+          .expand((w) => w.expectedCiCheckPrefixes)
+          .toList(),
     );
   }
 
@@ -280,6 +285,7 @@ class RepoAlignScanner {
     bool hasPublish,
     bool hasHealth,
     bool hasPostSummaries,
+    List<String> expectedCiCheckPrefixes,
   })?
   _inspectWorkflowFile(File wf) {
     final isYaml = wf.path.endsWith('.yml') || wf.path.endsWith('.yaml');
@@ -317,6 +323,17 @@ class RepoAlignScanner {
           'dart-lang/ecosystem/.github/workflows/post_summaries.yaml',
         );
 
+    final isCiWorkflow =
+        hasCi &&
+        !hasAutosubmit &&
+        !hasPublish &&
+        !hasHealth &&
+        !hasPostSummaries;
+    final expectedCiCheckPrefixes = _extractCiCheckPrefixes(
+      content,
+      isCiWorkflow: isCiWorkflow,
+    );
+
     return (
       name: name,
       hasCi: hasCi,
@@ -326,7 +343,41 @@ class RepoAlignScanner {
       hasPublish: hasPublish,
       hasHealth: hasHealth,
       hasPostSummaries: hasPostSummaries,
+      expectedCiCheckPrefixes: expectedCiCheckPrefixes,
     );
+  }
+
+  List<String> _extractCiCheckPrefixes(
+    String content, {
+    required bool isCiWorkflow,
+  }) {
+    if (!isCiWorkflow) return const [];
+    try {
+      final doc = loadYaml(content);
+      final jobs = doc is YamlMap ? doc['jobs'] : null;
+      if (jobs is! YamlMap) return const [];
+      return jobs.entries
+          .expand((e) => _extractJobPrefixes(e.key, e.value))
+          .toList();
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  List<String> _extractJobPrefixes(Object? jobKey, Object? jobVal) {
+    if (jobVal is YamlMap) {
+      final strategy = jobVal['strategy'];
+      final matrix = strategy is YamlMap ? strategy['matrix'] : null;
+      final matrixPkg = matrix is YamlMap ? matrix['package'] : null;
+      if (matrixPkg is YamlList) {
+        return matrixPkg.map((e) => e.toString()).toList();
+      }
+      final jobName = jobVal['name']?.toString();
+      if (jobName != null && !jobName.contains(r'${{')) {
+        return [jobName];
+      }
+    }
+    return [jobKey.toString()];
   }
 
   bool _scanDependabot(Directory dir) {
@@ -482,6 +533,7 @@ typedef _WorkflowsInfo = ({
   bool hasPublish,
   bool hasHealth,
   bool hasPostSummaries,
+  List<String> expectedCiCheckPrefixes,
 });
 
 typedef _GitHubInfo = ({

@@ -41,6 +41,7 @@ class RepoAlignmentStatus {
   final bool hasPublish;
   final bool hasHealth;
   final bool hasPostSummaries;
+  final List<String> expectedCiCheckPrefixes;
 
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
@@ -73,6 +74,7 @@ class RepoAlignmentStatus {
     required this.hasPublish,
     this.hasHealth = false,
     this.hasPostSummaries = false,
+    this.expectedCiCheckPrefixes = const [],
     required this.autoMergeAllowed,
     required this.hasRulesetOrProtection,
     required this.requiredChecks,
@@ -140,17 +142,44 @@ class RepoAlignmentStatus {
 
     if (!hasRulesetOrProtection) {
       result.add('No branch protection or ruleset on $defaultBranch');
-    } else if (requiredChecks.isEmpty) {
-      result.add('Branch ruleset has 0 required status checks');
-    } else {
-      final unclamped = requiredChecks.where((c) => c.length > 100).toList();
-      if (unclamped.isNotEmpty) {
-        result.add(
-          'Branch ruleset has ${unclamped.length} required check(s) >100 chars '
-          '(will fail to match truncated GHA check names)',
-        );
-      }
+      return;
     }
+
+    if (requiredChecks.isEmpty) {
+      final msg = autoMergeAllowed
+          ? 'CRITICAL: Auto-merge enabled with 0 required status checks '
+                '(ungated merging!)'
+          : 'Branch ruleset has 0 required status checks';
+      result.add(msg);
+      return;
+    }
+
+    final unclamped = requiredChecks.where((c) => c.length > 100).toList();
+    if (unclamped.isNotEmpty) {
+      result.add(
+        'Branch ruleset has ${unclamped.length} required check(s) >100 chars '
+        '(will fail to match truncated GHA check names)',
+      );
+    }
+
+    if (hasCi && !_hasPrimaryCiCheck) {
+      final expectedStr = expectedCiCheckPrefixes.isNotEmpty
+          ? expectedCiCheckPrefixes.join('/')
+          : 'analyze/test/build/validate';
+      result.add(
+        'Branch ruleset missing primary CI check '
+        '(expected: $expectedStr)',
+      );
+    }
+  }
+
+  bool get _hasPrimaryCiCheck {
+    if (expectedCiCheckPrefixes.isEmpty) return true;
+    return requiredChecks.any(
+      (req) => expectedCiCheckPrefixes.any(
+        (prefix) => req == prefix || req.startsWith(prefix),
+      ),
+    );
   }
 
   bool get isAligned => issues.isEmpty;

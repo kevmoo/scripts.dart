@@ -92,6 +92,84 @@ void main() {
       check(status.issues)
           .contains('Auto-merge not enabled (allow_auto_merge = false)');
     });
+
+    test('flags CRITICAL issue when auto-merge is enabled with 0 required '
+        'status checks', () {
+      final status = RepoAlignmentStatus(
+        name: 'ungated_repo',
+        path: '/tmp/ungated_repo',
+        kind: RepoKind.toolOrApp,
+        isArchived: false,
+        isFork: false,
+        isPrivate: false,
+        defaultBranch: 'main',
+        hasPubspec: true,
+        sdkConstraint: '^3.0.0',
+        packageNames: ['ungated_repo'],
+        hasAnalysisOptions: true,
+        analysisInclude:
+            'package:dart_flutter_team_lints/analysis_options.yaml',
+        strictCasts: true,
+        strictInference: true,
+        strictRawTypes: true,
+        customLints: [],
+        workflowFiles: ['ci.yml'],
+        hasCi: true,
+        hasLowerBound: false,
+        hasCogComp: false,
+        hasAutosubmit: true,
+        hasDependabot: true,
+        hasPublish: false,
+        autoMergeAllowed: true,
+        hasRulesetOrProtection: true,
+        requiredChecks: [],
+      );
+
+      check(status.isAligned).isFalse();
+      check(status.issues).contains(
+        'CRITICAL: Auto-merge enabled with 0 required status checks '
+        '(ungated merging!)',
+      );
+    });
+
+    test('flags missing primary CI check when hasCi is true', () {
+      final status = RepoAlignmentStatus(
+        name: 'ci_repo',
+        path: '/tmp/ci_repo',
+        kind: RepoKind.toolOrApp,
+        isArchived: false,
+        isFork: false,
+        isPrivate: false,
+        defaultBranch: 'main',
+        hasPubspec: true,
+        sdkConstraint: '^3.0.0',
+        packageNames: ['ci_repo'],
+        hasAnalysisOptions: true,
+        analysisInclude:
+            'package:dart_flutter_team_lints/analysis_options.yaml',
+        strictCasts: true,
+        strictInference: true,
+        strictRawTypes: true,
+        customLints: [],
+        workflowFiles: ['ci.yml'],
+        hasCi: true,
+        hasLowerBound: false,
+        hasCogComp: false,
+        hasAutosubmit: true,
+        hasDependabot: true,
+        hasPublish: false,
+        expectedCiCheckPrefixes: ['analyze', 'test'],
+        autoMergeAllowed: true,
+        hasRulesetOrProtection: true,
+        requiredChecks: ['some-random-non-ci-check'],
+      );
+
+      check(status.isAligned).isFalse();
+      check(status.issues).contains(
+        'Branch ruleset missing primary CI check '
+        '(expected: analyze/test)',
+      );
+    });
   });
 
   group('Canonical Templates', () {
