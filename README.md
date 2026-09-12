@@ -1,5 +1,5 @@
-This repository contains various scripts and utilities for development.
-I don't plan on publishing this as a package (at least not any time soon).
+This repository contains various scripts and utilities for development. I don't
+plan on publishing this as a package (at least not any time soon).
 
 To install these scripts as native AOT executables, run:
 
@@ -15,29 +15,31 @@ dart install 'kevmoo_scripts@{path: /path/to/scripts.dart}'
 
 ## Summary
 
-| Executable | Script | Description |
-|---|---|---|
-| [`dart-clean`](#dart-clean) | `bin/dart_clean.dart` | Find and kill orphaned Dart processes. |
-| [`gerrit-view`](#gerrit-view) | `bin/gerrit_view.dart` | Complete overview of your active work on Gerrit. |
-| [`gh-clean`](#gh-clean) | `bin/gh_clean.dart` | Clean up local branches and worktrees for merged GitHub pull requests. |
-| [`gh-view`](#gh-view) | `bin/gh_view.dart` | Complete overview of your active pull requests on GitHub. |
-| [`git-org-clean`](#git-org-clean) | `bin/git_org_clean.dart` | Analyze a GitHub organization for archive/delete candidates. |
-| [`git-up`](#git-up) | `bin/git_up.dart` | Safely switch to and update the default branch. |
-| [`lint-cleanup`](#lint-cleanup) | `bin/lint_cleanup.dart` | Clean up analysis_options.yaml files. |
-| [`puppy`](#puppy) | `bin/puppy.dart` | Run a command in all package directories. |
-| [`repo-align`](#repo-align) | `bin/repo_align.dart` | Personal GitHub Repositories Alignment & Audit Tool |
-| [`tighten`](#tighten) | `bin/tighten.dart` | Tighten workspace dependencies. |
+| Executable                        | Script                   | Description                                                            |
+| --------------------------------- | ------------------------ | ---------------------------------------------------------------------- |
+| [`dart-clean`](#dart-clean)       | `bin/dart_clean.dart`    | Find and kill orphaned Dart processes.                                 |
+| [`gerrit-view`](#gerrit-view)     | `bin/gerrit_view.dart`   | Complete overview of your active work on Gerrit.                       |
+| [`gh-clean`](#gh-clean)           | `bin/gh_clean.dart`      | Clean up local branches and worktrees for merged GitHub pull requests. |
+| [`gh-view`](#gh-view)             | `bin/gh_view.dart`       | Complete overview of your active pull requests on GitHub.              |
+| [`git-org-clean`](#git-org-clean) | `bin/git_org_clean.dart` | Analyze a GitHub organization for archive/delete candidates.           |
+| [`git-up`](#git-up)               | `bin/git_up.dart`        | Safely switch to and update the default branch.                        |
+| [`lint-cleanup`](#lint-cleanup)   | `bin/lint_cleanup.dart`  | Clean up analysis_options.yaml files.                                  |
+| [`puppy`](#puppy)                 | `bin/puppy.dart`         | Run a command in all package directories.                              |
+| [`repo-align`](#repo-align)       | `bin/repo_align.dart`    | Personal GitHub Repositories Alignment & Audit Tool                    |
+| [`tighten`](#tighten)             | `bin/tighten.dart`       | Tighten workspace dependencies.                                        |
 
 ## Scripts
 
 ### `dart-clean`
+
 Find and kill orphaned Dart processes.
 
-**Requirements:**
-Supported on macOS (requires the `witr` command-line utility in your `PATH`) and
-Linux (reads `/proc` directly with systemd subreaper detection).
+**Requirements:** Supported on macOS (requires the `witr` command-line utility
+in your `PATH`) and Linux (reads `/proc` directly with systemd subreaper
+detection).
 
 **Usage:**
+
 ```shell
 dart-clean
 
@@ -47,12 +49,14 @@ dart-clean
 ```
 
 ### `gerrit-view`
+
 Complete overview of your active work on Gerrit.
 
-**Requirements:**
-This tool requires the `gob-curl` command-line utility (e.g. `/usr/local/bin/gob-curl`) to be installed and authenticated in your `PATH`.
+**Requirements:** This tool requires the `gob-curl` command-line utility (e.g.
+`/usr/local/bin/gob-curl`) to be installed and authenticated in your `PATH`.
 
 **Usage:**
+
 ```shell
 gerrit-view [options]
 
@@ -61,13 +65,14 @@ gerrit-view [options]
 ```
 
 ### `gh-clean`
+
 Clean up local branches and worktrees for merged GitHub pull requests.
 
-**Requirements:**
-This tool wraps the GitHub CLI (`gh`) and requires it to be installed and
-authenticated in your `PATH`.
+**Requirements:** This tool wraps the GitHub CLI (`gh`) and requires it to be
+installed and authenticated in your `PATH`.
 
 **Usage:**
+
 ```shell
 gh-clean [options]
 
@@ -86,13 +91,14 @@ gh-clean [options]
 ```
 
 ### `gh-view`
+
 Complete overview of your active pull requests on GitHub.
 
-**Requirements:**
-This tool wraps the GitHub CLI (`gh`) and requires it to be installed and
-authenticated in your `PATH`.
+**Requirements:** This tool wraps the GitHub CLI (`gh`) and requires it to be
+installed and authenticated in your `PATH`.
 
 **Usage:**
+
 ```shell
 gh-view [options]
 
@@ -109,13 +115,14 @@ gh-view [options]
 ```
 
 ### `git-org-clean`
+
 Analyze a GitHub organization for archive/delete candidates.
 
-**Requirements:**
-This tool wraps the GitHub CLI (`gh`) and requires it to be installed and
-authenticated in your `PATH`.
+**Requirements:** This tool wraps the GitHub CLI (`gh`) and requires it to be
+installed and authenticated in your `PATH`.
 
 **Usage:**
+
 ```shell
 git-org-clean [arguments]
 
@@ -124,49 +131,64 @@ git-org-clean [arguments]
 ```
 
 ### `git-up`
+
 Safely switch to and update the default branch of a Git repository.
 
 **Usage:**
+
 ```shell
 git-up [--verbose | -v] [--help | -h]
 ```
 
 **Pre-Update Hook (`git-up.before`):**
 
-You can configure a custom shell command that runs automatically before `git-up` starts updating the repository (right after the dirty-tree safety check). This is useful for renewing credentials (e.g., running `gcert` on the Dart SDK) or preparing the environment.
+You can configure a custom shell command that runs automatically before `git-up`
+starts updating the repository (right after the dirty-tree safety check). This
+is useful for renewing credentials (e.g., running `gcert` on the Dart SDK) or
+preparing the environment.
 
-* **Local configuration** (runs only for the current repository):
+- **Local configuration** (runs only for the current repository):
+
   ```shell
   git config git-up.before "gcert"
   ```
 
-* **Global configuration** (runs for all repositories where you run `git-up`):
+- **Global configuration** (runs for all repositories where you run `git-up`):
   ```shell
   git config --global git-up.before "gcert"
   ```
 
-If the before-command returns a non-zero exit code, `git-up` will abort immediately and exit with that same exit code, preventing any branches from being updated.
+If the before-command returns a non-zero exit code, `git-up` will abort
+immediately and exit with that same exit code, preventing any branches from
+being updated.
 
 **Post-Update Hook (`git-up.post`):**
 
-You can configure a custom shell command that runs automatically after `git-up` successfully updates the repository. This is useful for triggering automated builds, running package installations (e.g., `dart pub get`), running code generation, or starting workspace bootstraps.
+You can configure a custom shell command that runs automatically after `git-up`
+successfully updates the repository. This is useful for triggering automated
+builds, running package installations (e.g., `dart pub get`), running code
+generation, or starting workspace bootstraps.
 
-* **Local configuration** (runs only for the current repository):
+- **Local configuration** (runs only for the current repository):
+
   ```shell
   git config git-up.post "dart pub get"
   ```
 
-* **Global configuration** (runs for all repositories where you run `git-up`):
+- **Global configuration** (runs for all repositories where you run `git-up`):
   ```shell
   git config --global git-up.post "git status"
   ```
 
-If the post-command returns a non-zero exit code, `git-up` will abort and exit with that same exit code.
+If the post-command returns a non-zero exit code, `git-up` will abort and exit
+with that same exit code.
 
 ### `lint-cleanup`
+
 Clean up `analysis_options.yaml` files.
 
 **Usage:**
+
 ```shell
 lint-cleanup [arguments]
 
@@ -177,9 +199,11 @@ lint-cleanup [arguments]
 ```
 
 ### `puppy`
+
 Run a command in all package directories.
 
 **Usage:**
+
 ```shell
 puppy [arguments] <command to invoke>
 
@@ -188,13 +212,14 @@ puppy [arguments] <command to invoke>
 ```
 
 ### `repo-align`
+
 Personal GitHub Repositories Alignment & Audit Tool
 
-**Requirements:**
-This tool wraps the GitHub CLI (`gh`) and requires it to be installed and
-authenticated in your `PATH`.
+**Requirements:** This tool wraps the GitHub CLI (`gh`) and requires it to be
+installed and authenticated in your `PATH`.
 
 **Usage:**
+
 ```shell
 repo-align <check|fix> [options]
 
@@ -208,9 +233,11 @@ repo-align <check|fix> [options]
 ```
 
 ### `tighten`
+
 Tighten workspace dependencies.
 
 **Usage:**
+
 ```shell
 tighten
 
@@ -219,5 +246,6 @@ tighten
 ```
 
 ## Contributing
+
 See [CONTRIBUTING.md](CONTRIBUTING.md) for best practices on writing and
 maintaining scripts.
