@@ -1010,7 +1010,21 @@ List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> _filterUnlinkedCandidates(
     final batch = candidates.skip(i).take(batchSize).toList();
     final queryStr = _buildBatchWorktreePrQuery(batch);
     final result = runner('gh', ['api', 'graphql', '-f', 'query=$queryStr']);
+    if (result.exitCode != 0) {
+      stderr.writeln(
+        'Warning: Failed to fetch GraphQL PR data for candidate worktrees: '
+        '${result.stderr.toString().trim()}',
+      );
+      continue;
+    }
+
     final data = _tryParseGraphQLData(result.stdout);
+    if (data == null) {
+      stderr.writeln(
+        'Warning: Could not parse GraphQL response for candidate worktrees.',
+      );
+      continue;
+    }
 
     for (var b = 0; b < batch.length; b++) {
       if (!_batchItemHasPr(data, b)) {

@@ -997,5 +997,51 @@ void main() {
       check(File(p.join(wtPath, 'precious.txt')).readAsStringSync())
           .equals('valuable unpushed work');
     });
+
+    test(
+      'does not report worktrees as unlinked if GraphQL query fails',
+      () async {
+        await d.dir('repo_err', [d.file('README.md', '# Err')]).create();
+        final repoPath = p.join(d.sandbox, 'repo_err');
+        final git = await GitDir.init(repoPath, allowContent: true);
+        await git.configureTestIdentity();
+        await git.runCommand(['branch', '-M', 'main']);
+        await git.runCommand([
+          'remote',
+          'add',
+          'origin',
+          'https://github.com/myorg/err-repo.git',
+        ]);
+        await git.runCommand(['add', '.']);
+        await git.runCommand(['commit', '-m', 'init']);
+
+        final wtPath = p.join(d.sandbox, '_err-wt');
+        await git.runCommand(['worktree', 'add', '-b', 'some-branch', wtPath]);
+
+        final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+        final unlinked = await findUnlinkedWorktrees(
+          localRepos,
+          <String>{},
+          processRunner: (exe, args, {workingDirectory}) {
+            if (exe == 'gh') {
+              return ProcessResult(
+                1,
+                1, // non-zero exit code!
+                '',
+                'network failure or rate limit exceeded',
+              );
+            }
+            return defaultSyncProcessRunner(
+              exe,
+              args,
+              workingDirectory: workingDirectory,
+            );
+          },
+        );
+
+        check(unlinked).isEmpty();
+      },
+    );
   });
 }
