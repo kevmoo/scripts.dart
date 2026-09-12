@@ -90,13 +90,13 @@ class GhCleanOptions {
       'limit',
       abbr: 'l',
       defaultsTo: '50',
-      help: 'Maximum number of PRs to retrieve.',
+      help: 'Maximum number of PRs to retrieve (capped at 100).',
     )
     ..addOption(
       'last-n-days',
       abbr: 'd',
       defaultsTo: '7',
-      help: 'Filter PRs merged in the last N days (pass 0 for no time limit).',
+      help: 'Filter PRs merged in the last N days (positive integer).',
     )
     ..addFlag(
       'apply',
@@ -262,11 +262,19 @@ String buildLandedSearchQuery({
   int? lastNDays,
   DateTime? now,
 }) {
+  if (lastNDays != null && lastNDays <= 0) {
+    throw ArgumentError.value(
+      lastNDays,
+      'lastNDays',
+      'Must be a positive integer.',
+    );
+  }
+
   final buffer = StringBuffer('is:pr is:merged');
   if (user.isNotEmpty) buffer.write(' author:$user');
   if (repo != null && repo.isNotEmpty) buffer.write(' repo:$repo');
 
-  if (lastNDays != null && lastNDays > 0) {
+  if (lastNDays != null) {
     final reference = now ?? DateTime.now();
     final cutoff = reference.subtract(Duration(days: lastNDays));
     final y = cutoff.year.toString().padLeft(4, '0');
@@ -289,6 +297,7 @@ Future<List<LandedPr>> fetchLandedPrs({
   SyncProcessRunner? processRunner,
 }) async {
   final runner = processRunner ?? defaultSyncProcessRunner;
+  final effectiveLimit = limit.clamp(1, 100);
   final queryStr = buildLandedSearchQuery(
     user: user,
     repo: repo,
@@ -332,7 +341,7 @@ query($q: String!, $limit: Int!) {
     '-F',
     'q=$queryStr',
     '-F',
-    'limit=$limit',
+    'limit=$effectiveLimit',
   ]);
 
   if (result.exitCode != 0) {
@@ -525,6 +534,19 @@ List<CleanAction> executeCleanup(
     );
   }
 
+  if (!skipSync) {
+    final syncAction = _executeTrunkSync(
+      localRepo,
+      headBranch,
+      trunkBranch,
+      runner,
+    );
+    actions.add(syncAction);
+    onProgress?.call(
+      '  ${syncAction.success ? "✓" : "✗"} ${syncAction.description}',
+    );
+  }
+
   final deleteAction = _executeBranchDeletion(
     localRepo,
     headBranch,
@@ -536,19 +558,6 @@ List<CleanAction> executeCleanup(
     actions.add(deleteAction);
     onProgress?.call(
       '  ${deleteAction.success ? "✓" : "✗"} ${deleteAction.description}',
-    );
-  }
-
-  if (!skipSync) {
-    final syncAction = _executeTrunkSync(
-      localRepo,
-      headBranch,
-      trunkBranch,
-      runner,
-    );
-    actions.add(syncAction);
-    onProgress?.call(
-      '  ${syncAction.success ? "✓" : "✗"} ${syncAction.description}',
     );
   }
 
@@ -645,7 +654,26 @@ CleanAction? _executeBranchDeletion(
     return null;
   }
 
-  if (headRefOid != null && headRefOid.isNotEmpty) {
+  // Check if all commits on the branch are already contained in trunk.
+  // For squash-merged PRs where the local branch was advanced onto the squash
+  // commit, headRefOid..headBranch is non-empty even though all work has landed
+  // on trunk. Checking trunk containment first prevents false positives.
+  var isContainedInTrunk = false;
+  for (final ref in ['origin/$trunkBranch', trunkBranch]) {
+    final countRes = runner('git', [
+      '-C',
+      localRepo.repoPath,
+      'rev-list',
+      '--count',
+      '$ref..$headBranch',
+    ]);
+    if (countRes.exitCode == 0 && (countRes.stdout as String).trim() == '0') {
+      isContainedInTrunk = true;
+      break;
+    }
+  }
+
+  if (!isContainedInTrunk && headRefOid != null && headRefOid.isNotEmpty) {
     final logRes = runner('git', [
       '-C',
       localRepo.repoPath,
