@@ -182,7 +182,8 @@ Future<void> runGhClean({
   );
 
   final matchedHeadRefs = {
-    for (final pr in landedPrs) pr.headRefName.toLowerCase(),
+    for (final pr in landedPrs)
+      '${pr.repository}#${pr.headRefName}'.toLowerCase(),
   };
 
   onProgress?.call(
@@ -607,9 +608,10 @@ void _collectRepoCandidateBranches(
 ) {
   final trunk = resolveTrunkBranch(repo);
   final uniqueBranches = <String>{};
+  final repoKey = '$owner/$name'.toLowerCase();
 
   for (final b in repo.branches) {
-    if (_isBranchCandidate(b.name, trunk, alreadyMatchedBranches)) {
+    if (_isBranchCandidate(b.name, trunk, repoKey, alreadyMatchedBranches)) {
       uniqueBranches.add(b.name);
     }
   }
@@ -618,7 +620,7 @@ void _collectRepoCandidateBranches(
     if (wt.path != repo.repoPath &&
         wt.branch.isNotEmpty &&
         wt.branch != 'DETACHED' &&
-        _isBranchCandidate(wt.branch, trunk, alreadyMatchedBranches)) {
+        _isBranchCandidate(wt.branch, trunk, repoKey, alreadyMatchedBranches)) {
       uniqueBranches.add(wt.branch);
     }
   }
@@ -631,12 +633,16 @@ void _collectRepoCandidateBranches(
 bool _isBranchCandidate(
   String branch,
   String trunk,
+  String repoKey,
   Set<String> alreadyMatchedBranches,
 ) {
   if (branch.isEmpty) return false;
   if (branch == trunk || branch == 'main' || branch == 'master') return false;
   if (_isProtectedBranch(branch)) return false;
-  return !alreadyMatchedBranches.contains(branch.toLowerCase());
+  final branchLower = branch.toLowerCase();
+  if (alreadyMatchedBranches.contains(branchLower)) return false;
+  final compositeKey = '$repoKey#$branchLower';
+  return !alreadyMatchedBranches.contains(compositeKey);
 }
 
 List<LandedPr> _fetchBatchCrossAuthorPrs(
@@ -658,19 +664,14 @@ List<LandedPr> _fetchBatchCrossAuthorPrs(
     final batch = candidates.skip(i).take(batchSize).toList();
     final queryStr = _buildBatchCrossAuthorQuery(batch);
     final result = runner('gh', ['api', 'graphql', '-f', 'query=$queryStr']);
-    if (result.exitCode != 0) {
-      stderr.writeln(
-        'Warning: Failed to fetch cross-author PR data: '
-        '${result.stderr.toString().trim()}',
-      );
-      continue;
-    }
-
     final data = _tryParseGraphQLData(result.stdout);
     if (data == null) {
-      stderr.writeln(
-        'Warning: Could not parse GraphQL response for cross-author PRs.',
-      );
+      if (result.exitCode != 0) {
+        stderr.writeln(
+          'Warning: Failed to fetch cross-author PR data: '
+          '${result.stderr.toString().trim()}',
+        );
+      }
       continue;
     }
 
@@ -1010,7 +1011,16 @@ CleanAction? _executeBranchDeletion(
     }
   }
 
-  if (!isContainedInTrunk && headRefOid != null && headRefOid.isNotEmpty) {
+  if (!isContainedInTrunk) {
+    if (headRefOid == null || headRefOid.isEmpty) {
+      return (
+        description: 'Delete local branch `$headBranch`',
+        success: false,
+        error:
+            'Branch has unmerged commits, and PR HEAD could not be verified '
+            '(empty headRefOid).',
+      );
+    }
     _ensureCommitExistsLocally(
       localRepo.repoPath,
       headRefOid,
