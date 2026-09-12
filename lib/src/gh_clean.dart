@@ -897,6 +897,38 @@ Future<List<UnlinkedWorktree>> findUnlinkedWorktrees(
   void Function(String message)? onProgress,
 }) async {
   final runner = processRunner ?? defaultSyncProcessRunner;
+  final candidates = _collectCandidateWorktrees(
+    localRepos,
+    matchedWorktreePaths,
+    repoFilter: repoFilter,
+  );
+
+  final unlinkedCandidates = [
+    ...candidates.detachedCandidates,
+    ..._filterUnlinkedCandidates(candidates.branchCandidates, runner),
+  ];
+
+  return [
+    for (final item in unlinkedCandidates)
+      _populateUnlinkedWorktreeDetails(item, runner),
+  ]..sort((a, b) {
+    final repoCmp = a.repository.toLowerCase().compareTo(
+      b.repository.toLowerCase(),
+    );
+    if (repoCmp != 0) return repoCmp;
+    return a.worktreePath.toLowerCase().compareTo(b.worktreePath.toLowerCase());
+  });
+}
+
+({
+  List<_CandidateWorktree> branchCandidates,
+  List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> detachedCandidates,
+})
+_collectCandidateWorktrees(
+  List<LocalRepoInfo> localRepos,
+  Set<String> matchedWorktreePaths, {
+  String? repoFilter,
+}) {
   final candidates = <_CandidateWorktree>[];
   final detachedCandidates = <({LocalRepoInfo repo, LocalWorktreeEntry wt})>[];
 
@@ -904,153 +936,191 @@ Future<List<UnlinkedWorktree>> findUnlinkedWorktrees(
     (r) => isRootGitRepository(Directory(r.repoPath)),
   );
   for (final repo in rootRepos) {
-    if (isDartSdkRepositoryName(repo.repoName)) continue;
-    if (repoFilter != null &&
-        !repo.repoNames.any(
-          (n) => n.toLowerCase() == repoFilter.toLowerCase(),
-        )) {
+    if (!_isRepoMatchingFilter(repo, repoFilter)) continue;
+
+    final parsedRepo = _parseRepoOwnerAndName(repo);
+    if (parsedRepo == null) continue;
+
+    _classifyRepoWorktrees(
+      repo,
+      parsedRepo.owner,
+      parsedRepo.name,
+      matchedWorktreePaths,
+      candidates,
+      detachedCandidates,
+    );
+  }
+
+  return (branchCandidates: candidates, detachedCandidates: detachedCandidates);
+}
+
+bool _isRepoMatchingFilter(LocalRepoInfo repo, String? repoFilter) {
+  if (isDartSdkRepositoryName(repo.repoName)) return false;
+  if (repoFilter == null) return true;
+  return repo.repoNames.any((n) => n.toLowerCase() == repoFilter.toLowerCase());
+}
+
+({String owner, String name})? _parseRepoOwnerAndName(LocalRepoInfo repo) {
+  final canonicalRepo = repo.repoNames.firstOrNull;
+  if (canonicalRepo == null || !canonicalRepo.contains('/')) return null;
+  final repoParts = canonicalRepo.split('/');
+  return (owner: repoParts[0], name: repoParts[1]);
+}
+
+void _classifyRepoWorktrees(
+  LocalRepoInfo repo,
+  String owner,
+  String name,
+  Set<String> matchedWorktreePaths,
+  List<_CandidateWorktree> candidates,
+  List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> detachedCandidates,
+) {
+  for (final wt in repo.worktrees) {
+    if (!_isCandidateWorktree(wt, repo.repoPath, matchedWorktreePaths)) {
       continue;
     }
 
-    final canonicalRepo = repo.repoNames.firstOrNull;
-    if (canonicalRepo == null || !canonicalRepo.contains('/')) continue;
-    final repoParts = canonicalRepo.split('/');
-    final owner = repoParts[0];
-    final name = repoParts[1];
+    if (wt.branch.isEmpty || wt.branch == 'DETACHED') {
+      detachedCandidates.add((repo: repo, wt: wt));
+    } else {
+      candidates.add((repo: repo, wt: wt, owner: owner, name: name));
+    }
+  }
+}
 
-    for (final wt in repo.worktrees) {
-      if (wt.path == repo.repoPath) continue;
-      if (matchedWorktreePaths.contains(wt.path)) continue;
-      if (!Directory(wt.path).existsSync()) continue;
+bool _isCandidateWorktree(
+  LocalWorktreeEntry wt,
+  String repoPath,
+  Set<String> matchedWorktreePaths,
+) {
+  if (wt.path == repoPath) return false;
+  if (matchedWorktreePaths.contains(wt.path)) return false;
+  return Directory(wt.path).existsSync();
+}
 
-      if (wt.branch.isEmpty || wt.branch == 'DETACHED') {
-        detachedCandidates.add((repo: repo, wt: wt));
-      } else {
-        candidates.add((repo: repo, wt: wt, owner: owner, name: name));
+List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> _filterUnlinkedCandidates(
+  List<_CandidateWorktree> candidates,
+  SyncProcessRunner runner,
+) {
+  if (candidates.isEmpty) return const [];
+  final unlinked = <({LocalRepoInfo repo, LocalWorktreeEntry wt})>[];
+  const batchSize = 30;
+
+  for (var i = 0; i < candidates.length; i += batchSize) {
+    final batch = candidates.skip(i).take(batchSize).toList();
+    final queryStr = _buildBatchWorktreePrQuery(batch);
+    final result = runner('gh', ['api', 'graphql', '-f', 'query=$queryStr']);
+    final data = _tryParseGraphQLData(result.stdout);
+
+    for (var b = 0; b < batch.length; b++) {
+      if (!_batchItemHasPr(data, b)) {
+        unlinked.add((repo: batch[b].repo, wt: batch[b].wt));
       }
     }
   }
 
-  final unlinked = <({LocalRepoInfo repo, LocalWorktreeEntry wt})>[
-    ...detachedCandidates,
-  ];
+  return unlinked;
+}
 
-  if (candidates.isNotEmpty) {
-    const batchSize = 30;
-    for (var i = 0; i < candidates.length; i += batchSize) {
-      final batch = candidates.skip(i).take(batchSize).toList();
-      final queryBuffer = StringBuffer('query {\n');
-      for (var b = 0; b < batch.length; b++) {
-        final item = batch[b];
-        final encOwner = jsonEncode(item.owner);
-        final encName = jsonEncode(item.name);
-        final encBranch = jsonEncode(item.wt.branch);
-        queryBuffer.writeln(
-          '  q$b: repository(owner: $encOwner, name: $encName) {\n'
-          '    pullRequests(headRefName: $encBranch, first: 1) {\n'
-          '      nodes {\n'
-          '        number\n'
-          '        state\n'
-          '      }\n'
-          '    }\n'
-          '  }',
-        );
-      }
-      queryBuffer.writeln('}');
+bool _batchItemHasPr(Map<String, dynamic>? data, int index) {
+  final qVal = data?['q$index'];
+  final qMap = qVal is Map<String, dynamic> ? qVal : null;
+  final prsVal = qMap?['pullRequests'];
+  final prsMap = prsVal is Map<String, dynamic> ? prsVal : null;
+  final prNodes = (prsMap?['nodes'] as List<dynamic>?) ?? [];
+  return prNodes.isNotEmpty;
+}
 
-      final result = runner('gh', [
-        'api',
-        'graphql',
-        '-f',
-        'query=${queryBuffer.toString()}',
-      ]);
-
-      Map<String, dynamic>? data;
-      if (result.stdout is String &&
-          (result.stdout as String).trim().isNotEmpty) {
-        try {
-          final decoded =
-              jsonDecode(result.stdout as String) as Map<String, dynamic>?;
-          data = decoded?['data'] as Map<String, dynamic>?;
-        } catch (_) {
-          // If stdout is not valid JSON, data remains null.
-        }
-      }
-
-      for (var b = 0; b < batch.length; b++) {
-        final item = batch[b];
-        final qVal = data?['q$b'];
-        final qMap = qVal is Map<String, dynamic> ? qVal : null;
-        final prsVal = qMap?['pullRequests'];
-        final prsMap = prsVal is Map<String, dynamic> ? prsVal : null;
-        final prNodes = (prsMap?['nodes'] as List<dynamic>?) ?? [];
-        if (prNodes.isEmpty) {
-          unlinked.add((repo: item.repo, wt: item.wt));
-        }
-      }
-    }
-  }
-
-  final results = <UnlinkedWorktree>[];
-  for (final item in unlinked) {
-    final repo = item.repo;
-    final wt = item.wt;
-    final trunk = resolveTrunkBranch(repo);
-
-    int? commitsAhead;
-    for (final ref in ['origin/$trunk', 'upstream/$trunk', trunk]) {
-      final revResult = runner('git', [
-        'rev-list',
-        '--count',
-        '$ref..HEAD',
-      ], workingDirectory: wt.path);
-      if (revResult.exitCode == 0) {
-        final parsed = int.tryParse((revResult.stdout as String).trim());
-        if (parsed != null) {
-          commitsAhead = parsed;
-          break;
-        }
-      }
-    }
-
-    String? lastCommitDate;
-    String? lastCommitSubject;
-    final logResult = runner('git', [
-      'log',
-      '-1',
-      '--format=%cs|%s',
-    ], workingDirectory: wt.path);
-    if (logResult.exitCode == 0) {
-      final out = (logResult.stdout as String).trim();
-      if (out.isNotEmpty) {
-        final parts = out.split('|');
-        lastCommitDate = parts[0].trim();
-        if (parts.length > 1) {
-          lastCommitSubject = parts.sublist(1).join('|').trim();
-        }
-      }
-    }
-
-    results.add((
-      repository: repo.repoName,
-      worktreePath: wt.path,
-      branch: wt.branch.isEmpty ? '(detached)' : wt.branch,
-      sha: wt.sha,
-      commitsAhead: commitsAhead,
-      lastCommitDate: lastCommitDate,
-      lastCommitSubject: lastCommitSubject,
-    ));
-  }
-
-  results.sort((a, b) {
-    final repoCmp = a.repository.toLowerCase().compareTo(
-      b.repository.toLowerCase(),
+String _buildBatchWorktreePrQuery(List<_CandidateWorktree> batch) {
+  final queryBuffer = StringBuffer('query {\n');
+  for (var b = 0; b < batch.length; b++) {
+    final item = batch[b];
+    final encOwner = jsonEncode(item.owner);
+    final encName = jsonEncode(item.name);
+    final encBranch = jsonEncode(item.wt.branch);
+    queryBuffer.writeln(
+      '  q$b: repository(owner: $encOwner, name: $encName) {\n'
+      '    pullRequests(headRefName: $encBranch, first: 1) {\n'
+      '      nodes {\n'
+      '        number\n'
+      '        state\n'
+      '      }\n'
+      '    }\n'
+      '  }',
     );
-    if (repoCmp != 0) return repoCmp;
-    return a.worktreePath.toLowerCase().compareTo(b.worktreePath.toLowerCase());
-  });
+  }
+  queryBuffer.writeln('}');
+  return queryBuffer.toString();
+}
 
-  return results;
+Map<String, dynamic>? _tryParseGraphQLData(Object? stdout) {
+  if (stdout is! String || stdout.trim().isEmpty) return null;
+  try {
+    final decoded = jsonDecode(stdout) as Map<String, dynamic>?;
+    return decoded?['data'] as Map<String, dynamic>?;
+  } catch (_) {
+    return null;
+  }
+}
+
+UnlinkedWorktree _populateUnlinkedWorktreeDetails(
+  ({LocalRepoInfo repo, LocalWorktreeEntry wt}) item,
+  SyncProcessRunner runner,
+) {
+  final repo = item.repo;
+  final wt = item.wt;
+  final trunk = resolveTrunkBranch(repo);
+  final commitsAhead = _countCommitsAhead(wt.path, trunk, runner);
+  final lastCommit = _getLastCommitInfo(wt.path, runner);
+
+  return (
+    repository: repo.repoName,
+    worktreePath: wt.path,
+    branch: wt.branch.isEmpty ? '(detached)' : wt.branch,
+    sha: wt.sha,
+    commitsAhead: commitsAhead,
+    lastCommitDate: lastCommit.date,
+    lastCommitSubject: lastCommit.subject,
+  );
+}
+
+int? _countCommitsAhead(
+  String worktreePath,
+  String trunkBranch,
+  SyncProcessRunner runner,
+) {
+  final refs = ['origin/$trunkBranch', 'upstream/$trunkBranch', trunkBranch];
+  for (final ref in refs) {
+    final revResult = runner('git', [
+      'rev-list',
+      '--count',
+      '$ref..HEAD',
+    ], workingDirectory: worktreePath);
+    if (revResult.exitCode == 0) {
+      final parsed = int.tryParse((revResult.stdout as String).trim());
+      if (parsed != null) return parsed;
+    }
+  }
+  return null;
+}
+
+({String? date, String? subject}) _getLastCommitInfo(
+  String worktreePath,
+  SyncProcessRunner runner,
+) {
+  final logResult = runner('git', [
+    'log',
+    '-1',
+    '--format=%cs|%s',
+  ], workingDirectory: worktreePath);
+  if (logResult.exitCode != 0) return (date: null, subject: null);
+  final out = (logResult.stdout as String).trim();
+  if (out.isEmpty) return (date: null, subject: null);
+
+  final parts = out.split('|');
+  final date = parts[0].trim();
+  final subject = parts.length > 1 ? parts.sublist(1).join('|').trim() : null;
+  return (date: date, subject: subject);
 }
 
 /// Formats output as GitHub Flavored Markdown.
@@ -1260,41 +1330,56 @@ void printTerminalReport(
       : cyan.wrap('🔍 Preview Mode (Dry Run)')!;
   print('${styleBold.wrap("Landed PR Cleanup")} [$modeStr]\n');
 
+  _printPrCleanResults(
+    results,
+    applied: applied,
+    hasTrailingSection: unlinkedWorktrees.isNotEmpty,
+  );
+  _printUnlinkedWorktrees(unlinkedWorktrees);
+}
+
+void _printPrCleanResults(
+  List<PrCleanResult> results, {
+  required bool applied,
+  required bool hasTrailingSection,
+}) {
   if (results.isEmpty) {
     print(styleDim.wrap('No recently landed pull requests found.')!);
-    if (unlinkedWorktrees.isEmpty) {
-      return;
-    }
-    print('');
-  } else {
-    for (final r in results) {
-      _printTerminalPrHeader(r);
-      if (applied) {
-        _printExecutedActions(r.executedActions);
-      } else {
-        _printPlannedActions(r.plannedActions, r.status);
-      }
+    if (hasTrailingSection) {
       print('');
     }
+    return;
   }
 
-  if (unlinkedWorktrees.isNotEmpty) {
-    print('${styleBold.wrap("Worktrees with No Associated PR:")}\n');
-    for (final u in unlinkedWorktrees) {
-      final folder = p.basename(u.worktreePath);
-      final ahead = u.commitsAhead != null ? '${u.commitsAhead}' : 'unknown';
-      final date = u.lastCommitDate ?? 'unknown';
-      final subject =
-          u.lastCommitSubject != null && u.lastCommitSubject!.isNotEmpty
-          ? ' - "${u.lastCommitSubject}"'
-          : '';
-      print('  ${styleBold.wrap(folder)} (${u.repository})');
-      print('    Branch:        ${u.branch}');
-      print('    Path:          ${u.worktreePath}');
-      print('    Commits Ahead: $ahead');
-      print('    Last Commit:   $date$subject');
-      print('');
+  for (final r in results) {
+    _printTerminalPrHeader(r);
+    if (applied) {
+      _printExecutedActions(r.executedActions);
+    } else {
+      _printPlannedActions(r.plannedActions, r.status);
     }
+    print('');
+  }
+}
+
+void _printUnlinkedWorktrees(List<UnlinkedWorktree> unlinkedWorktrees) {
+  if (unlinkedWorktrees.isEmpty) return;
+
+  print('${styleBold.wrap("Worktrees with No Associated PR:")}\n');
+  for (final u in unlinkedWorktrees) {
+    final folder = p.basename(u.worktreePath);
+    final ahead = u.commitsAhead != null ? '${u.commitsAhead}' : 'unknown';
+    final date = u.lastCommitDate ?? 'unknown';
+    final subject =
+        u.lastCommitSubject != null && u.lastCommitSubject!.isNotEmpty
+        ? ' - "${u.lastCommitSubject}"'
+        : '';
+    print('  ${styleBold.wrap(folder)} (${u.repository})');
+    print('    Branch:        ${u.branch}');
+    print('    Path:          ${u.worktreePath}');
+    print('    Commits Ahead: $ahead');
+    print('    Last Commit:   $date$subject');
+    print('');
   }
 }
 

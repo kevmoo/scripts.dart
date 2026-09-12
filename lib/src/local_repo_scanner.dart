@@ -238,28 +238,23 @@ Set<String>? _extractRepoNames(String rawOutput) {
     final remoteUrl = parts[1];
     if (isDartSdkRemote(remoteUrl)) return null;
     final name = normalizeRepoName(remoteUrl);
-    if (name == null) continue;
-    if (isDartSdkRepositoryName(name)) return null;
+    if (name == null || isDartSdkRepositoryName(name)) continue;
     entries.add((remoteName: parts[0], repoName: name));
   }
-  if (entries.isEmpty) return null;
+  return entries.isEmpty ? null : _prioritizeRepoNames(entries);
+}
 
-  // Prioritize 'upstream' first, then 'origin', then other remotes.
-  final repoNames = <String>{};
-  for (final entry in entries) {
-    if (entry.remoteName == 'upstream') {
-      repoNames.add(entry.repoName);
-    }
-  }
-  for (final entry in entries) {
-    if (entry.remoteName == 'origin') {
-      repoNames.add(entry.repoName);
-    }
-  }
-  for (final entry in entries) {
-    repoNames.add(entry.repoName);
-  }
-  return repoNames.isEmpty ? null : repoNames;
+Set<String> _prioritizeRepoNames(
+  List<({String remoteName, String repoName})> entries,
+) {
+  int priority(String remote) => switch (remote) {
+    'upstream' => 0,
+    'origin' => 1,
+    _ => 2,
+  };
+  final sorted = entries.toList()
+    ..sort((a, b) => priority(a.remoteName).compareTo(priority(b.remoteName)));
+  return {for (final e in sorted) e.repoName};
 }
 
 String? _getCurrentBranch(String repoPath, SyncProcessRunner runner) {
