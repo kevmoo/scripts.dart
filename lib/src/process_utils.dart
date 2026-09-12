@@ -35,21 +35,11 @@ Future<ProcessResult> defaultProcessRunner(
   String? workingDirectory,
 }) => Process.run(executable, arguments, workingDirectory: workingDirectory);
 
-Future<String> getProcessCmdline(int pid) async {
-  try {
-    final output = await runProcess('ps', [
-      '-p',
-      pid.toString(),
-      '-o',
-      'command=',
-    ]);
-    return output.trim();
-  } on ProcessException {
-    return '<unknown>';
+Future<bool> isProcessRunning(int pid, {String procPath = '/proc'}) async {
+  if (Platform.isLinux) {
+    return Directory('$procPath/$pid').exists();
   }
-}
 
-Future<bool> isProcessRunning(int pid) async {
   try {
     await runProcess('ps', ['-p', pid.toString(), '-o', 'pid=']);
     return true;
@@ -70,7 +60,9 @@ Future<String?> getProcessCwd(int pid) async {
     ]);
     for (final line in LineSplitter.split(output)) {
       if (line.startsWith('n')) {
-        return line.substring(1).trim();
+        final path = line.substring(1).trim();
+        if (path.contains('(readlink:')) return null;
+        return path;
       }
     }
     return null;
@@ -95,15 +87,38 @@ Future<String> getProcessName(int pid) async {
       '-o',
       'comm=',
     ]);
-    return output.trim().split('/').last;
+    final name = output.trim().split('/').last;
+    if (name.isNotEmpty) return name;
   } on ProcessException {
-    return '<unknown>';
+    // Process likely exited or ps is unavailable.
   }
+  return '<unknown>';
 }
 
 Future<void> killPids(List<int> pids, {bool force = false}) async {
+  final (:killedCount, :failedPids, :stillRunning) = await _initialKillPids(
+    pids,
+  );
+
+  var totalKilled = killedCount;
+  final finalFailedPids = List<int>.from(failedPids);
+
+  if (stillRunning.isNotEmpty) {
+    final (extraKilled, extraFailed) = await _forceKillRemaining(
+      stillRunning,
+      force: force,
+    );
+    totalKilled += extraKilled;
+    finalFailedPids.addAll(extraFailed);
+  }
+
+  _printKillSummary(totalKilled, finalFailedPids.toSet().toList());
+}
+
+Future<({int killedCount, List<int> failedPids, List<int> stillRunning})>
+_initialKillPids(List<int> pids) async {
   var killedCount = 0;
-  var failedPids = <int>[];
+  final failedPids = <int>[];
 
   for (final p in pids) {
     print('Killing $p...');
@@ -126,37 +141,50 @@ Future<void> killPids(List<int> pids, {bool force = false}) async {
     }
   }
 
-  if (stillRunning.isNotEmpty) {
-    if (!force) {
-      print('');
-      print(red.wrap('${stillRunning.length} processes failed to terminate.'));
-      stdout.write('Force kill (kill -9) remaining processes? (y/N) ');
-      final response = stdin.readLineSync();
-      force = response?.toLowerCase() == 'y';
-    }
+  return (
+    killedCount: killedCount,
+    failedPids: failedPids,
+    stillRunning: stillRunning,
+  );
+}
 
-    if (force) {
-      for (final p in stillRunning) {
-        print('Force killing $p...');
-        Process.killPid(p, ProcessSignal.sigkill);
-      }
-
-      await Future<void>.delayed(const Duration(milliseconds: 500));
-
-      for (final p in stillRunning) {
-        if (await isProcessRunning(p)) {
-          failedPids.add(p);
-        } else {
-          killedCount++;
-        }
-      }
-    } else {
-      failedPids.addAll(stillRunning);
-    }
+Future<(int, List<int>)> _forceKillRemaining(
+  List<int> stillRunning, {
+  required bool force,
+}) async {
+  var effectiveForce = force;
+  if (!effectiveForce) {
+    print('');
+    print(red.wrap('${stillRunning.length} processes failed to terminate.'));
+    stdout.write('Force kill (kill -9) remaining processes? (y/N) ');
+    final response = stdin.readLineSync();
+    effectiveForce = response?.toLowerCase() == 'y';
   }
 
-  failedPids = failedPids.toSet().toList();
+  if (!effectiveForce) {
+    return (0, List<int>.from(stillRunning));
+  }
 
+  for (final p in stillRunning) {
+    print('Force killing $p...');
+    Process.killPid(p, ProcessSignal.sigkill);
+  }
+
+  await Future<void>.delayed(const Duration(milliseconds: 500));
+
+  var killed = 0;
+  final failed = <int>[];
+  for (final p in stillRunning) {
+    if (await isProcessRunning(p)) {
+      failed.add(p);
+    } else {
+      killed++;
+    }
+  }
+  return (killed, failed);
+}
+
+void _printKillSummary(int killedCount, List<int> failedPids) {
   print('');
   if (killedCount > 0) {
     print(green.wrap('Successfully terminated $killedCount processes.'));

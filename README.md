@@ -34,8 +34,8 @@ dart install 'kevmoo_scripts@{path: /path/to/scripts.dart}'
 Find and kill orphaned Dart processes.
 
 **Requirements:**
-This tool is only supported on macOS and requires the `witr` command-line
-utility to be installed and in your `PATH`.
+Supported on macOS (requires the `witr` command-line utility in your `PATH`) and
+Linux (reads `/proc` directly with systemd subreaper detection).
 
 **Usage:**
 ```shell
