@@ -1,3 +1,5 @@
+import 'canonical_templates.dart';
+
 /// Classification of a personal GitHub repository.
 enum RepoKind {
   publishedPackage,
@@ -43,10 +45,25 @@ class RepoAlignmentStatus {
   final bool hasPostSummaries;
   final List<String> expectedCiCheckPrefixes;
 
+  // Markdown standardization
+  final bool hasPrettierRc;
+  final bool hasMarkdownWorkflow;
+  final bool hasPrettierIgnore;
+
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
   final bool hasRulesetOrProtection;
+
+  /// Every required context, unioned across all rulesets.
   final List<String> requiredChecks;
+
+  /// The ruleset that actually governs [defaultBranch], or `null` for legacy
+  /// branch protection (which cannot be written to).
+  final String? defaultBranchRulesetId;
+
+  /// The contexts required by the default-branch ruleset alone. A context
+  /// present only in some *other* ruleset does not gate the default branch.
+  final List<String> defaultBranchRequiredChecks;
 
   new({
     required this.name,
@@ -75,9 +92,14 @@ class RepoAlignmentStatus {
     this.hasHealth = false,
     this.hasPostSummaries = false,
     this.expectedCiCheckPrefixes = const [],
+    this.hasPrettierRc = false,
+    this.hasMarkdownWorkflow = false,
+    this.hasPrettierIgnore = false,
     required this.autoMergeAllowed,
     required this.hasRulesetOrProtection,
     required this.requiredChecks,
+    this.defaultBranchRulesetId,
+    this.defaultBranchRequiredChecks = const [],
   });
 
   /// Check if the repo has full strict mode enabled.
@@ -91,6 +113,7 @@ class RepoAlignmentStatus {
     final result = <String>[];
     _checkDartIssues(result);
     _checkCiIssues(result);
+    _checkMarkdownIssues(result);
     _checkGitHubIssues(result);
     return result;
   }
@@ -130,6 +153,29 @@ class RepoAlignmentStatus {
     if (kind == RepoKind.monorepoWorkspace || kind == RepoKind.toolOrApp) {
       if (!hasAutosubmit) result.add('Missing autosubmit.yml');
       if (!hasDependabot) result.add('Missing .github/dependabot.yml');
+    }
+  }
+
+  /// Markdown standardization applies to *every* repo kind, including
+  /// [RepoKind.agentSkills] -- skills repos are the most markdown-heavy of all,
+  /// and they do carry branch rulesets.
+  void _checkMarkdownIssues(List<String> result) {
+    if (!hasPrettierRc) result.add('Missing .prettierrc.json');
+    if (!hasMarkdownWorkflow) result.add('Missing markdown.yml');
+
+    // `.prettierignore` was deliberately removed from every repo as
+    // speculative noise; its reappearance is a regression, not a gap.
+    if (hasPrettierIgnore) {
+      result.add('Stray .prettierignore (should not exist)');
+    }
+
+    // A markdown check that runs but does not gate is decoration. This lives
+    // here rather than in _checkGitHubIssues because that method exempts
+    // agentSkills, and markdown gating must not be exempt.
+    if (hasMarkdownWorkflow &&
+        hasRulesetOrProtection &&
+        !defaultBranchRequiredChecks.contains(markdownCheckContext)) {
+      result.add('markdown.yml present but not a required check');
     }
   }
 
@@ -208,9 +254,14 @@ class RepoAlignmentStatus {
     'hasAutosubmit': hasAutosubmit,
     'hasDependabot': hasDependabot,
     'hasPublish': hasPublish,
+    'hasPrettierRc': hasPrettierRc,
+    'hasMarkdownWorkflow': hasMarkdownWorkflow,
+    'hasPrettierIgnore': hasPrettierIgnore,
     'autoMergeAllowed': autoMergeAllowed,
     'hasRulesetOrProtection': hasRulesetOrProtection,
     'requiredChecks': requiredChecks,
+    'defaultBranchRulesetId': defaultBranchRulesetId,
+    'defaultBranchRequiredChecks': defaultBranchRequiredChecks,
     'issues': issues,
     'isAligned': isAligned,
   };
