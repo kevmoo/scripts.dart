@@ -481,6 +481,78 @@ void main() {
         check(branchList.stdout as String).contains('feature-unpushed');
       },
     );
+
+    test('integration test refuses to delete branch when not in trunk and '
+        'headRefOid is empty', () async {
+      final remotePath = p.join(d.sandbox, 'remote-empty-head');
+      await Directory(remotePath).create();
+      final remoteGit = await GitDir.init(remotePath, allowContent: true);
+      await remoteGit.configureTestIdentity();
+      await remoteGit.runCommand(['branch', '-M', 'main']);
+      await File(p.join(remotePath, 'init.txt')).writeAsString('init');
+      await remoteGit.runCommand(['add', '.']);
+      await remoteGit.runCommand(['commit', '-m', 'init']);
+
+      final localPath = p.join(d.sandbox, 'local-empty-head');
+      await Process.run('git', ['clone', remotePath, localPath]);
+      final localGit = await GitDir.fromExisting(localPath);
+      await localGit.configureTestIdentity();
+
+      await localGit.runCommand(['checkout', '-b', 'feature-empty-head']);
+      await File(p.join(localPath, 'f.txt')).writeAsString('local only');
+      await localGit.runCommand(['add', '.']);
+      await localGit.runCommand(['commit', '-m', 'unmerged local commit']);
+      await localGit.runCommand(['checkout', 'main']);
+
+      final landedPr = (
+        number: 1,
+        title: 'Empty Head PR',
+        url: 'https://github.com/test/local-empty-head/pull/1',
+        repository: 'test/local-empty-head',
+        repoUrl: 'https://github.com/test/local-empty-head',
+        headRefName: 'feature-empty-head',
+        headRefOid: '',
+        baseRefName: 'main',
+        mergeSha: null,
+        mergedAt: DateTime.now(),
+        closedAt: DateTime.now(),
+      );
+
+      final localInfo = (
+        repoName: 'test/local-empty-head',
+        repoNames: ['test/local-empty-head'],
+        repoPath: localPath,
+        currentBranch: 'main',
+        branches: [
+          (
+            name: 'feature-empty-head',
+            sha: '999',
+            upstream: null,
+            upstreamTrack: null,
+          ),
+          (
+            name: 'main',
+            sha: '000',
+            upstream: 'origin/main',
+            upstreamTrack: '',
+          ),
+        ],
+        worktrees: <LocalWorktreeEntry>[],
+      );
+
+      final actions = executeCleanup(landedPr, localInfo);
+      check(
+        actions.any(
+          (a) =>
+              !a.success &&
+              a.error != null &&
+              a.error!.contains('empty headRefOid'),
+        ),
+      ).isTrue();
+
+      final branchList = await localGit.runCommand(['branch', '--list']);
+      check(branchList.stdout as String).contains('feature-empty-head');
+    });
   });
 
   group('Reports formatting', () {
@@ -1041,6 +1113,340 @@ void main() {
         );
 
         check(unlinked).isEmpty();
+      },
+    );
+  });
+
+  group('findCrossAuthorLandedPrs', () {
+    test('identifies merged PRs authored by collaborators', () async {
+      await d.dir('repo_cross_author', [
+        d.file('README.md', '# Cross Author'),
+      ]).create();
+      final repoPath = p.join(d.sandbox, 'repo_cross_author');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/googleapis/google-cloud-dart.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+      await git.runCommand(['branch', 'telemetry-header-fix']);
+
+      final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+      final crossAuthorPrs = await findCrossAuthorLandedPrs(
+        localRepos,
+        <String>{},
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            return ProcessResult(
+              1,
+              0,
+              jsonEncode({
+                'data': {
+                  'q0': {
+                    'nameWithOwner': 'googleapis/google-cloud-dart',
+                    'url': 'https://github.com/googleapis/google-cloud-dart',
+                    'pullRequests': {
+                      'nodes': [
+                        {
+                          'number': 336,
+                          'title':
+                              'feat(storage): add gccl token for client '
+                              'attribution',
+                          'url':
+                              'https://github.com/googleapis/google-cloud-dart'
+                              '/pull/336',
+                          'mergedAt': DateTime.now()
+                              .toUtc()
+                              .subtract(const Duration(days: 2))
+                              .toIso8601String(),
+                          'closedAt': DateTime.now()
+                              .toUtc()
+                              .subtract(const Duration(days: 2))
+                              .toIso8601String(),
+                          'headRefName': 'telemetry-header-fix',
+                          'headRefOid':
+                              '5acfde1d81cdea132151cba012dc95837f3b61aa',
+                          'baseRefName': 'main',
+                          'mergeCommit': {
+                            'oid': '63578dfce15fce86fec0bbaa1758174b09bf3ecd',
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              }),
+              '',
+            );
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      check(crossAuthorPrs.length).equals(1);
+      final pr = crossAuthorPrs.first;
+      check(pr.number).equals(336);
+      check(pr.repository).equals('googleapis/google-cloud-dart');
+      check(pr.headRefName).equals('telemetry-header-fix');
+      check(pr.title)
+          .equals('feat(storage): add gccl token for client attribution');
+    });
+
+    test('excludes branches already matched by user PRs', () async {
+      await d.dir('repo_matched_branch', [
+        d.file('README.md', '# Matched'),
+      ]).create();
+      final repoPath = p.join(d.sandbox, 'repo_matched_branch');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/dart-lang/test.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+      await git.runCommand(['branch', 'already-matched']);
+
+      final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+      final crossAuthorPrs = await findCrossAuthorLandedPrs(localRepos, {
+        'already-matched',
+      });
+
+      check(crossAuthorPrs).isEmpty();
+    });
+
+    test('filters out PRs merged before lastNDays cutoff', () async {
+      await d.dir('repo_cutoff', [d.file('README.md', '# Cutoff')]).create();
+      final repoPath = p.join(d.sandbox, 'repo_cutoff');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/myorg/old-repo.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+      await git.runCommand(['branch', 'old-branch']);
+
+      final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+      final crossAuthorPrs = await findCrossAuthorLandedPrs(
+        localRepos,
+        <String>{},
+        lastNDays: 14,
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            return ProcessResult(
+              1,
+              0,
+              jsonEncode({
+                'data': {
+                  'q0': {
+                    'nameWithOwner': 'myorg/old-repo',
+                    'url': 'https://github.com/myorg/old-repo',
+                    'pullRequests': {
+                      'nodes': [
+                        {
+                          'number': 100,
+                          'title': 'old pr',
+                          'url': 'https://github.com/myorg/old-repo/pull/100',
+                          'mergedAt': DateTime.now()
+                              .toUtc()
+                              .subtract(const Duration(days: 30))
+                              .toIso8601String(),
+                          'headRefName': 'old-branch',
+                          'headRefOid': 'abc1234',
+                          'baseRefName': 'main',
+                        },
+                      ],
+                    },
+                  },
+                },
+              }),
+              '',
+            );
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      check(crossAuthorPrs).isEmpty();
+    });
+
+    test('extracts valid PRs even when gh exits with code 1 on partial batch '
+        'errors', () async {
+      await d.dir('repo_partial_err', [
+        d.file('README.md', '# Partial Error'),
+      ]).create();
+      final repoPath = p.join(d.sandbox, 'repo_partial_err');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/org/valid-repo.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+      await git.runCommand(['branch', 'collab-branch']);
+
+      final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+      final crossAuthorPrs = await findCrossAuthorLandedPrs(
+        localRepos,
+        <String>{},
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            return ProcessResult(
+              1,
+              1, // non-zero exit code due to partial GraphQL error
+              jsonEncode({
+                'data': {
+                  'q0': {
+                    'nameWithOwner': 'org/valid-repo',
+                    'url': 'https://github.com/org/valid-repo',
+                    'pullRequests': {
+                      'nodes': [
+                        {
+                          'number': 42,
+                          'title': 'collab pr',
+                          'url': 'https://github.com/org/valid-repo/pull/42',
+                          'mergedAt': DateTime.now()
+                              .toUtc()
+                              .subtract(const Duration(days: 1))
+                              .toIso8601String(),
+                          'headRefName': 'collab-branch',
+                          'headRefOid': 'sha42',
+                          'baseRefName': 'main',
+                        },
+                      ],
+                    },
+                  },
+                },
+                'errors': [
+                  {'message': 'Could not resolve to a Repository'},
+                ],
+              }),
+              'Could not resolve to a Repository',
+            );
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      check(crossAuthorPrs.length).equals(1);
+      check(crossAuthorPrs.first.number).equals(42);
+    });
+
+    test(
+      'scoped alreadyMatchedRefs allows same branch name in another repo',
+      () async {
+        await d.dir('repo_scoped_a', [d.file('README.md', '# A')]).create();
+        final repoAPath = p.join(d.sandbox, 'repo_scoped_a');
+        final gitA = await GitDir.init(repoAPath, allowContent: true);
+        await gitA.configureTestIdentity();
+        await gitA.runCommand(['branch', '-M', 'main']);
+        await gitA.runCommand([
+          'remote',
+          'add',
+          'origin',
+          'https://github.com/org/repo-a.git',
+        ]);
+        await gitA.runCommand(['add', '.']);
+        await gitA.runCommand(['commit', '-m', 'init']);
+        await gitA.runCommand(['branch', 'shared-feature']);
+
+        await d.dir('repo_scoped_b', [d.file('README.md', '# B')]).create();
+        final repoBPath = p.join(d.sandbox, 'repo_scoped_b');
+        final gitB = await GitDir.init(repoBPath, allowContent: true);
+        await gitB.configureTestIdentity();
+        await gitB.runCommand(['branch', '-M', 'main']);
+        await gitB.runCommand([
+          'remote',
+          'add',
+          'origin',
+          'https://github.com/org/repo-b.git',
+        ]);
+        await gitB.runCommand(['add', '.']);
+        await gitB.runCommand(['commit', '-m', 'init']);
+        await gitB.runCommand(['branch', 'shared-feature']);
+
+        final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+        // repo-a#shared-feature is matched, but repo-b#shared-feature
+        // should NOT be excluded.
+        final crossAuthorPrs = await findCrossAuthorLandedPrs(
+          localRepos,
+          {'org/repo-a#shared-feature'},
+          processRunner: (exe, args, {workingDirectory}) {
+            if (exe == 'gh') {
+              return ProcessResult(
+                1,
+                0,
+                jsonEncode({
+                  'data': {
+                    'q0': {
+                      'nameWithOwner': 'org/repo-b',
+                      'url': 'https://github.com/org/repo-b',
+                      'pullRequests': {
+                        'nodes': [
+                          {
+                            'number': 55,
+                            'title': 'shared in b',
+                            'url': 'https://github.com/org/repo-b/pull/55',
+                            'mergedAt': DateTime.now()
+                                .toUtc()
+                                .subtract(const Duration(days: 1))
+                                .toIso8601String(),
+                            'headRefName': 'shared-feature',
+                            'headRefOid': 'sha55',
+                            'baseRefName': 'main',
+                          },
+                        ],
+                      },
+                    },
+                  },
+                }),
+                '',
+              );
+            }
+            return defaultSyncProcessRunner(
+              exe,
+              args,
+              workingDirectory: workingDirectory,
+            );
+          },
+        );
+
+        check(crossAuthorPrs.length).equals(1);
+        check(crossAuthorPrs.first.repository).equals('org/repo-b');
       },
     );
   });
