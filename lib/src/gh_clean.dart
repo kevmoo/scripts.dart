@@ -46,6 +46,18 @@ typedef PrCleanResult = ({
   String status,
 });
 
+/// Information about a local secondary worktree that has no associated PR
+/// on GitHub.
+typedef UnlinkedWorktree = ({
+  String repository,
+  String worktreePath,
+  String branch,
+  String sha,
+  int? commitsAhead,
+  String? lastCommitDate,
+  String? lastCommitSubject,
+});
+
 /// Options for configuring `gh-clean`.
 class GhCleanOptions {
   final String user;
@@ -180,7 +192,38 @@ Future<void> runGhClean({
       ),
   ];
 
-  _outputReport(results, options);
+  final matchedWorktreePaths = <String>{};
+  for (final r in results) {
+    if (r.localRepo == null) continue;
+    final headBranch = r.pr.headRefName;
+    final repoShortName = r.pr.repository.split('/').last;
+    final matchingWt = findMatchingWorktree(
+      r.localRepo!,
+      headBranch,
+      repoShortName,
+    );
+    if (matchingWt != null) {
+      matchedWorktreePaths.add(matchingWt.path);
+    }
+  }
+
+  onProgress?.call('Checking for worktrees with no associated PR...');
+  final unlinkedWorktrees = options.skipWorktrees
+      ? const <UnlinkedWorktree>[]
+      : await findUnlinkedWorktrees(
+          localRepos,
+          matchedWorktreePaths,
+          repoFilter: options.repo,
+          processRunner: runner,
+          onProgress: onProgress,
+        );
+  if (unlinkedWorktrees.isNotEmpty) {
+    onProgress?.call(
+      'Found ${unlinkedWorktrees.length} worktree(s) with no associated PR.',
+    );
+  }
+
+  _outputReport(results, options, unlinkedWorktrees: unlinkedWorktrees);
 }
 
 Map<String, LocalRepoInfo> _buildRepoMap(List<LocalRepoInfo> localRepos) {
@@ -245,13 +288,35 @@ PrCleanResult _processPr(
   );
 }
 
-void _outputReport(List<PrCleanResult> results, GhCleanOptions options) {
+void _outputReport(
+  List<PrCleanResult> results,
+  GhCleanOptions options, {
+  List<UnlinkedWorktree> unlinkedWorktrees = const [],
+}) {
   if (options.json) {
-    print(jsonEncode(formatJsonReport(results, applied: options.apply)));
+    print(
+      jsonEncode(
+        formatJsonReport(
+          results,
+          applied: options.apply,
+          unlinkedWorktrees: unlinkedWorktrees,
+        ),
+      ),
+    );
   } else if (options.markdown) {
-    print(formatMarkdownReport(results, applied: options.apply));
+    print(
+      formatMarkdownReport(
+        results,
+        applied: options.apply,
+        unlinkedWorktrees: unlinkedWorktrees,
+      ),
+    );
   } else {
-    printTerminalReport(results, applied: options.apply);
+    printTerminalReport(
+      results,
+      applied: options.apply,
+      unlinkedWorktrees: unlinkedWorktrees,
+    );
   }
 }
 
@@ -564,18 +629,24 @@ List<CleanAction> executeCleanup(
   return actions;
 }
 
-String _resolveTrunkBranch(LandedPr pr, LocalRepoInfo? localRepo) {
-  if (_isProtectedBranch(pr.baseRefName)) {
-    return pr.baseRefName;
+/// Resolves the default/trunk branch name for [localRepo].
+String resolveTrunkBranch(LocalRepoInfo localRepo, {String? preferredTrunk}) {
+  if (preferredTrunk != null && _isProtectedBranch(preferredTrunk)) {
+    return preferredTrunk;
   }
-  if (localRepo != null) {
-    for (final candidate in _trunkCandidates) {
-      if (localRepo.branches.any((b) => b.name == candidate)) {
-        return candidate;
-      }
+  for (final candidate in _trunkCandidates) {
+    if (localRepo.branches.any((b) => b.name == candidate)) {
+      return candidate;
     }
   }
   return 'main';
+}
+
+String _resolveTrunkBranch(LandedPr pr, LocalRepoInfo? localRepo) {
+  if (localRepo == null) {
+    return _isProtectedBranch(pr.baseRefName) ? pr.baseRefName : 'main';
+  }
+  return resolveTrunkBranch(localRepo, preferredTrunk: pr.baseRefName);
 }
 
 const _trunkCandidates = ['main', 'master', 'trunk', 'dev'];
@@ -807,6 +878,181 @@ bool _isProtectedBranch(String branch) {
   return protected.contains(lower);
 }
 
+typedef _CandidateWorktree = ({
+  LocalRepoInfo repo,
+  LocalWorktreeEntry wt,
+  String owner,
+  String name,
+});
+
+/// Discovers worktrees across [localRepos] that have no matching PR on GitHub.
+///
+/// [matchedWorktreePaths] is the set of worktree paths that were matched to
+/// landed PRs and are already being handled.
+Future<List<UnlinkedWorktree>> findUnlinkedWorktrees(
+  List<LocalRepoInfo> localRepos,
+  Set<String> matchedWorktreePaths, {
+  String? repoFilter,
+  SyncProcessRunner? processRunner,
+  void Function(String message)? onProgress,
+}) async {
+  final runner = processRunner ?? defaultSyncProcessRunner;
+  final candidates = <_CandidateWorktree>[];
+  final detachedCandidates = <({LocalRepoInfo repo, LocalWorktreeEntry wt})>[];
+
+  final rootRepos = localRepos.where(
+    (r) => isRootGitRepository(Directory(r.repoPath)),
+  );
+  for (final repo in rootRepos) {
+    if (isDartSdkRepositoryName(repo.repoName)) continue;
+    if (repoFilter != null &&
+        !repo.repoNames.any(
+          (n) => n.toLowerCase() == repoFilter.toLowerCase(),
+        )) {
+      continue;
+    }
+
+    final canonicalRepo = repo.repoNames.firstOrNull;
+    if (canonicalRepo == null || !canonicalRepo.contains('/')) continue;
+    final repoParts = canonicalRepo.split('/');
+    final owner = repoParts[0];
+    final name = repoParts[1];
+
+    for (final wt in repo.worktrees) {
+      if (wt.path == repo.repoPath) continue;
+      if (matchedWorktreePaths.contains(wt.path)) continue;
+      if (!Directory(wt.path).existsSync()) continue;
+
+      if (wt.branch.isEmpty || wt.branch == 'DETACHED') {
+        detachedCandidates.add((repo: repo, wt: wt));
+      } else {
+        candidates.add((repo: repo, wt: wt, owner: owner, name: name));
+      }
+    }
+  }
+
+  final unlinked = <({LocalRepoInfo repo, LocalWorktreeEntry wt})>[
+    ...detachedCandidates,
+  ];
+
+  if (candidates.isNotEmpty) {
+    const batchSize = 30;
+    for (var i = 0; i < candidates.length; i += batchSize) {
+      final batch = candidates.skip(i).take(batchSize).toList();
+      final queryBuffer = StringBuffer('query {\n');
+      for (var b = 0; b < batch.length; b++) {
+        final item = batch[b];
+        final encOwner = jsonEncode(item.owner);
+        final encName = jsonEncode(item.name);
+        final encBranch = jsonEncode(item.wt.branch);
+        queryBuffer.writeln(
+          '  q$b: repository(owner: $encOwner, name: $encName) {\n'
+          '    pullRequests(headRefName: $encBranch, first: 1) {\n'
+          '      nodes {\n'
+          '        number\n'
+          '        state\n'
+          '      }\n'
+          '    }\n'
+          '  }',
+        );
+      }
+      queryBuffer.writeln('}');
+
+      final result = runner('gh', [
+        'api',
+        'graphql',
+        '-f',
+        'query=${queryBuffer.toString()}',
+      ]);
+
+      Map<String, dynamic>? data;
+      if (result.stdout is String &&
+          (result.stdout as String).trim().isNotEmpty) {
+        try {
+          final decoded =
+              jsonDecode(result.stdout as String) as Map<String, dynamic>?;
+          data = decoded?['data'] as Map<String, dynamic>?;
+        } catch (_) {
+          // If stdout is not valid JSON, data remains null.
+        }
+      }
+
+      for (var b = 0; b < batch.length; b++) {
+        final item = batch[b];
+        final qVal = data?['q$b'];
+        final qMap = qVal is Map<String, dynamic> ? qVal : null;
+        final prsVal = qMap?['pullRequests'];
+        final prsMap = prsVal is Map<String, dynamic> ? prsVal : null;
+        final prNodes = (prsMap?['nodes'] as List<dynamic>?) ?? [];
+        if (prNodes.isEmpty) {
+          unlinked.add((repo: item.repo, wt: item.wt));
+        }
+      }
+    }
+  }
+
+  final results = <UnlinkedWorktree>[];
+  for (final item in unlinked) {
+    final repo = item.repo;
+    final wt = item.wt;
+    final trunk = resolveTrunkBranch(repo);
+
+    int? commitsAhead;
+    for (final ref in ['origin/$trunk', 'upstream/$trunk', trunk]) {
+      final revResult = runner('git', [
+        'rev-list',
+        '--count',
+        '$ref..HEAD',
+      ], workingDirectory: wt.path);
+      if (revResult.exitCode == 0) {
+        final parsed = int.tryParse((revResult.stdout as String).trim());
+        if (parsed != null) {
+          commitsAhead = parsed;
+          break;
+        }
+      }
+    }
+
+    String? lastCommitDate;
+    String? lastCommitSubject;
+    final logResult = runner('git', [
+      'log',
+      '-1',
+      '--format=%cs|%s',
+    ], workingDirectory: wt.path);
+    if (logResult.exitCode == 0) {
+      final out = (logResult.stdout as String).trim();
+      if (out.isNotEmpty) {
+        final parts = out.split('|');
+        lastCommitDate = parts[0].trim();
+        if (parts.length > 1) {
+          lastCommitSubject = parts.sublist(1).join('|').trim();
+        }
+      }
+    }
+
+    results.add((
+      repository: repo.repoName,
+      worktreePath: wt.path,
+      branch: wt.branch.isEmpty ? '(detached)' : wt.branch,
+      sha: wt.sha,
+      commitsAhead: commitsAhead,
+      lastCommitDate: lastCommitDate,
+      lastCommitSubject: lastCommitSubject,
+    ));
+  }
+
+  results.sort((a, b) {
+    final repoCmp = a.repository.toLowerCase().compareTo(
+      b.repository.toLowerCase(),
+    );
+    if (repoCmp != 0) return repoCmp;
+    return a.worktreePath.toLowerCase().compareTo(b.worktreePath.toLowerCase());
+  });
+
+  return results;
+}
+
 /// Formats output as GitHub Flavored Markdown.
 ///
 /// Rows are sorted by `org` -> `repo` -> `oldest PR number`.
@@ -817,6 +1063,7 @@ bool _isProtectedBranch(String branch) {
 String formatMarkdownReport(
   List<PrCleanResult> results, {
   required bool applied,
+  List<UnlinkedWorktree> unlinkedWorktrees = const [],
 }) {
   final buffer = StringBuffer()
     ..writeln('# Landed Pull Requests Cleanup Report')
@@ -830,20 +1077,47 @@ String formatMarkdownReport(
 
   if (results.isEmpty) {
     buffer.writeln('No recently landed pull requests found.');
-    return buffer.toString();
+  } else {
+    buffer
+      ..writeln('<!-- mdformat off -->')
+      ..writeln('| Repository | PR(s) | Local Directory | Actions / Status |')
+      ..writeln('| :--- | :--- | :--- | :--- |');
+
+    final rows = _buildSortedReportRows(results, applied: applied);
+    for (final row in rows) {
+      buffer.writeln(row.markdown);
+    }
+
+    buffer.writeln('<!-- mdformat on -->');
   }
 
-  buffer
-    ..writeln('<!-- mdformat off -->')
-    ..writeln('| Repository | PR(s) | Local Directory | Actions / Status |')
-    ..writeln('| :--- | :--- | :--- | :--- |');
+  if (unlinkedWorktrees.isNotEmpty) {
+    buffer
+      ..writeln()
+      ..writeln('## Worktrees with No Associated PR')
+      ..writeln()
+      ..writeln('<!-- mdformat off -->')
+      ..writeln(
+        '| Repository | Worktree | Branch | Commits Ahead | Last Commit |',
+      )
+      ..writeln('| :--- | :--- | :--- | :---: | :--- |');
 
-  final rows = _buildSortedReportRows(results, applied: applied);
-  for (final row in rows) {
-    buffer.writeln(row.markdown);
+    for (final u in unlinkedWorktrees) {
+      final repoLink =
+          '[**${u.repository}**](https://github.com/${u.repository})';
+      final wtLink =
+          '[`${p.basename(u.worktreePath)}`](file://${u.worktreePath})';
+      final branchStr = '`${u.branch}`';
+      final aheadStr = u.commitsAhead != null ? '${u.commitsAhead}' : '?';
+      final dateStr = u.lastCommitDate ?? '?';
+      buffer.writeln(
+        '| $repoLink | $wtLink | $branchStr | $aheadStr | $dateStr |',
+      );
+    }
+
+    buffer.writeln('<!-- mdformat on -->');
   }
 
-  buffer.writeln('<!-- mdformat on -->');
   return buffer.toString();
 }
 
@@ -976,7 +1250,11 @@ String _formatNoOpClusterMarkdownRow(
 }
 
 /// Formats output for terminal viewing.
-void printTerminalReport(List<PrCleanResult> results, {required bool applied}) {
+void printTerminalReport(
+  List<PrCleanResult> results, {
+  required bool applied,
+  List<UnlinkedWorktree> unlinkedWorktrees = const [],
+}) {
   final modeStr = applied
       ? green.wrap('🚀 Applied Cleanup')!
       : cyan.wrap('🔍 Preview Mode (Dry Run)')!;
@@ -984,17 +1262,39 @@ void printTerminalReport(List<PrCleanResult> results, {required bool applied}) {
 
   if (results.isEmpty) {
     print(styleDim.wrap('No recently landed pull requests found.')!);
-    return;
-  }
-
-  for (final r in results) {
-    _printTerminalPrHeader(r);
-    if (applied) {
-      _printExecutedActions(r.executedActions);
-    } else {
-      _printPlannedActions(r.plannedActions, r.status);
+    if (unlinkedWorktrees.isEmpty) {
+      return;
     }
     print('');
+  } else {
+    for (final r in results) {
+      _printTerminalPrHeader(r);
+      if (applied) {
+        _printExecutedActions(r.executedActions);
+      } else {
+        _printPlannedActions(r.plannedActions, r.status);
+      }
+      print('');
+    }
+  }
+
+  if (unlinkedWorktrees.isNotEmpty) {
+    print('${styleBold.wrap("Worktrees with No Associated PR:")}\n');
+    for (final u in unlinkedWorktrees) {
+      final folder = p.basename(u.worktreePath);
+      final ahead = u.commitsAhead != null ? '${u.commitsAhead}' : 'unknown';
+      final date = u.lastCommitDate ?? 'unknown';
+      final subject =
+          u.lastCommitSubject != null && u.lastCommitSubject!.isNotEmpty
+          ? ' - "${u.lastCommitSubject}"'
+          : '';
+      print('  ${styleBold.wrap(folder)} (${u.repository})');
+      print('    Branch:        ${u.branch}');
+      print('    Path:          ${u.worktreePath}');
+      print('    Commits Ahead: $ahead');
+      print('    Last Commit:   $date$subject');
+      print('');
+    }
   }
 }
 
@@ -1039,6 +1339,7 @@ void _printPlannedActions(List<String> plannedActions, String status) {
 Map<String, dynamic> formatJsonReport(
   List<PrCleanResult> results, {
   required bool applied,
+  List<UnlinkedWorktree> unlinkedWorktrees = const [],
 }) => {
   'applied': applied,
   'total': results.length,
@@ -1075,4 +1376,16 @@ Map<String, dynamic> formatJsonReport(
         },
       )
       .toList(),
+  'unlinkedWorktrees': [
+    for (final u in unlinkedWorktrees)
+      {
+        'repository': u.repository,
+        'worktreePath': u.worktreePath,
+        'branch': u.branch,
+        'sha': u.sha,
+        'commitsAhead': u.commitsAhead,
+        'lastCommitDate': u.lastCommitDate,
+        'lastCommitSubject': u.lastCommitSubject,
+      },
+  ],
 };

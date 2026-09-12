@@ -6,6 +6,7 @@ import 'package:git/git.dart';
 import 'package:kevmoo_scripts/src/gh_clean.dart';
 import 'package:kevmoo_scripts/src/git_extensions.dart';
 import 'package:kevmoo_scripts/src/local_repo_scanner.dart';
+import 'package:kevmoo_scripts/src/process_utils.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
@@ -697,6 +698,304 @@ void main() {
       );
 
       check(passedLimit).equals('100');
+    });
+
+    test('formatMarkdownReport formats unlinked worktrees table correctly', () {
+      final unlinked = [
+        (
+          repository: 'dart-lang/build',
+          worktreePath: '/home/user/github/_build-pr-5098',
+          branch: 'pr-5098',
+          sha: '2e45f6dd',
+          commitsAhead: 17,
+          lastCommitDate: '2026-09-02',
+          lastCommitSubject: 'Add contracts',
+        ),
+      ];
+
+      final report = formatMarkdownReport(
+        [],
+        applied: false,
+        unlinkedWorktrees: unlinked,
+      );
+      check(report)
+        ..contains('## Worktrees with No Associated PR')
+        ..contains('[**dart-lang/build**](https://github.com/dart-lang/build)')
+        ..contains(
+          '[`_build-pr-5098`](file:///home/user/github/_build-pr-5098)',
+        )
+        ..contains('`pr-5098`')
+        ..contains('| 17 |')
+        ..contains('| 2026-09-02 |');
+    });
+
+    test('formatJsonReport includes unlinkedWorktrees', () {
+      final unlinked = [
+        (
+          repository: 'dart-lang/build',
+          worktreePath: '/home/user/github/_build-pr-5098',
+          branch: 'pr-5098',
+          sha: '2e45f6dd',
+          commitsAhead: 17,
+          lastCommitDate: '2026-09-02',
+          lastCommitSubject: 'Add contracts',
+        ),
+      ];
+
+      final json = formatJsonReport(
+        [],
+        applied: false,
+        unlinkedWorktrees: unlinked,
+      );
+      check(json['unlinkedWorktrees']).isA<List<dynamic>>();
+      final list = json['unlinkedWorktrees'] as List<dynamic>;
+      check(list.length).equals(1);
+      final item = list.first as Map<String, dynamic>;
+      check(item['repository']).equals('dart-lang/build');
+      check(item['branch']).equals('pr-5098');
+      check(item['commitsAhead']).equals(17);
+      check(item['lastCommitDate']).equals('2026-09-02');
+      check(item['lastCommitSubject']).equals('Add contracts');
+    });
+  });
+
+  group('findUnlinkedWorktrees', () {
+    test(
+      'identifies secondary worktrees with no matching PR on GitHub',
+      () async {
+        await d.dir('repo_unlinked', [
+          d.file('README.md', '# Unlinked'),
+        ]).create();
+        final repoPath = p.join(d.sandbox, 'repo_unlinked');
+        final git = await GitDir.init(repoPath, allowContent: true);
+        await git.configureTestIdentity();
+        await git.runCommand(['branch', '-M', 'main']);
+        await git.runCommand([
+          'remote',
+          'add',
+          'origin',
+          'https://github.com/dart-lang/build.git',
+        ]);
+        await git.runCommand(['add', '.']);
+        await git.runCommand(['commit', '-m', 'init']);
+
+        final wtPath = p.join(d.sandbox, '_build-pr-5098');
+        await git.runCommand(['worktree', 'add', '-b', 'pr-5098', wtPath]);
+        final wtGit = await GitDir.fromExisting(wtPath);
+        await wtGit.configureTestIdentity();
+        await File(p.join(wtPath, 'contract.txt'))
+            .writeAsString('contract code');
+        await wtGit.runCommand(['add', '.']);
+        await wtGit.runCommand(['commit', '-m', 'Add contracts']);
+
+        final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+        final unlinked = await findUnlinkedWorktrees(
+          localRepos,
+          <String>{},
+          processRunner: (exe, args, {workingDirectory}) {
+            if (exe == 'gh') {
+              return ProcessResult(
+                1,
+                0,
+                jsonEncode({
+                  'data': {
+                    'q0': {
+                      'pullRequests': {'nodes': <dynamic>[]},
+                    },
+                  },
+                }),
+                '',
+              );
+            }
+            return defaultSyncProcessRunner(
+              exe,
+              args,
+              workingDirectory: workingDirectory,
+            );
+          },
+        );
+
+        check(unlinked.length).equals(1);
+        final entry = unlinked.first;
+        check(entry.repository).equals('dart-lang/build');
+        check(entry.branch).equals('pr-5098');
+        check(entry.worktreePath).equals(wtPath);
+        check(entry.commitsAhead).isNotNull().equals(1);
+        check(entry.lastCommitSubject).isNotNull().equals('Add contracts');
+      },
+    );
+
+    test('excludes secondary worktrees that have an open PR', () async {
+      await d.dir('repo_with_pr', [d.file('README.md', '# With PR')]).create();
+      final repoPath = p.join(d.sandbox, 'repo_with_pr');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/flutter/flutter.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+
+      final wtPath = p.join(d.sandbox, '_flutter-open-pr');
+      await git.runCommand(['worktree', 'add', '-b', 'open-pr', wtPath]);
+
+      final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+      final unlinked = await findUnlinkedWorktrees(
+        localRepos,
+        <String>{},
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            return ProcessResult(
+              1,
+              0,
+              jsonEncode({
+                'data': {
+                  'q0': {
+                    'pullRequests': {
+                      'nodes': [
+                        {'number': 12345, 'state': 'OPEN'},
+                      ],
+                    },
+                  },
+                },
+              }),
+              '',
+            );
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      check(unlinked).isEmpty();
+    });
+
+    test(
+      'excludes worktrees that are already in matchedWorktreePaths',
+      () async {
+        await d.dir('repo_matched', [
+          d.file('README.md', '# Matched'),
+        ]).create();
+        final repoPath = p.join(d.sandbox, 'repo_matched');
+        final git = await GitDir.init(repoPath, allowContent: true);
+        await git.configureTestIdentity();
+        await git.runCommand(['branch', '-M', 'main']);
+        await git.runCommand([
+          'remote',
+          'add',
+          'origin',
+          'https://github.com/dart-lang/test.git',
+        ]);
+        await git.runCommand(['add', '.']);
+        await git.runCommand(['commit', '-m', 'init']);
+
+        final wtPath = p.join(d.sandbox, '_test-matched');
+        await git.runCommand([
+          'worktree',
+          'add',
+          '-b',
+          'matched-branch',
+          wtPath,
+        ]);
+
+        final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+        final unlinked = await findUnlinkedWorktrees(
+          localRepos,
+          {wtPath}, // already matched
+        );
+
+        check(unlinked).isEmpty();
+      },
+    );
+
+    test('never deletes unlinked worktrees under runGhClean --apply', () async {
+      await d.dir('repo_safe', [d.file('README.md', '# Safe')]).create();
+      final repoPath = p.join(d.sandbox, 'repo_safe');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/myorg/safe-repo.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+
+      final wtPath = p.join(d.sandbox, '_safe-unlinked');
+      await git.runCommand([
+        'worktree',
+        'add',
+        '-b',
+        'unpushed-branch',
+        wtPath,
+      ]);
+      final wtGit = await GitDir.fromExisting(wtPath);
+      await wtGit.configureTestIdentity();
+      await File(p.join(wtPath, 'precious.txt'))
+          .writeAsString('valuable unpushed work');
+      await wtGit.runCommand(['add', '.']);
+      await wtGit.runCommand(['commit', '-m', 'Precious unpushed commit']);
+
+      final options = GhCleanOptions(localRoot: d.sandbox, apply: true);
+
+      await runGhClean(
+        options: options,
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            final queryArg = args.firstWhere((a) => a.startsWith('query='));
+            if (queryArg.contains('search(')) {
+              // fetchLandedPrs returns 0 landed PRs
+              return ProcessResult(
+                1,
+                0,
+                jsonEncode({
+                  'data': {
+                    'search': {'nodes': <dynamic>[]},
+                  },
+                }),
+                '',
+              );
+            } else {
+              // findUnlinkedWorktrees query returns nodes: []
+              return ProcessResult(
+                1,
+                0,
+                jsonEncode({
+                  'data': {
+                    'q0': {
+                      'pullRequests': {'nodes': <dynamic>[]},
+                    },
+                  },
+                }),
+                '',
+              );
+            }
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      // Verify worktree and its files are strictly preserved!
+      check(Directory(wtPath).existsSync()).isTrue();
+      check(File(p.join(wtPath, 'precious.txt')).existsSync()).isTrue();
+      check(File(p.join(wtPath, 'precious.txt')).readAsStringSync())
+          .equals('valuable unpushed work');
     });
   });
 }

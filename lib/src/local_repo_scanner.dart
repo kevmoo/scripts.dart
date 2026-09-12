@@ -231,7 +231,7 @@ LocalRepoInfo? _indexRepository(Directory dir, SyncProcessRunner runner) {
 }
 
 Set<String>? _extractRepoNames(String rawOutput) {
-  final repoNames = <String>{};
+  final entries = <({String remoteName, String repoName})>[];
   for (final line in rawOutput.trim().split('\n')) {
     final parts = line.split(RegExp(r'\s+'));
     if (parts.length < 2) continue;
@@ -240,7 +240,24 @@ Set<String>? _extractRepoNames(String rawOutput) {
     final name = normalizeRepoName(remoteUrl);
     if (name == null) continue;
     if (isDartSdkRepositoryName(name)) return null;
-    repoNames.add(name);
+    entries.add((remoteName: parts[0], repoName: name));
+  }
+  if (entries.isEmpty) return null;
+
+  // Prioritize 'upstream' first, then 'origin', then other remotes.
+  final repoNames = <String>{};
+  for (final entry in entries) {
+    if (entry.remoteName == 'upstream') {
+      repoNames.add(entry.repoName);
+    }
+  }
+  for (final entry in entries) {
+    if (entry.remoteName == 'origin') {
+      repoNames.add(entry.repoName);
+    }
+  }
+  for (final entry in entries) {
+    repoNames.add(entry.repoName);
   }
   return repoNames.isEmpty ? null : repoNames;
 }
