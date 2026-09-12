@@ -84,6 +84,7 @@ class RepoAlignScanner {
     final analysis = _scanAnalysisOptions(dir);
     final workflows = _scanWorkflows(dir);
     final dependabot = _scanDependabot(dir);
+    final markdown = _scanMarkdownConfig(dir);
     final ghInfo = queryGitHubApi
         ? _scanGitHubRemote(name)
         : _defaultGitHubInfo();
@@ -115,6 +116,9 @@ class RepoAlignScanner {
       hasHealth: workflows.hasHealth,
       hasPostSummaries: workflows.hasPostSummaries,
       expectedCiCheckPrefixes: workflows.expectedCiCheckPrefixes,
+      hasPrettierRc: markdown.hasPrettierRc,
+      hasMarkdownWorkflow: markdown.hasMarkdownWorkflow,
+      hasPrettierIgnore: markdown.hasPrettierIgnore,
       autoMergeAllowed: ghInfo.autoMergeAllowed,
       hasRulesetOrProtection: ghInfo.hasRulesetOrProtection,
       requiredChecks: ghInfo.requiredChecks,
@@ -237,6 +241,14 @@ class RepoAlignScanner {
       customLints: resolved.explicitLints.toList()..sort(),
     );
   }
+
+  _MarkdownInfo _scanMarkdownConfig(Directory dir) => (
+    hasPrettierRc: File(p.join(dir.path, '.prettierrc.json')).existsSync(),
+    hasMarkdownWorkflow: File(
+      p.join(dir.path, '.github', 'workflows', 'markdown.yml'),
+    ).existsSync(),
+    hasPrettierIgnore: File(p.join(dir.path, '.prettierignore')).existsSync(),
+  );
 
   _WorkflowsInfo _scanWorkflows(Directory dir) {
     final workflowsDir = Directory(p.join(dir.path, '.github', 'workflows'));
@@ -534,6 +546,12 @@ typedef _WorkflowsInfo = ({
   bool hasHealth,
   bool hasPostSummaries,
   List<String> expectedCiCheckPrefixes,
+});
+
+typedef _MarkdownInfo = ({
+  bool hasPrettierRc,
+  bool hasMarkdownWorkflow,
+  bool hasPrettierIgnore,
 });
 
 typedef _GitHubInfo = ({

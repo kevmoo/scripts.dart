@@ -33,6 +33,7 @@ void main() {
           'lower_bound.yml',
           'complexity.yml',
           'autosubmit.yml',
+          'markdown.yml',
         ],
         hasCi: true,
         hasLowerBound: true,
@@ -40,9 +41,15 @@ void main() {
         hasAutosubmit: true,
         hasDependabot: true,
         hasPublish: true,
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
         autoMergeAllowed: true,
         hasRulesetOrProtection: true,
-        requiredChecks: ['analyze (dev)', 'test (ubuntu-latest, dev)'],
+        requiredChecks: [
+          'analyze (dev)',
+          'test (ubuntu-latest, dev)',
+          'markdown',
+        ],
       );
 
       check(status.isAligned).isTrue();
@@ -170,6 +177,54 @@ void main() {
         '(expected: analyze/test)',
       );
     });
+
+    test('flags missing markdown config on every repo kind', () {
+      for (final kind in [
+        RepoKind.publishedPackage,
+        RepoKind.toolOrApp,
+        RepoKind.agentSkills,
+      ]) {
+        final status = _markdownFixture(kind: kind);
+        check(
+          because: 'kind $kind',
+          status.issues,
+        ).contains('Missing .prettierrc.json');
+        check(
+          because: 'kind $kind',
+          status.issues,
+        ).contains('Missing markdown.yml');
+      }
+    });
+
+    test('flags a stray .prettierignore as a regression', () {
+      final status = _markdownFixture(
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        hasPrettierIgnore: true,
+        requiredChecks: ['markdown'],
+      );
+
+      check(status.issues).contains('Stray .prettierignore (should not exist)');
+    });
+
+    test('flags markdown.yml that runs but does not gate', () {
+      final status = _markdownFixture(
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        requiredChecks: ['analyze (dev)'],
+      );
+
+      check(status.issues)
+          .contains('markdown.yml present but not a required check');
+    });
+
+    test('does not flag gating when markdown.yml is absent', () {
+      final status = _markdownFixture(requiredChecks: ['analyze (dev)']);
+
+      check(status.issues).not(
+        (it) => it.contains('markdown.yml present but not a required check'),
+      );
+    });
   });
 
   group('Canonical Templates', () {
@@ -191,6 +246,34 @@ void main() {
       check(canonicalPostSummariesWorkflow).contains(
         'dart-lang/ecosystem/.github/workflows/post_summaries.yaml@main',
       );
+    });
+
+    test('prettier config is scoped to markdown only', () {
+      check(canonicalPrettierRc).contains('"**/*.md"');
+      check(canonicalPrettierRc).contains('"proseWrap": "always"');
+      check(canonicalPrettierRc).contains('"printWidth": 80');
+      check(canonicalPrettierRc)
+          .contains('"embeddedLanguageFormatting": "off"');
+    });
+
+    test('markdown workflow job id matches the required check context', () {
+      check(canonicalMarkdownWorkflow).contains('\n  $markdownCheckContext:\n');
+    });
+
+    test('markdown workflow pins prettier and has no paths filter', () {
+      check(canonicalMarkdownWorkflow).contains('prettier@3.9.6');
+      // A `paths:` filter on a required check deadlocks every PR that touches
+      // no markdown. Match the indented YAML key, not the word in the comment.
+      check(canonicalMarkdownWorkflow).not((it) => it.contains('\n    paths:'));
+    });
+
+    test('markdown workflow sha-pins its actions', () {
+      check(
+        canonicalMarkdownWorkflow,
+      ).contains('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1');
+      check(
+        canonicalMarkdownWorkflow,
+      ).contains('actions/setup-node@820762786026740c76f36085b0efc47a31fe5020');
     });
   });
 
@@ -263,3 +346,43 @@ analyzer:
     });
   });
 }
+
+/// A minimally-aligned repo, so that any reported issue is attributable to the
+/// markdown settings under test rather than unrelated drift.
+RepoAlignmentStatus _markdownFixture({
+  RepoKind kind = RepoKind.toolOrApp,
+  bool hasPrettierRc = false,
+  bool hasMarkdownWorkflow = false,
+  bool hasPrettierIgnore = false,
+  List<String> requiredChecks = const ['analyze (dev)'],
+}) => RepoAlignmentStatus(
+  name: 'md_repo',
+  path: '/tmp/md_repo',
+  kind: kind,
+  isArchived: false,
+  isFork: false,
+  isPrivate: false,
+  defaultBranch: 'main',
+  hasPubspec: true,
+  sdkConstraint: '^3.0.0',
+  packageNames: ['md_repo'],
+  hasAnalysisOptions: true,
+  analysisInclude: 'package:dart_flutter_team_lints/analysis_options.yaml',
+  strictCasts: true,
+  strictInference: true,
+  strictRawTypes: true,
+  customLints: [],
+  workflowFiles: ['ci.yml'],
+  hasCi: false,
+  hasLowerBound: true,
+  hasCogComp: true,
+  hasAutosubmit: true,
+  hasDependabot: true,
+  hasPublish: true,
+  hasPrettierRc: hasPrettierRc,
+  hasMarkdownWorkflow: hasMarkdownWorkflow,
+  hasPrettierIgnore: hasPrettierIgnore,
+  autoMergeAllowed: true,
+  hasRulesetOrProtection: true,
+  requiredChecks: requiredChecks,
+);

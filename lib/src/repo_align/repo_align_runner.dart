@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:collection/collection.dart';
 import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
 
@@ -203,6 +204,38 @@ class RepoAlignRunner {
     _fixComplexity(r, workflowsDir, dryRun: dryRun);
     _fixAutosubmit(r, workflowsDir, dryRun: dryRun);
     _fixDependabot(r, dryRun: dryRun);
+    _fixMarkdown(r, workflowsDir, dryRun: dryRun);
+  }
+
+  /// Markdown standardization applies to every repo kind -- there is no
+  /// eligibility gate here, unlike the Dart-specific workflows.
+  void _fixMarkdown(
+    RepoAlignmentStatus r,
+    Directory workflowsDir, {
+    required bool dryRun,
+  }) {
+    if (!r.hasPrettierRc) {
+      print('  📝 ${dryRun ? 'Would create' : 'Creating'} .prettierrc.json');
+      if (!dryRun) {
+        File(p.join(r.path, '.prettierrc.json'))
+            .writeAsStringSync(canonicalPrettierRc);
+      }
+    }
+
+    if (!r.hasMarkdownWorkflow) {
+      print(
+        '  🚀 ${dryRun ? 'Would create' : 'Creating'} .github/workflows/markdown.yml',
+      );
+      if (!dryRun) {
+        File(p.join(workflowsDir.path, 'markdown.yml'))
+            .writeAsStringSync(canonicalMarkdownWorkflow);
+      }
+    }
+
+    if (r.hasPrettierIgnore) {
+      print('  🧹 ${dryRun ? 'Would delete' : 'Deleting'} .prettierignore');
+      if (!dryRun) File(p.join(r.path, '.prettierignore')).deleteSync();
+    }
   }
 
   void _fixLowerBound(
@@ -259,7 +292,13 @@ class RepoAlignRunner {
   }
 
   void _fixGitHubSettings(RepoAlignmentStatus r, {required bool dryRun}) {
-    if (r.autoMergeAllowed || r.kind == RepoKind.agentSkills) return;
+    if (r.kind == RepoKind.agentSkills) return;
+    _fixAutoMerge(r, dryRun: dryRun);
+    _fixRequiredChecks(r, dryRun: dryRun);
+  }
+
+  void _fixAutoMerge(RepoAlignmentStatus r, {required bool dryRun}) {
+    if (r.autoMergeAllowed) return;
     print(
       '  🌐 ${dryRun ? 'Would enable' : 'Enabling'} auto-merge on '
       'GitHub (kevmoo/${r.name})',
@@ -273,4 +312,108 @@ class RepoAlignRunner {
       ]);
     }
   }
+
+  /// Appends [markdownCheckContext] to the branch ruleset's required status
+  /// checks. A check that runs but does not gate is decoration.
+  ///
+  /// The rulesets API cannot PATCH-merge `required_status_checks`, so the whole
+  /// `rules` array has to be read, amended, and PUT back.
+  void _fixRequiredChecks(RepoAlignmentStatus r, {required bool dryRun}) {
+    if (!r.hasMarkdownWorkflow) return;
+    if (!r.hasRulesetOrProtection) return;
+    if (r.requiredChecks.contains(markdownCheckContext)) return;
+
+    print(
+      '  🔒 ${dryRun ? 'Would require' : 'Requiring'} '
+      '"$markdownCheckContext" check on ${r.defaultBranch}',
+    );
+    if (dryRun) return;
+
+    final rulesetId = _findDefaultBranchRulesetId(r.name);
+    if (rulesetId == null) {
+      print('  ${red.wrap('⚠️  No branch ruleset found; skipped')}');
+      return;
+    }
+
+    final read = Process.runSync('gh', [
+      'api',
+      'repos/kevmoo/${r.name}/rulesets/$rulesetId',
+    ]);
+    if (read.exitCode != 0) {
+      print('  ${red.wrap('⚠️  Failed to read ruleset $rulesetId')}');
+      return;
+    }
+
+    final ruleset = jsonDecode(read.stdout as String) as Map<String, dynamic>;
+    final payload = _appendMarkdownCheck(ruleset);
+    if (payload == null) {
+      print('  ${red.wrap('⚠️  Ruleset has no required_status_checks rule')}');
+      return;
+    }
+
+    final tmp = File(
+      p.join(Directory.systemTemp.path, 'repo_align_${r.name}_ruleset.json'),
+    )..writeAsStringSync(jsonEncode(payload));
+    try {
+      final write = Process.runSync('gh', [
+        'api',
+        '--method',
+        'PUT',
+        'repos/kevmoo/${r.name}/rulesets/$rulesetId',
+        '--input',
+        tmp.path,
+      ]);
+      if (write.exitCode != 0) {
+        print('  ${red.wrap('⚠️  Failed to update ruleset: ${write.stderr}')}');
+      }
+    } finally {
+      tmp.deleteSync();
+    }
+  }
+
+  String? _findDefaultBranchRulesetId(String repoName) {
+    final result = Process.runSync('gh', [
+      'api',
+      'repos/kevmoo/$repoName/rulesets',
+      '--jq',
+      '.[] | select(.target == "branch") | .id',
+    ]);
+    if (result.exitCode != 0) return null;
+    final ids = (result.stdout as String)
+        .split('\n')
+        .map((l) => l.trim())
+        .where((l) => l.isNotEmpty);
+    return ids.firstOrNull;
+  }
+
+  /// Builds the PUT payload, or `null` if the ruleset has no
+  /// `required_status_checks` rule to append to.
+  Map<String, dynamic>? _appendMarkdownCheck(Map<String, dynamic> ruleset) {
+    final rules = (ruleset['rules'] as List).cast<Map<String, dynamic>>();
+    final target = rules.firstWhereOrNull(
+      (Map<String, dynamic> rule) => rule['type'] == 'required_status_checks',
+    );
+    if (target == null) return null;
+
+    final params = target['parameters'] as Map<String, dynamic>;
+    final checks = (params['required_status_checks'] as List).toList()
+      ..add({
+        'context': markdownCheckContext,
+        'integration_id': _githubActions,
+      });
+    params['required_status_checks'] = checks;
+
+    return {
+      'name': ruleset['name'],
+      'target': ruleset['target'],
+      'enforcement': ruleset['enforcement'],
+      'bypass_actors': ruleset['bypass_actors'] ?? <dynamic>[],
+      'conditions': ruleset['conditions'],
+      'rules': rules,
+    };
+  }
 }
+
+/// The GitHub App id for GitHub Actions. Pinning `integration_id` stops a
+/// third-party app from satisfying a required check.
+const int _githubActions = 15368;

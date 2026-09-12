@@ -1,3 +1,5 @@
+import 'canonical_templates.dart';
+
 /// Classification of a personal GitHub repository.
 enum RepoKind {
   publishedPackage,
@@ -43,6 +45,11 @@ class RepoAlignmentStatus {
   final bool hasPostSummaries;
   final List<String> expectedCiCheckPrefixes;
 
+  // Markdown standardization
+  final bool hasPrettierRc;
+  final bool hasMarkdownWorkflow;
+  final bool hasPrettierIgnore;
+
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
   final bool hasRulesetOrProtection;
@@ -75,6 +82,9 @@ class RepoAlignmentStatus {
     this.hasHealth = false,
     this.hasPostSummaries = false,
     this.expectedCiCheckPrefixes = const [],
+    this.hasPrettierRc = false,
+    this.hasMarkdownWorkflow = false,
+    this.hasPrettierIgnore = false,
     required this.autoMergeAllowed,
     required this.hasRulesetOrProtection,
     required this.requiredChecks,
@@ -91,6 +101,7 @@ class RepoAlignmentStatus {
     final result = <String>[];
     _checkDartIssues(result);
     _checkCiIssues(result);
+    _checkMarkdownIssues(result);
     _checkGitHubIssues(result);
     return result;
   }
@@ -133,6 +144,19 @@ class RepoAlignmentStatus {
     }
   }
 
+  /// Markdown standardization applies to *every* repo kind, including
+  /// [RepoKind.agentSkills] -- skills repos are the most markdown-heavy of all.
+  void _checkMarkdownIssues(List<String> result) {
+    if (!hasPrettierRc) result.add('Missing .prettierrc.json');
+    if (!hasMarkdownWorkflow) result.add('Missing markdown.yml');
+
+    // `.prettierignore` was deliberately removed from every repo as
+    // speculative noise; its reappearance is a regression, not a gap.
+    if (hasPrettierIgnore) {
+      result.add('Stray .prettierignore (should not exist)');
+    }
+  }
+
   void _checkGitHubIssues(List<String> result) {
     if (kind == RepoKind.agentSkills) return;
 
@@ -171,6 +195,12 @@ class RepoAlignmentStatus {
         '(expected: $expectedStr)',
       );
     }
+
+    // A markdown check that runs but does not gate is decoration. It has to be
+    // in the ruleset to actually block a merge.
+    if (hasMarkdownWorkflow && !requiredChecks.contains(markdownCheckContext)) {
+      result.add('markdown.yml present but not a required check');
+    }
   }
 
   bool get _hasPrimaryCiCheck {
@@ -208,6 +238,9 @@ class RepoAlignmentStatus {
     'hasAutosubmit': hasAutosubmit,
     'hasDependabot': hasDependabot,
     'hasPublish': hasPublish,
+    'hasPrettierRc': hasPrettierRc,
+    'hasMarkdownWorkflow': hasMarkdownWorkflow,
+    'hasPrettierIgnore': hasPrettierIgnore,
     'autoMergeAllowed': autoMergeAllowed,
     'hasRulesetOrProtection': hasRulesetOrProtection,
     'requiredChecks': requiredChecks,
