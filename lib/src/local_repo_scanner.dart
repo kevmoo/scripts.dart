@@ -231,18 +231,30 @@ LocalRepoInfo? _indexRepository(Directory dir, SyncProcessRunner runner) {
 }
 
 Set<String>? _extractRepoNames(String rawOutput) {
-  final repoNames = <String>{};
+  final entries = <({String remoteName, String repoName})>[];
   for (final line in rawOutput.trim().split('\n')) {
     final parts = line.split(RegExp(r'\s+'));
     if (parts.length < 2) continue;
     final remoteUrl = parts[1];
     if (isDartSdkRemote(remoteUrl)) return null;
     final name = normalizeRepoName(remoteUrl);
-    if (name == null) continue;
-    if (isDartSdkRepositoryName(name)) return null;
-    repoNames.add(name);
+    if (name == null || isDartSdkRepositoryName(name)) continue;
+    entries.add((remoteName: parts[0], repoName: name));
   }
-  return repoNames.isEmpty ? null : repoNames;
+  return entries.isEmpty ? null : _prioritizeRepoNames(entries);
+}
+
+Set<String> _prioritizeRepoNames(
+  List<({String remoteName, String repoName})> entries,
+) {
+  int priority(String remote) => switch (remote) {
+    'upstream' => 0,
+    'origin' => 1,
+    _ => 2,
+  };
+  final sorted = entries.toList()
+    ..sort((a, b) => priority(a.remoteName).compareTo(priority(b.remoteName)));
+  return {for (final e in sorted) e.repoName};
 }
 
 String? _getCurrentBranch(String repoPath, SyncProcessRunner runner) {

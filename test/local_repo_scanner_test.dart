@@ -104,6 +104,30 @@ void main() {
       check(repo1Info.worktrees.map((w) => w.branch)).contains('feat');
     });
 
+    test('prioritizes upstream and origin remotes for repoName', () async {
+      await d.dir('multi_remote', [d.file('README.md', '# Multi')]).create();
+      final multiPath = p.join(d.sandbox, 'multi_remote');
+      final git = await GitDir.init(multiPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand([
+        'remote',
+        'add',
+        'fork',
+        'https://github.com/kevmoo/myrepo.git',
+      ]);
+      await git.runCommand([
+        'remote',
+        'add',
+        'upstream',
+        'https://github.com/org/myrepo.git',
+      ]);
+
+      final repos = scanLocalGitRepositories(Directory(d.sandbox));
+      final info = repos.firstWhere((r) => r.repoPath == multiPath);
+      check(info.repoName).equals('org/myrepo');
+      check(info.repoNames).deepEquals(['org/myrepo', 'kevmoo/myrepo']);
+    });
+
     test('excludes repositories with Dart SDK / Gerrit remotes', () async {
       await d.dir('sdk_repo', [d.file('README.md', '# SDK')]).create();
       final sdkPath = p.join(d.sandbox, 'sdk_repo');
