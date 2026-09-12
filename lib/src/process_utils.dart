@@ -35,48 +35,6 @@ Future<ProcessResult> defaultProcessRunner(
   String? workingDirectory,
 }) => Process.run(executable, arguments, workingDirectory: workingDirectory);
 
-Future<String> getProcessCmdline(int pid, {String procPath = '/proc'}) async {
-  if (Platform.isLinux) {
-    final procCmd = await _readProcCmdline(pid, procPath);
-    if (procCmd != null) return procCmd;
-  }
-
-  try {
-    final output = await runProcess('ps', [
-      '-p',
-      pid.toString(),
-      '-o',
-      'command=',
-    ]);
-    return output.trim();
-  } on ProcessException {
-    return '<unknown>';
-  }
-}
-
-Future<String?> _readProcCmdline(int pid, String procPath) async {
-  try {
-    final cmdlineFile = File('$procPath/$pid/cmdline');
-    if (await cmdlineFile.exists()) {
-      final bytes = await cmdlineFile.readAsBytes();
-      if (bytes.isNotEmpty) {
-        final parts = utf8
-            .decode(bytes, allowMalformed: true)
-            .split('\u0000')
-            .where((s) => s.isNotEmpty)
-            .toList();
-        if (parts.isNotEmpty) return parts.join(' ');
-      }
-    }
-    final commFile = File('$procPath/$pid/comm');
-    if (await commFile.exists()) {
-      final comm = (await commFile.readAsString()).trim();
-      if (comm.isNotEmpty) return comm;
-    }
-  } catch (_) {}
-  return null;
-}
-
 Future<bool> isProcessRunning(int pid, {String procPath = '/proc'}) async {
   if (Platform.isLinux) {
     return Directory('$procPath/$pid').exists();
@@ -90,21 +48,7 @@ Future<bool> isProcessRunning(int pid, {String procPath = '/proc'}) async {
   }
 }
 
-Future<String?> getProcessCwd(int pid, {String procPath = '/proc'}) async {
-  if (Platform.isLinux) {
-    try {
-      final link = Link('$procPath/$pid/cwd');
-      if (await link.exists()) {
-        var target = await link.target();
-        const deletedSuffix = ' (deleted)';
-        if (target.endsWith(deletedSuffix)) {
-          target = target.substring(0, target.length - deletedSuffix.length);
-        }
-        return target;
-      }
-    } catch (_) {}
-  }
-
+Future<String?> getProcessCwd(int pid) async {
   try {
     final output = await runProcess('lsof', [
       '-a',
@@ -135,17 +79,7 @@ String abbreviatePath(String path) {
   return path;
 }
 
-Future<String> getProcessName(int pid, {String procPath = '/proc'}) async {
-  if (Platform.isLinux) {
-    try {
-      final commFile = File('$procPath/$pid/comm');
-      if (await commFile.exists()) {
-        final comm = (await commFile.readAsString()).trim();
-        if (comm.isNotEmpty) return comm;
-      }
-    } catch (_) {}
-  }
-
+Future<String> getProcessName(int pid) async {
   try {
     final output = await runProcess('ps', [
       '-p',
@@ -153,10 +87,12 @@ Future<String> getProcessName(int pid, {String procPath = '/proc'}) async {
       '-o',
       'comm=',
     ]);
-    return output.trim().split('/').last;
+    final name = output.trim().split('/').last;
+    if (name.isNotEmpty) return name;
   } on ProcessException {
-    return '<unknown>';
+    // Process likely exited or ps is unavailable.
   }
+  return '<unknown>';
 }
 
 Future<void> killPids(List<int> pids, {bool force = false}) async {

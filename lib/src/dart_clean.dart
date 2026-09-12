@@ -172,19 +172,18 @@ Future<DartProcess?> _checkProcess(
   try {
     final info = await inspector.inspect(p);
     if (info == null) {
-      final cmdline = formatCmdline(await getProcessCmdline(p));
-      final cwd = await getProcessCwd(p);
       return DartProcess(
         pid: p,
-        cmdline: cmdline,
-        cwd: cwd,
+        cmdline: '<exited>',
         reason: 'since process likely exited.',
         ancestry: [],
       );
     }
 
     final ppid = info.ppid;
-    final parentName = ppid != null ? await getProcessName(ppid) : '<unknown>';
+    final parentName = ppid != null
+        ? (await inspector.inspect(ppid))?.name ?? await getProcessName(ppid)
+        : '<unknown>';
 
     final (:reason, :ownerPid) = await _resolveOwnerReason(
       ppid,
@@ -195,9 +194,7 @@ Future<DartProcess?> _checkProcess(
     final cwdEnv = info.env
         .where((String e) => e.startsWith('PWD='))
         .firstOrNull;
-    final cwd = cwdEnv != null
-        ? cwdEnv.substring(4)
-        : (info.cwd ?? await getProcessCwd(p));
+    final cwd = cwdEnv != null ? cwdEnv.substring(4) : info.cwd;
 
     return DartProcess(
       pid: p,
@@ -219,8 +216,9 @@ Future<DartProcess> _checkProtectedProcess(
   int p,
   ProcessInspector inspector,
 ) async {
-  final cmdline = formatCmdline(await getProcessCmdline(p));
-  final cwd = await getProcessCwd(p);
+  final info = await inspector.inspect(p);
+  final cmdline = info != null ? formatCmdline(info.cmdline) : '<current>';
+  final cwd = info?.cwd;
   final ancestry = await inspector.ancestry(p);
 
   return DartProcess(
@@ -359,6 +357,7 @@ Future<List<_ProcessNode>> _linkProcessNodes(
         parentToPid,
         ancestries,
         roots,
+        inspector,
       );
     }
   }
@@ -373,6 +372,7 @@ Future<void> _linkNonDartParent(
   Map<int, int> parentToPid,
   Map<int, List<({int pid, String command})>> ancestries,
   List<_ProcessNode> roots,
+  ProcessInspector inspector,
 ) async {
   final ancestry = ancestries[pid] ?? ancestries[parentToPid[ppid]];
   if (ancestry == null) {
@@ -384,7 +384,8 @@ Future<void> _linkNonDartParent(
   for (final ancestor in ancestry) {
     var aNode = nodes[ancestor.pid];
     if (aNode == null) {
-      final cwd = await getProcessCwd(ancestor.pid);
+      final ancestorInfo = await inspector.inspect(ancestor.pid);
+      final cwd = ancestorInfo?.cwd;
       aNode = _ProcessNode(
         pid: ancestor.pid,
         cmdline: ancestor.command,
