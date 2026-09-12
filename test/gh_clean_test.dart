@@ -330,9 +330,19 @@ void main() {
         await remoteGit.runCommand(['add', '.']);
         await remoteGit.runCommand(['commit', '-m', 'Squash commit (#1)']);
 
-        // 5. In local, fetch origin and advance feature branch onto origin/main (simulating reset/advance)
-        await localGit.runCommand(['fetch', 'origin']);
-        await localGit.runCommand(['reset', '--hard', 'origin/main']);
+        // 5. Point local feature branch at the squash commit without fetching
+        // origin/main into local git tracking, proving executeCleanup fetches
+        // and updates trunk before branch containment check.
+        final squashSha = (await remoteGit.runCommand(['rev-parse', 'HEAD']))
+            .stdout
+            .toString()
+            .trim();
+        await localGit.runCommand(['fetch', remotePath, 'main']);
+        await localGit.runCommand([
+          'update-ref',
+          'refs/heads/feature-squash',
+          squashSha,
+        ]);
         await localGit.runCommand(['checkout', 'main']);
 
         final landedPr = (

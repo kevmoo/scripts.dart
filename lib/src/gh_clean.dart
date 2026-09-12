@@ -534,6 +534,19 @@ List<CleanAction> executeCleanup(
     );
   }
 
+  if (!skipSync) {
+    final syncAction = _executeTrunkSync(
+      localRepo,
+      headBranch,
+      trunkBranch,
+      runner,
+    );
+    actions.add(syncAction);
+    onProgress?.call(
+      '  ${syncAction.success ? "✓" : "✗"} ${syncAction.description}',
+    );
+  }
+
   final deleteAction = _executeBranchDeletion(
     localRepo,
     headBranch,
@@ -545,19 +558,6 @@ List<CleanAction> executeCleanup(
     actions.add(deleteAction);
     onProgress?.call(
       '  ${deleteAction.success ? "✓" : "✗"} ${deleteAction.description}',
-    );
-  }
-
-  if (!skipSync) {
-    final syncAction = _executeTrunkSync(
-      localRepo,
-      headBranch,
-      trunkBranch,
-      runner,
-    );
-    actions.add(syncAction);
-    onProgress?.call(
-      '  ${syncAction.success ? "✓" : "✗"} ${syncAction.description}',
     );
   }
 
