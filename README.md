@@ -73,8 +73,8 @@ gh-clean [options]
 
 -u, --user               The GitHub user to inspect. (defaults to "@me")
 -R, --repo               Filter PRs to a specific repository (owner/repo).
--l, --limit              Maximum number of PRs to retrieve. (defaults to "50")
--d, --last-n-days        Filter PRs merged in the last N days (pass 0 for no time limit). (defaults to "7")
+-l, --limit              Maximum number of PRs to retrieve (capped at 100). (defaults to "50")
+-d, --last-n-days        Filter PRs merged in the last N days (positive integer). (defaults to "7")
     --apply              Execute worktree pruning, branch deletion, and trunk sync.
     --json               Output results in JSON format.
 -m, --[no-]markdown      Output results as GitHub Flavored Markdown.

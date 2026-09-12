@@ -29,6 +29,13 @@ void main() {
         'is:pr is:merged author:kevmoo repo:invertase/melos merged:>=2026-08-20 sort:updated-desc',
       );
     });
+
+    test('throws ArgumentError when lastNDays is zero or negative', () {
+      check(() => buildLandedSearchQuery(user: 'kevmoo', lastNDays: 0))
+          .throws<ArgumentError>();
+      check(() => buildLandedSearchQuery(user: 'kevmoo', lastNDays: -5))
+          .throws<ArgumentError>();
+    });
   });
 
   group('parseLandedPrNode', () {
@@ -284,6 +291,181 @@ void main() {
       // Main should be fast-forwarded to include merged.txt
       check(File(p.join(localPath, 'merged.txt')).existsSync()).isTrue();
     });
+
+    test('deletes squash-merged branch when local branch is advanced onto squash commit', () async {
+      // 1. Create a remote repo with base commit
+      await d.dir('remote-squash', [
+        d.file('README.md', 'remote readme'),
+      ]).create();
+      final remotePath = p.join(d.sandbox, 'remote-squash');
+      final remoteGit = await GitDir.init(remotePath, allowContent: true);
+      await remoteGit.configureTestIdentity();
+      await remoteGit.runCommand(['branch', '-M', 'main']);
+      await remoteGit.runCommand(['add', '.']);
+      await remoteGit.runCommand(['commit', '-m', 'init']);
+
+      // 2. Clone to local
+      final localPath = p.join(d.sandbox, 'local-squash');
+      await Process.run('git', ['clone', remotePath, localPath]);
+      final localGit = await GitDir.fromExisting(localPath);
+      await localGit.configureTestIdentity();
+
+      // 3. Create feature branch in local with a commit
+      await localGit.runCommand(['checkout', '-b', 'feature-squash']);
+      await File(p.join(localPath, 'feature.txt'))
+          .writeAsString('feature content');
+      await localGit.runCommand(['add', '.']);
+      await localGit.runCommand(['commit', '-m', 'feature commit']);
+      final prHeadOid = (await localGit.runCommand(['rev-parse', 'HEAD']))
+          .stdout
+          .toString()
+          .trim();
+
+      // 4. On remote, create squash merge commit on main
+      await File(p.join(remotePath, 'feature.txt'))
+          .writeAsString('feature content');
+      await remoteGit.runCommand(['add', '.']);
+      await remoteGit.runCommand(['commit', '-m', 'Squash commit (#1)']);
+
+      // 5. In local, fetch origin and advance feature branch onto origin/main (simulating reset/advance)
+      await localGit.runCommand(['fetch', 'origin']);
+      await localGit.runCommand(['reset', '--hard', 'origin/main']);
+      await localGit.runCommand(['checkout', 'main']);
+
+      final landedPr = (
+        number: 1,
+        title: 'Squash Feature',
+        url: 'https://github.com/test/local-squash/pull/1',
+        repository: 'test/local-squash',
+        repoUrl: 'https://github.com/test/local-squash',
+        headRefName: 'feature-squash',
+        headRefOid: prHeadOid,
+        baseRefName: 'main',
+        mergeSha: null,
+        mergedAt: DateTime.now(),
+        closedAt: DateTime.now(),
+      );
+
+      final localInfo = (
+        repoName: 'test/local-squash',
+        repoNames: ['test/local-squash'],
+        repoPath: localPath,
+        currentBranch: 'main',
+        branches: [
+          (
+            name: 'feature-squash',
+            sha: '999',
+            upstream: null,
+            upstreamTrack: null,
+          ),
+          (
+            name: 'main',
+            sha: '000',
+            upstream: 'origin/main',
+            upstreamTrack: '',
+          ),
+        ],
+        worktrees: <LocalWorktreeEntry>[],
+      );
+
+      final actions = executeCleanup(landedPr, localInfo);
+      check(actions.every((a) => a.success)).isTrue();
+
+      // Branch should be deleted successfully without false positive error
+      final branchList = await localGit.runCommand(['branch', '--list']);
+      check(branchList.stdout as String)
+          .not((it) => it.contains('feature-squash'));
+    });
+
+    test(
+      'refuses to delete branch with unpushed commits not in trunk',
+      () async {
+        // 1. Create a remote repo with base commit
+        await d.dir('remote-unpushed', [
+          d.file('README.md', 'remote readme'),
+        ]).create();
+        final remotePath = p.join(d.sandbox, 'remote-unpushed');
+        final remoteGit = await GitDir.init(remotePath, allowContent: true);
+        await remoteGit.configureTestIdentity();
+        await remoteGit.runCommand(['branch', '-M', 'main']);
+        await remoteGit.runCommand(['add', '.']);
+        await remoteGit.runCommand(['commit', '-m', 'init']);
+
+        // 2. Clone to local
+        final localPath = p.join(d.sandbox, 'local-unpushed');
+        await Process.run('git', ['clone', remotePath, localPath]);
+        final localGit = await GitDir.fromExisting(localPath);
+        await localGit.configureTestIdentity();
+
+        // 3. Create feature branch in local with PR commit
+        await localGit.runCommand(['checkout', '-b', 'feature-unpushed']);
+        await File(p.join(localPath, 'feature.txt'))
+            .writeAsString('pr content');
+        await localGit.runCommand(['add', '.']);
+        await localGit.runCommand(['commit', '-m', 'pr commit']);
+        final prHeadOid = (await localGit.runCommand(['rev-parse', 'HEAD']))
+            .stdout
+            .toString()
+            .trim();
+
+        // 4. Add unpushed extra commit on top of PR commit
+        await File(p.join(localPath, 'unpushed.txt'))
+            .writeAsString('extra content');
+        await localGit.runCommand(['add', '.']);
+        await localGit.runCommand(['commit', '-m', 'unpushed extra commit']);
+        await localGit.runCommand(['checkout', 'main']);
+
+        final landedPr = (
+          number: 1,
+          title: 'Unpushed Feature',
+          url: 'https://github.com/test/local-unpushed/pull/1',
+          repository: 'test/local-unpushed',
+          repoUrl: 'https://github.com/test/local-unpushed',
+          headRefName: 'feature-unpushed',
+          headRefOid: prHeadOid,
+          baseRefName: 'main',
+          mergeSha: null,
+          mergedAt: DateTime.now(),
+          closedAt: DateTime.now(),
+        );
+
+        final localInfo = (
+          repoName: 'test/local-unpushed',
+          repoNames: ['test/local-unpushed'],
+          repoPath: localPath,
+          currentBranch: 'main',
+          branches: [
+            (
+              name: 'feature-unpushed',
+              sha: '999',
+              upstream: null,
+              upstreamTrack: null,
+            ),
+            (
+              name: 'main',
+              sha: '000',
+              upstream: 'origin/main',
+              upstreamTrack: '',
+            ),
+          ],
+          worktrees: <LocalWorktreeEntry>[],
+        );
+
+        final actions = executeCleanup(landedPr, localInfo);
+        check(
+          actions.any(
+            (a) =>
+                !a.success &&
+                a.error != null &&
+                a.error!.contains('unpushed commits'),
+          ),
+        ).isTrue();
+
+        // Branch should NOT be deleted
+        final branchList = await localGit.runCommand(['branch', '--list']);
+        check(branchList.stdout as String).contains('feature-unpushed');
+      },
+    );
   });
 
   group('Reports formatting', () {
@@ -477,6 +659,30 @@ void main() {
         ..contains('dart-lang/ecosystem')
         ..not((it) => it.contains('kevmoo/sdk'))
         ..not((it) => it.contains('dart-lang/sdk'));
+    });
+
+    test('fetchLandedPrs clamps limit to 100 in GraphQL call', () async {
+      String? passedLimit;
+      final mockJson = jsonEncode({
+        'data': {
+          'search': {'nodes': <dynamic>[]},
+        },
+      });
+
+      await fetchLandedPrs(
+        user: 'kevmoo',
+        limit: 200,
+        processRunner: (exe, args, {workingDirectory}) {
+          for (final arg in args) {
+            if (arg.startsWith('limit=')) {
+              passedLimit = arg.substring('limit='.length);
+            }
+          }
+          return ProcessResult(1, 0, mockJson, '');
+        },
+      );
+
+      check(passedLimit).equals('100');
     });
   });
 }

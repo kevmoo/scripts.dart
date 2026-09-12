@@ -31,24 +31,39 @@ Future<void> main(List<String> arguments) async {
     return;
   }
 
-  final limit = int.tryParse(results['limit'] as String) ?? 50;
+  final limitRaw = results['limit'] as String;
+  final parsedLimit = int.tryParse(limitRaw);
+  if (parsedLimit == null || parsedLimit <= 0) {
+    setError(
+      message:
+          'Invalid value for --limit: "$limitRaw". '
+          'Must be a positive integer.\n\n${parser.usage}',
+      exitCode: ExitCode.usage.code,
+    );
+    return;
+  }
+  var limit = parsedLimit;
+  if (limit > 100) {
+    stderr.writeln(
+      'Warning: --limit exceeds GitHub API ceiling of 100. Clamping to 100.',
+    );
+    limit = 100;
+  }
 
   int? lastNDays;
   final lastNDaysRaw = results['last-n-days'] as String?;
   if (lastNDaysRaw != null) {
     final parsed = int.tryParse(lastNDaysRaw);
-    if (parsed == null || parsed < 0) {
+    if (parsed == null || parsed <= 0) {
       setError(
         message:
             'Invalid value for --last-n-days: "$lastNDaysRaw". '
-            'Must be a non-negative integer.\n\n${parser.usage}',
+            'Must be a positive integer.\n\n${parser.usage}',
         exitCode: ExitCode.usage.code,
       );
       return;
     }
-    if (parsed > 0) {
-      lastNDays = parsed;
-    }
+    lastNDays = parsed;
   }
 
   final options = GhCleanOptions(
