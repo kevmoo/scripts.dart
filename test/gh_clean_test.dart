@@ -1044,4 +1044,179 @@ void main() {
       },
     );
   });
+
+  group('findCrossAuthorLandedPrs', () {
+    test('identifies merged PRs authored by collaborators', () async {
+      await d.dir('repo_cross_author', [
+        d.file('README.md', '# Cross Author'),
+      ]).create();
+      final repoPath = p.join(d.sandbox, 'repo_cross_author');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/googleapis/google-cloud-dart.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+      await git.runCommand(['branch', 'telemetry-header-fix']);
+
+      final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+      final crossAuthorPrs = await findCrossAuthorLandedPrs(
+        localRepos,
+        <String>{},
+        lastNDays: 7,
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            return ProcessResult(
+              1,
+              0,
+              jsonEncode({
+                'data': {
+                  'q0': {
+                    'nameWithOwner': 'googleapis/google-cloud-dart',
+                    'url': 'https://github.com/googleapis/google-cloud-dart',
+                    'pullRequests': {
+                      'nodes': [
+                        {
+                          'number': 336,
+                          'title': 'feat(storage): add gccl token for client attribution',
+                          'url': 'https://github.com/googleapis/google-cloud-dart/pull/336',
+                          'mergedAt': DateTime.now()
+                              .toUtc()
+                              .subtract(const Duration(days: 2))
+                              .toIso8601String(),
+                          'closedAt': DateTime.now()
+                              .toUtc()
+                              .subtract(const Duration(days: 2))
+                              .toIso8601String(),
+                          'headRefName': 'telemetry-header-fix',
+                          'headRefOid':
+                              '5acfde1d81cdea132151cba012dc95837f3b61aa',
+                          'baseRefName': 'main',
+                          'mergeCommit': {
+                            'oid': '63578dfce15fce86fec0bbaa1758174b09bf3ecd',
+                          },
+                        },
+                      ],
+                    },
+                  },
+                },
+              }),
+              '',
+            );
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      check(crossAuthorPrs.length).equals(1);
+      final pr = crossAuthorPrs.first;
+      check(pr.number).equals(336);
+      check(pr.repository).equals('googleapis/google-cloud-dart');
+      check(pr.headRefName).equals('telemetry-header-fix');
+      check(pr.title)
+          .equals('feat(storage): add gccl token for client attribution');
+    });
+
+    test('excludes branches already matched by user PRs', () async {
+      await d.dir('repo_matched_branch', [
+        d.file('README.md', '# Matched'),
+      ]).create();
+      final repoPath = p.join(d.sandbox, 'repo_matched_branch');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/dart-lang/test.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+      await git.runCommand(['branch', 'already-matched']);
+
+      final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+      final crossAuthorPrs = await findCrossAuthorLandedPrs(localRepos, {
+        'already-matched',
+      });
+
+      check(crossAuthorPrs).isEmpty();
+    });
+
+    test('filters out PRs merged before lastNDays cutoff', () async {
+      await d.dir('repo_cutoff', [d.file('README.md', '# Cutoff')]).create();
+      final repoPath = p.join(d.sandbox, 'repo_cutoff');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/myorg/old-repo.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+      await git.runCommand(['branch', 'old-branch']);
+
+      final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+      final crossAuthorPrs = await findCrossAuthorLandedPrs(
+        localRepos,
+        <String>{},
+        lastNDays: 7,
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            return ProcessResult(
+              1,
+              0,
+              jsonEncode({
+                'data': {
+                  'q0': {
+                    'nameWithOwner': 'myorg/old-repo',
+                    'url': 'https://github.com/myorg/old-repo',
+                    'pullRequests': {
+                      'nodes': [
+                        {
+                          'number': 100,
+                          'title': 'old pr',
+                          'url': 'https://github.com/myorg/old-repo/pull/100',
+                          'mergedAt': DateTime.now()
+                              .toUtc()
+                              .subtract(const Duration(days: 30))
+                              .toIso8601String(),
+                          'headRefName': 'old-branch',
+                          'headRefOid': 'abc1234',
+                          'baseRefName': 'main',
+                        },
+                      ],
+                    },
+                  },
+                },
+              }),
+              '',
+            );
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      check(crossAuthorPrs).isEmpty();
+    });
+  });
 }

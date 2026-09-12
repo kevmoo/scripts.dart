@@ -181,8 +181,38 @@ Future<void> runGhClean({
     'Indexed ${localRepos.length} local repository checkout(s).',
   );
 
+  final matchedHeadRefs = {
+    for (final pr in landedPrs) pr.headRefName.toLowerCase(),
+  };
+
+  onProgress?.call(
+    'Checking for landed PRs from collaborators or takeovers...',
+  );
+  final crossAuthorPrs = await findCrossAuthorLandedPrs(
+    localRepos,
+    matchedHeadRefs,
+    lastNDays: options.lastNDays,
+    repoFilter: options.repo,
+    processRunner: runner,
+    onProgress: onProgress,
+  );
+  if (crossAuthorPrs.isNotEmpty) {
+    onProgress?.call(
+      'Found ${crossAuthorPrs.length} collaborator/takeover landed PR(s).',
+    );
+  }
+
+  final allLandedPrs = [...landedPrs, ...crossAuthorPrs]
+    ..sort((a, b) {
+      final repoCmp = a.repository.toLowerCase().compareTo(
+        b.repository.toLowerCase(),
+      );
+      if (repoCmp != 0) return repoCmp;
+      return a.number.compareTo(b.number);
+    });
+
   final results = [
-    for (final pr in landedPrs)
+    for (final pr in allLandedPrs)
       _processPr(
         pr,
         repoMap[pr.repository.toLowerCase()],
@@ -504,6 +534,240 @@ LandedPr? parseLandedPrNode(Map<String, dynamic> node) {
   );
 }
 
+typedef _CandidateBranch = ({
+  LocalRepoInfo repo,
+  String branch,
+  String owner,
+  String name,
+});
+
+/// Discovers merged pull requests authored by collaborators or takeovers
+/// matching candidate local branches or worktrees.
+Future<List<LandedPr>> findCrossAuthorLandedPrs(
+  List<LocalRepoInfo> localRepos,
+  Set<String> alreadyMatchedBranches, {
+  int? lastNDays = 7,
+  String? repoFilter,
+  SyncProcessRunner? processRunner,
+  void Function(String message)? onProgress,
+}) async {
+  final runner = processRunner ?? defaultSyncProcessRunner;
+  final candidates = _collectCandidateBranches(
+    localRepos,
+    alreadyMatchedBranches,
+    repoFilter: repoFilter,
+  );
+  if (candidates.isEmpty) return const [];
+
+  onProgress?.call(
+    'Checking ${candidates.length} local candidate branch(es) for '
+    'cross-author PRs...',
+  );
+
+  return _fetchBatchCrossAuthorPrs(
+    candidates,
+    runner,
+    lastNDays: lastNDays,
+    onProgress: onProgress,
+  );
+}
+
+List<_CandidateBranch> _collectCandidateBranches(
+  List<LocalRepoInfo> localRepos,
+  Set<String> alreadyMatchedBranches, {
+  String? repoFilter,
+}) {
+  final candidates = <_CandidateBranch>[];
+  final rootRepos = localRepos.where(
+    (r) => isRootGitRepository(Directory(r.repoPath)),
+  );
+
+  for (final repo in rootRepos) {
+    if (!_isRepoMatchingFilter(repo, repoFilter)) continue;
+    final parsedRepo = _parseRepoOwnerAndName(repo);
+    if (parsedRepo == null) continue;
+
+    _collectRepoCandidateBranches(
+      repo,
+      parsedRepo.owner,
+      parsedRepo.name,
+      alreadyMatchedBranches,
+      candidates,
+    );
+  }
+  return candidates;
+}
+
+void _collectRepoCandidateBranches(
+  LocalRepoInfo repo,
+  String owner,
+  String name,
+  Set<String> alreadyMatchedBranches,
+  List<_CandidateBranch> candidates,
+) {
+  final trunk = resolveTrunkBranch(repo);
+  final uniqueBranches = <String>{};
+
+  for (final b in repo.branches) {
+    if (_isBranchCandidate(b.name, trunk, alreadyMatchedBranches)) {
+      uniqueBranches.add(b.name);
+    }
+  }
+
+  for (final wt in repo.worktrees) {
+    if (wt.path != repo.repoPath &&
+        wt.branch.isNotEmpty &&
+        wt.branch != 'DETACHED' &&
+        _isBranchCandidate(wt.branch, trunk, alreadyMatchedBranches)) {
+      uniqueBranches.add(wt.branch);
+    }
+  }
+
+  for (final branch in uniqueBranches) {
+    candidates.add((repo: repo, branch: branch, owner: owner, name: name));
+  }
+}
+
+bool _isBranchCandidate(
+  String branch,
+  String trunk,
+  Set<String> alreadyMatchedBranches,
+) {
+  if (branch.isEmpty) return false;
+  if (branch == trunk || branch == 'main' || branch == 'master') return false;
+  if (_isProtectedBranch(branch)) return false;
+  return !alreadyMatchedBranches.contains(branch.toLowerCase());
+}
+
+List<LandedPr> _fetchBatchCrossAuthorPrs(
+  List<_CandidateBranch> candidates,
+  SyncProcessRunner runner, {
+  int? lastNDays,
+  void Function(String message)? onProgress,
+}) {
+  final results = <LandedPr>[];
+  final seenPrKeys = <String>{};
+  const batchSize = 30;
+
+  DateTime? cutoff;
+  if (lastNDays != null) {
+    cutoff = DateTime.now().toUtc().subtract(Duration(days: lastNDays));
+  }
+
+  for (var i = 0; i < candidates.length; i += batchSize) {
+    final batch = candidates.skip(i).take(batchSize).toList();
+    final queryStr = _buildBatchCrossAuthorQuery(batch);
+    final result = runner('gh', ['api', 'graphql', '-f', 'query=$queryStr']);
+    if (result.exitCode != 0) {
+      stderr.writeln(
+        'Warning: Failed to fetch cross-author PR data: '
+        '${result.stderr.toString().trim()}',
+      );
+      continue;
+    }
+
+    final data = _tryParseGraphQLData(result.stdout);
+    if (data == null) {
+      stderr.writeln(
+        'Warning: Could not parse GraphQL response for cross-author PRs.',
+      );
+      continue;
+    }
+
+    _extractLandedPrsFromBatch(data, batch, cutoff, seenPrKeys, results);
+  }
+
+  return results;
+}
+
+String _buildBatchCrossAuthorQuery(List<_CandidateBranch> batch) {
+  final buffer = StringBuffer('query {\n');
+  for (var b = 0; b < batch.length; b++) {
+    final item = batch[b];
+    final encOwner = jsonEncode(item.owner);
+    final encName = jsonEncode(item.name);
+    final encBranch = jsonEncode(item.branch);
+    buffer.writeln(
+      '  q$b: repository(owner: $encOwner, name: $encName) {\n'
+      '    nameWithOwner\n'
+      '    url\n'
+      '    pullRequests(\n'
+      '      headRefName: $encBranch,\n'
+      '      states: [MERGED],\n'
+      '      first: 1,\n'
+      '      orderBy: {field: CREATED_AT, direction: DESC}\n'
+      '    ) {\n'
+      '      nodes {\n'
+      '        number\n'
+      '        title\n'
+      '        url\n'
+      '        mergedAt\n'
+      '        closedAt\n'
+      '        headRefName\n'
+      '        headRefOid\n'
+      '        baseRefName\n'
+      '        mergeCommit {\n'
+      '          oid\n'
+      '        }\n'
+      '      }\n'
+      '    }\n'
+      '  }',
+    );
+  }
+  buffer.writeln('}');
+  return buffer.toString();
+}
+
+void _extractLandedPrsFromBatch(
+  Map<String, dynamic> data,
+  List<_CandidateBranch> batch,
+  DateTime? cutoff,
+  Set<String> seenPrKeys,
+  List<LandedPr> results,
+) {
+  for (var b = 0; b < batch.length; b++) {
+    final landedPr = _parseBatchItemLandedPr(data, b, cutoff);
+    if (landedPr == null) continue;
+
+    final key = '${landedPr.repository}#${landedPr.number}'.toLowerCase();
+    if (seenPrKeys.add(key)) {
+      results.add(landedPr);
+    }
+  }
+}
+
+LandedPr? _parseBatchItemLandedPr(
+  Map<String, dynamic> data,
+  int index,
+  DateTime? cutoff,
+) {
+  final qVal = data['q$index'];
+  if (qVal is! Map<String, dynamic>) return null;
+  final prsVal = qVal['pullRequests'];
+  if (prsVal is! Map<String, dynamic>) return null;
+  final prNodes = prsVal['nodes'] as List<dynamic>?;
+  if (prNodes == null || prNodes.isEmpty) return null;
+
+  final node = prNodes.first;
+  if (node is! Map<String, dynamic>) return null;
+
+  node['repository'] = {
+    'nameWithOwner': qVal['nameWithOwner'],
+    'url': qVal['url'],
+  };
+
+  final landedPr = parseLandedPrNode(node);
+  if (landedPr == null) return null;
+
+  if (cutoff != null &&
+      landedPr.mergedAt != null &&
+      landedPr.mergedAt!.isBefore(cutoff)) {
+    return null;
+  }
+
+  return landedPr;
+}
+
 bool _isTrunkSynced(LocalRepoInfo localRepo, String trunkBranch) {
   final trunk = localRepo.branches
       .where((b) => b.name == trunkBranch)
@@ -618,6 +882,7 @@ List<CleanAction> executeCleanup(
     trunkBranch,
     pr.headRefOid,
     runner,
+    prNumber: pr.number,
   );
   if (deleteAction != null) {
     actions.add(deleteAction);
@@ -716,8 +981,9 @@ CleanAction? _executeBranchDeletion(
   String headBranch,
   String trunkBranch,
   String? headRefOid,
-  SyncProcessRunner runner,
-) {
+  SyncProcessRunner runner, {
+  int? prNumber,
+}) {
   if (headBranch.isEmpty ||
       headBranch == trunkBranch ||
       _isProtectedBranch(headBranch) ||
@@ -745,6 +1011,12 @@ CleanAction? _executeBranchDeletion(
   }
 
   if (!isContainedInTrunk && headRefOid != null && headRefOid.isNotEmpty) {
+    _ensureCommitExistsLocally(
+      localRepo.repoPath,
+      headRefOid,
+      prNumber,
+      runner,
+    );
     final logRes = runner('git', [
       '-C',
       localRepo.repoPath,
@@ -752,7 +1024,16 @@ CleanAction? _executeBranchDeletion(
       '$headRefOid..$headBranch',
       '--oneline',
     ]);
-    if (logRes.exitCode == 0 && (logRes.stdout as String).trim().isNotEmpty) {
+    if (logRes.exitCode != 0) {
+      return (
+        description: 'Delete local branch `$headBranch`',
+        success: false,
+        error:
+            'PR HEAD ($headRefOid) is not present locally and could not be '
+            'verified.',
+      );
+    }
+    if ((logRes.stdout as String).trim().isNotEmpty) {
       return (
         description: 'Delete local branch `$headBranch`',
         success: false,
@@ -779,6 +1060,19 @@ CleanAction? _executeBranchDeletion(
           success: false,
           error: (res.stderr as String).trim(),
         );
+}
+
+void _ensureCommitExistsLocally(
+  String repoPath,
+  String commitSha,
+  int? prNumber,
+  SyncProcessRunner runner,
+) {
+  if (prNumber == null) return;
+  final catRes = runner('git', ['-C', repoPath, 'cat-file', '-e', commitSha]);
+  if (catRes.exitCode != 0) {
+    runner('git', ['-C', repoPath, 'fetch', 'origin', 'pull/$prNumber/head']);
+  }
 }
 
 CleanAction _executeTrunkSync(
