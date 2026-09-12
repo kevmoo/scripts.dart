@@ -1069,7 +1069,6 @@ void main() {
       final crossAuthorPrs = await findCrossAuthorLandedPrs(
         localRepos,
         <String>{},
-        lastNDays: 7,
         processRunner: (exe, args, {workingDirectory}) {
           if (exe == 'gh') {
             return ProcessResult(
@@ -1084,8 +1083,12 @@ void main() {
                       'nodes': [
                         {
                           'number': 336,
-                          'title': 'feat(storage): add gccl token for client attribution',
-                          'url': 'https://github.com/googleapis/google-cloud-dart/pull/336',
+                          'title':
+                              'feat(storage): add gccl token for client '
+                              'attribution',
+                          'url':
+                              'https://github.com/googleapis/google-cloud-dart'
+                              '/pull/336',
                           'mergedAt': DateTime.now()
                               .toUtc()
                               .subtract(const Duration(days: 2))
@@ -1175,7 +1178,7 @@ void main() {
       final crossAuthorPrs = await findCrossAuthorLandedPrs(
         localRepos,
         <String>{},
-        lastNDays: 7,
+        lastNDays: 14,
         processRunner: (exe, args, {workingDirectory}) {
           if (exe == 'gh') {
             return ProcessResult(
