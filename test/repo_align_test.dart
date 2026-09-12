@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/repo_align/canonical_templates.dart';
 import 'package:kevmoo_scripts/src/repo_align/models.dart';
+import 'package:kevmoo_scripts/src/repo_align/repo_align_runner.dart';
 import 'package:kevmoo_scripts/src/repo_align/repo_align_scanner.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
@@ -46,6 +47,12 @@ void main() {
         autoMergeAllowed: true,
         hasRulesetOrProtection: true,
         requiredChecks: [
+          'analyze (dev)',
+          'test (ubuntu-latest, dev)',
+          'markdown',
+        ],
+        defaultBranchRulesetId: '123',
+        defaultBranchRequiredChecks: [
           'analyze (dev)',
           'test (ubuntu-latest, dev)',
           'markdown',
@@ -218,6 +225,36 @@ void main() {
           .contains('markdown.yml present but not a required check');
     });
 
+    test('flags ungated markdown check on agentSkills repos', () {
+      // Regression: _checkGitHubIssues exempts agentSkills, which silently
+      // exempted the markdown gate too. kevmoo_skills and dash_skills both
+      // have active branch rulesets, so they must not be exempt.
+      final status = _markdownFixture(
+        kind: RepoKind.agentSkills,
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        requiredChecks: ['validate'],
+      );
+
+      check(status.issues)
+          .contains('markdown.yml present but not a required check');
+    });
+
+    test('does not flag gating when there is no ruleset at all', () {
+      // Already reported as "No branch protection or ruleset"; a second
+      // finding about gating would be noise.
+      final status = _markdownFixture(
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        hasRulesetOrProtection: false,
+        requiredChecks: [],
+      );
+
+      check(status.issues).not(
+        (it) => it.contains('markdown.yml present but not a required check'),
+      );
+    });
+
     test('does not flag gating when markdown.yml is absent', () {
       final status = _markdownFixture(requiredChecks: ['analyze (dev)']);
 
@@ -321,6 +358,134 @@ analyzer:
     });
   });
 
+  group('ruleset payload', () {
+    Map<String, dynamic> sampleRuleset() => {
+      'id': 21067709,
+      'name': 'default',
+      'target': 'branch',
+      'source_type': 'Repository',
+      'source': 'kevmoo/stats',
+      'enforcement': 'active',
+      'created_at': '2026-01-01T00:00:00Z',
+      'current_user_can_bypass': 'always',
+      '_links': {
+        'self': {'href': '...'},
+      },
+      'conditions': {
+        'ref_name': {
+          'include': ['~DEFAULT_BRANCH'],
+          'exclude': <String>[],
+        },
+      },
+      'rules': [
+        {'type': 'deletion'},
+        {'type': 'non_fast_forward'},
+        {
+          'type': 'required_status_checks',
+          'parameters': {
+            'strict_required_status_checks_policy': false,
+            'do_not_enforce_on_create': false,
+            'required_status_checks': [
+              {'context': 'analyze (dev)', 'integration_id': 15368},
+            ],
+          },
+        },
+      ],
+    };
+
+    test('appends the context without disturbing anything else', () {
+      final payload = appendRequiredCheck(sampleRuleset(), 'markdown')!;
+
+      // Server-owned fields must not be echoed back.
+      check(payload.keys).unorderedEquals([
+        'name',
+        'target',
+        'enforcement',
+        'bypass_actors',
+        'conditions',
+        'rules',
+      ]);
+
+      final rules = payload['rules'] as List;
+      check(rules).length.equals(3);
+      check(
+        rules.map((r) => (r as Map)['type']),
+      ).deepEquals(['deletion', 'non_fast_forward', 'required_status_checks']);
+
+      final params = (rules[2] as Map)['parameters'] as Map<String, dynamic>;
+      check(params['strict_required_status_checks_policy']).equals(false);
+      check(params['do_not_enforce_on_create']).equals(false);
+
+      final checks = (params['required_status_checks'] as List)
+          .cast<Map<String, dynamic>>();
+      check(checks.map((c) => c['context']))
+          .deepEquals(['analyze (dev)', 'markdown']);
+      check(checks.last['integration_id']).equals(githubActionsAppId);
+    });
+
+    test('defaults missing bypass_actors rather than emitting null', () {
+      final ruleset = sampleRuleset()..remove('bypass_actors');
+      check(appendRequiredCheck(ruleset, 'markdown')!['bypass_actors'])
+          .isA<List<dynamic>>()
+          .isEmpty();
+    });
+
+    test('returns null when there is no status-check rule', () {
+      final ruleset = sampleRuleset()
+        ..['rules'] = [
+          {'type': 'deletion'},
+        ];
+      check(appendRequiredCheck(ruleset, 'markdown')).isNull();
+    });
+
+    test('rulesetRequiresContext detects an existing context', () {
+      check(rulesetRequiresContext(sampleRuleset(), 'analyze (dev)')).isTrue();
+      check(rulesetRequiresContext(sampleRuleset(), 'markdown')).isFalse();
+    });
+  });
+
+  group('rulesetTargetsBranch', () {
+    Map<String, dynamic> ruleset({
+      String target = 'branch',
+      String enforcement = 'active',
+      List<String> include = const ['~DEFAULT_BRANCH'],
+      List<String> exclude = const [],
+    }) => {
+      'target': target,
+      'enforcement': enforcement,
+      'conditions': {
+        'ref_name': {'include': include, 'exclude': exclude},
+      },
+    };
+
+    test('matches the default branch by alias, glob, and explicit ref', () {
+      check(rulesetTargetsBranch(ruleset(), 'main')).isTrue();
+      check(rulesetTargetsBranch(ruleset(include: ['~ALL']), 'main')).isTrue();
+      check(rulesetTargetsBranch(ruleset(include: ['refs/heads/main']), 'main'))
+          .isTrue();
+    });
+
+    test('rejects rulesets that do not govern the default branch', () {
+      // The failure this guards against: appending a required check to a
+      // release ruleset leaves main ungated and deadlocks release branches.
+      check(
+        rulesetTargetsBranch(
+          ruleset(include: ['refs/heads/release/*']),
+          'main',
+        ),
+      ).isFalse();
+      check(rulesetTargetsBranch(ruleset(target: 'tag'), 'main')).isFalse();
+      check(rulesetTargetsBranch(ruleset(enforcement: 'disabled'), 'main'))
+          .isFalse();
+      check(
+        rulesetTargetsBranch(
+          ruleset(include: ['~ALL'], exclude: ['refs/heads/main']),
+          'main',
+        ),
+      ).isFalse();
+    });
+  });
+
   group('clampGhaCheckName', () {
     test('preserves check names <= 100 chars', () {
       const shortName = 'unit_test; Dart 3.9.0; PKG: build_cli; `dart test`';
@@ -354,6 +519,7 @@ RepoAlignmentStatus _markdownFixture({
   bool hasPrettierRc = false,
   bool hasMarkdownWorkflow = false,
   bool hasPrettierIgnore = false,
+  bool hasRulesetOrProtection = true,
   List<String> requiredChecks = const ['analyze (dev)'],
 }) => RepoAlignmentStatus(
   name: 'md_repo',
@@ -383,6 +549,8 @@ RepoAlignmentStatus _markdownFixture({
   hasMarkdownWorkflow: hasMarkdownWorkflow,
   hasPrettierIgnore: hasPrettierIgnore,
   autoMergeAllowed: true,
-  hasRulesetOrProtection: true,
+  hasRulesetOrProtection: hasRulesetOrProtection,
   requiredChecks: requiredChecks,
+  defaultBranchRulesetId: hasRulesetOrProtection ? '123' : null,
+  defaultBranchRequiredChecks: requiredChecks,
 );

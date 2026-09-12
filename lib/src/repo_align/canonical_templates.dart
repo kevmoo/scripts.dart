@@ -209,7 +209,8 @@ const String canonicalPrettierRc = '''
 /// The markdown format check. The job ID is deliberately `markdown`, because
 /// GitHub names the check run after the job ID and branch rulesets match that
 /// string exactly.
-const String canonicalMarkdownWorkflow = '''
+const String canonicalMarkdownWorkflow =
+    '''
 name: Markdown
 
 # Runs unconditionally on every PR to main -- deliberately NO `paths:` filter.
@@ -224,7 +225,7 @@ on:
 
 jobs:
   # Job ID is the check-run context name the branch ruleset matches on.
-  markdown:
+  $markdownCheckContext:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

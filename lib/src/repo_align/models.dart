@@ -53,7 +53,17 @@ class RepoAlignmentStatus {
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
   final bool hasRulesetOrProtection;
+
+  /// Every required context, unioned across all rulesets.
   final List<String> requiredChecks;
+
+  /// The ruleset that actually governs [defaultBranch], or `null` for legacy
+  /// branch protection (which cannot be written to).
+  final String? defaultBranchRulesetId;
+
+  /// The contexts required by the default-branch ruleset alone. A context
+  /// present only in some *other* ruleset does not gate the default branch.
+  final List<String> defaultBranchRequiredChecks;
 
   new({
     required this.name,
@@ -88,6 +98,8 @@ class RepoAlignmentStatus {
     required this.autoMergeAllowed,
     required this.hasRulesetOrProtection,
     required this.requiredChecks,
+    this.defaultBranchRulesetId,
+    this.defaultBranchRequiredChecks = const [],
   });
 
   /// Check if the repo has full strict mode enabled.
@@ -145,7 +157,8 @@ class RepoAlignmentStatus {
   }
 
   /// Markdown standardization applies to *every* repo kind, including
-  /// [RepoKind.agentSkills] -- skills repos are the most markdown-heavy of all.
+  /// [RepoKind.agentSkills] -- skills repos are the most markdown-heavy of all,
+  /// and they do carry branch rulesets.
   void _checkMarkdownIssues(List<String> result) {
     if (!hasPrettierRc) result.add('Missing .prettierrc.json');
     if (!hasMarkdownWorkflow) result.add('Missing markdown.yml');
@@ -154,6 +167,15 @@ class RepoAlignmentStatus {
     // speculative noise; its reappearance is a regression, not a gap.
     if (hasPrettierIgnore) {
       result.add('Stray .prettierignore (should not exist)');
+    }
+
+    // A markdown check that runs but does not gate is decoration. This lives
+    // here rather than in _checkGitHubIssues because that method exempts
+    // agentSkills, and markdown gating must not be exempt.
+    if (hasMarkdownWorkflow &&
+        hasRulesetOrProtection &&
+        !defaultBranchRequiredChecks.contains(markdownCheckContext)) {
+      result.add('markdown.yml present but not a required check');
     }
   }
 
@@ -194,12 +216,6 @@ class RepoAlignmentStatus {
         'Branch ruleset missing primary CI check '
         '(expected: $expectedStr)',
       );
-    }
-
-    // A markdown check that runs but does not gate is decoration. It has to be
-    // in the ruleset to actually block a merge.
-    if (hasMarkdownWorkflow && !requiredChecks.contains(markdownCheckContext)) {
-      result.add('markdown.yml present but not a required check');
     }
   }
 
@@ -244,6 +260,8 @@ class RepoAlignmentStatus {
     'autoMergeAllowed': autoMergeAllowed,
     'hasRulesetOrProtection': hasRulesetOrProtection,
     'requiredChecks': requiredChecks,
+    'defaultBranchRulesetId': defaultBranchRulesetId,
+    'defaultBranchRequiredChecks': defaultBranchRequiredChecks,
     'issues': issues,
     'isAligned': isAligned,
   };

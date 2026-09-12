@@ -122,6 +122,8 @@ class RepoAlignScanner {
       autoMergeAllowed: ghInfo.autoMergeAllowed,
       hasRulesetOrProtection: ghInfo.hasRulesetOrProtection,
       requiredChecks: ghInfo.requiredChecks,
+      defaultBranchRulesetId: ghInfo.defaultBranchRulesetId,
+      defaultBranchRequiredChecks: ghInfo.defaultBranchRequiredChecks,
     );
   }
 
@@ -242,13 +244,22 @@ class RepoAlignScanner {
     );
   }
 
-  _MarkdownInfo _scanMarkdownConfig(Directory dir) => (
-    hasPrettierRc: File(p.join(dir.path, '.prettierrc.json')).existsSync(),
-    hasMarkdownWorkflow: File(
-      p.join(dir.path, '.github', 'workflows', 'markdown.yml'),
-    ).existsSync(),
-    hasPrettierIgnore: File(p.join(dir.path, '.prettierignore')).existsSync(),
-  );
+  _MarkdownInfo _scanMarkdownConfig(Directory dir) {
+    final workflows = p.join(dir.path, '.github', 'workflows');
+    // Both extensions, like every other detector here. Missing the `.yaml`
+    // spelling would not just false-report "missing" -- `fix` would then write
+    // a second workflow declaring the same `markdown` job ID, producing two
+    // check runs competing for the context the ruleset matches on.
+    final hasMarkdownWorkflow =
+        File(p.join(workflows, 'markdown.yml')).existsSync() ||
+        File(p.join(workflows, 'markdown.yaml')).existsSync();
+
+    return (
+      hasPrettierRc: File(p.join(dir.path, '.prettierrc.json')).existsSync(),
+      hasMarkdownWorkflow: hasMarkdownWorkflow,
+      hasPrettierIgnore: File(p.join(dir.path, '.prettierignore')).existsSync(),
+    );
+  }
 
   _WorkflowsInfo _scanWorkflows(Directory dir) {
     final workflowsDir = Directory(p.join(dir.path, '.github', 'workflows'));
@@ -406,6 +417,8 @@ class RepoAlignScanner {
     autoMergeAllowed: false,
     hasRulesetOrProtection: false,
     requiredChecks: <String>[],
+    defaultBranchRulesetId: null,
+    defaultBranchRequiredChecks: <String>[],
   );
 
   _GitHubInfo _scanGitHubRemote(String name) {
@@ -416,6 +429,8 @@ class RepoAlignScanner {
     var autoMergeAllowed = false;
     var hasRulesetOrProtection = false;
     final requiredChecks = <String>[];
+    var defaultBranchRequiredChecks = <String>[];
+    String? defaultBranchRulesetId;
 
     try {
       final repoRes = Process.runSync('gh', ['api', 'repos/kevmoo/$name']);
@@ -429,13 +444,23 @@ class RepoAlignScanner {
         autoMergeAllowed = repoJson['allow_auto_merge'] == true;
       }
 
-      hasRulesetOrProtection = _scanRulesets(name, requiredChecks);
+      final rulesets = _scanRulesets(name, defaultBranch);
+      hasRulesetOrProtection = rulesets.found;
+      requiredChecks.addAll(rulesets.allChecks);
+      defaultBranchRulesetId = rulesets.defaultBranchRulesetId;
+      defaultBranchRequiredChecks = rulesets.defaultBranchChecks;
+
       if (!hasRulesetOrProtection) {
+        // Legacy branch protection has no ruleset id, so it governs the
+        // default branch by definition and cannot be written to by `fix`.
+        final protectionChecks = <String>[];
         hasRulesetOrProtection = _scanBranchProtection(
           name,
           defaultBranch,
-          requiredChecks,
+          protectionChecks,
         );
+        requiredChecks.addAll(protectionChecks);
+        defaultBranchRequiredChecks = protectionChecks;
       }
     } catch (_) {}
 
@@ -447,42 +472,73 @@ class RepoAlignScanner {
       autoMergeAllowed: autoMergeAllowed,
       hasRulesetOrProtection: hasRulesetOrProtection,
       requiredChecks: requiredChecks,
+      defaultBranchRulesetId: defaultBranchRulesetId,
+      defaultBranchRequiredChecks: defaultBranchRequiredChecks,
     );
   }
 
-  bool _scanRulesets(String name, List<String> requiredChecks) {
+  /// Scans every ruleset, and separately identifies the one that actually
+  /// governs [defaultBranch].
+  ///
+  /// The union across all rulesets is what the clamping and primary-CI checks
+  /// want, but anything that *writes* needs to know which ruleset to write to
+  /// and what that specific ruleset already requires.
+  _RulesetScan _scanRulesets(String name, String defaultBranch) {
+    const empty = (
+      found: false,
+      defaultBranchRulesetId: null,
+      allChecks: <String>[],
+      defaultBranchChecks: <String>[],
+    );
+
     final res = Process.runSync('gh', [
       'api',
       'repos/kevmoo/$name/rulesets',
       '--jq',
       '.[].id',
     ]);
-    if (res.exitCode != 0 || res.stdout.toString().trim().isEmpty) return false;
+    if (res.exitCode != 0 || res.stdout.toString().trim().isEmpty) return empty;
 
-    final ids = res.stdout.toString().trim().split('\n');
-    for (final id in ids) {
-      if (id.trim().isEmpty) continue;
-      _fetchSingleRuleset(name, id.trim(), requiredChecks);
+    final allChecks = <String>[];
+    final defaultBranchChecks = <String>[];
+    String? defaultBranchRulesetId;
+
+    for (final rawId in res.stdout.toString().trim().split('\n')) {
+      final id = rawId.trim();
+      if (id.isEmpty) continue;
+
+      final json = _fetchSingleRuleset(name, id);
+      if (json == null) continue;
+
+      final checks = <String>[];
+      for (final r in json['rules'] as List<dynamic>? ?? const []) {
+        _extractRuleStatusChecks(r, checks);
+      }
+      allChecks.addAll(checks);
+
+      if (defaultBranchRulesetId == null &&
+          rulesetTargetsBranch(json, defaultBranch)) {
+        defaultBranchRulesetId = id;
+        defaultBranchChecks.addAll(checks);
+      }
     }
-    return true;
+
+    return (
+      found: true,
+      defaultBranchRulesetId: defaultBranchRulesetId,
+      allChecks: allChecks,
+      defaultBranchChecks: defaultBranchChecks,
+    );
   }
 
-  void _fetchSingleRuleset(
-    String name,
-    String id,
-    List<String> requiredChecks,
-  ) {
+  Map<String, dynamic>? _fetchSingleRuleset(String name, String id) {
     final detail = Process.runSync('gh', [
       'api',
       'repos/kevmoo/$name/rulesets/$id',
     ]);
-    if (detail.exitCode != 0) return;
+    if (detail.exitCode != 0) return null;
     final json = jsonDecode(detail.stdout.toString());
-    if (json is! Map<String, dynamic>) return;
-    final rules = json['rules'] as List<dynamic>? ?? [];
-    for (final r in rules) {
-      _extractRuleStatusChecks(r, requiredChecks);
-    }
+    return json is Map<String, dynamic> ? json : null;
   }
 
   void _extractRuleStatusChecks(dynamic r, List<String> requiredChecks) {
@@ -554,6 +610,37 @@ typedef _MarkdownInfo = ({
   bool hasPrettierIgnore,
 });
 
+typedef _RulesetScan = ({
+  bool found,
+  String? defaultBranchRulesetId,
+  List<String> allChecks,
+  List<String> defaultBranchChecks,
+});
+
+/// Whether [ruleset] actively governs [defaultBranch].
+///
+/// A repo can carry several branch rulesets (`release/*`, tag targets). Writing
+/// a required check into the wrong one leaves the default branch ungated while
+/// deadlocking some other branch pattern on a check that never runs there.
+bool rulesetTargetsBranch(Map<String, dynamic> ruleset, String defaultBranch) {
+  if (ruleset['target'] != 'branch') return false;
+  if (ruleset['enforcement'] != 'active') return false;
+
+  final conditions = ruleset['conditions'] as Map<String, dynamic>?;
+  final refName = conditions?['ref_name'] as Map<String, dynamic>?;
+  final include = refName?['include'] as List<dynamic>? ?? const [];
+  final exclude = refName?['exclude'] as List<dynamic>? ?? const [];
+
+  if (exclude.any((e) => e == 'refs/heads/$defaultBranch')) return false;
+
+  return include.any(
+    (i) =>
+        i == '~DEFAULT_BRANCH' ||
+        i == '~ALL' ||
+        i == 'refs/heads/$defaultBranch',
+  );
+}
+
 typedef _GitHubInfo = ({
   bool isArchived,
   bool isFork,
@@ -562,4 +649,6 @@ typedef _GitHubInfo = ({
   bool autoMergeAllowed,
   bool hasRulesetOrProtection,
   List<String> requiredChecks,
+  String? defaultBranchRulesetId,
+  List<String> defaultBranchRequiredChecks,
 });

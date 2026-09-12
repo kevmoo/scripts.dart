@@ -292,9 +292,13 @@ class RepoAlignRunner {
   }
 
   void _fixGitHubSettings(RepoAlignmentStatus r, {required bool dryRun}) {
+    // Markdown gating runs for every kind. agentSkills repos are exempt from
+    // the Dart-oriented settings below, but they do have branch rulesets and
+    // they are the most markdown-heavy repos in the fleet.
+    _fixMarkdownRequiredCheck(r, dryRun: dryRun);
+
     if (r.kind == RepoKind.agentSkills) return;
     _fixAutoMerge(r, dryRun: dryRun);
-    _fixRequiredChecks(r, dryRun: dryRun);
   }
 
   void _fixAutoMerge(RepoAlignmentStatus r, {required bool dryRun}) {
@@ -313,15 +317,17 @@ class RepoAlignRunner {
     }
   }
 
-  /// Appends [markdownCheckContext] to the branch ruleset's required status
-  /// checks. A check that runs but does not gate is decoration.
+  /// Appends [markdownCheckContext] to the default-branch ruleset's required
+  /// status checks. A check that runs but does not gate is decoration.
   ///
   /// The rulesets API cannot PATCH-merge `required_status_checks`, so the whole
   /// `rules` array has to be read, amended, and PUT back.
-  void _fixRequiredChecks(RepoAlignmentStatus r, {required bool dryRun}) {
+  void _fixMarkdownRequiredCheck(
+    RepoAlignmentStatus r, {
+    required bool dryRun,
+  }) {
     if (!r.hasMarkdownWorkflow) return;
-    if (!r.hasRulesetOrProtection) return;
-    if (r.requiredChecks.contains(markdownCheckContext)) return;
+    if (r.defaultBranchRequiredChecks.contains(markdownCheckContext)) return;
 
     print(
       '  🔒 ${dryRun ? 'Would require' : 'Requiring'} '
@@ -329,9 +335,9 @@ class RepoAlignRunner {
     );
     if (dryRun) return;
 
-    final rulesetId = _findDefaultBranchRulesetId(r.name);
+    final rulesetId = r.defaultBranchRulesetId;
     if (rulesetId == null) {
-      print('  ${red.wrap('⚠️  No branch ruleset found; skipped')}');
+      print('  ${red.wrap('⚠️  No writable ruleset on ${r.defaultBranch}')}');
       return;
     }
 
@@ -345,16 +351,24 @@ class RepoAlignRunner {
     }
 
     final ruleset = jsonDecode(read.stdout as String) as Map<String, dynamic>;
-    final payload = _appendMarkdownCheck(ruleset);
+
+    // The scan happens up to ~30 repos before this write, so re-check against
+    // what the ruleset says right now rather than trusting the stale snapshot.
+    if (rulesetRequiresContext(ruleset, markdownCheckContext)) {
+      print('  ✓ Already required (added since scan)');
+      return;
+    }
+
+    final payload = appendRequiredCheck(ruleset, markdownCheckContext);
     if (payload == null) {
       print('  ${red.wrap('⚠️  Ruleset has no required_status_checks rule')}');
       return;
     }
 
-    final tmp = File(
-      p.join(Directory.systemTemp.path, 'repo_align_${r.name}_ruleset.json'),
-    )..writeAsStringSync(jsonEncode(payload));
+    final tmpDir = Directory.systemTemp.createTempSync('repo_align_');
     try {
+      final tmp = File(p.join(tmpDir.path, 'ruleset.json'))
+        ..writeAsStringSync(jsonEncode(payload));
       final write = Process.runSync('gh', [
         'api',
         '--method',
@@ -367,53 +381,56 @@ class RepoAlignRunner {
         print('  ${red.wrap('⚠️  Failed to update ruleset: ${write.stderr}')}');
       }
     } finally {
-      tmp.deleteSync();
+      tmpDir.deleteSync(recursive: true);
     }
   }
+}
 
-  String? _findDefaultBranchRulesetId(String repoName) {
-    final result = Process.runSync('gh', [
-      'api',
-      'repos/kevmoo/$repoName/rulesets',
-      '--jq',
-      '.[] | select(.target == "branch") | .id',
-    ]);
-    if (result.exitCode != 0) return null;
-    final ids = (result.stdout as String)
-        .split('\n')
-        .map((l) => l.trim())
-        .where((l) => l.isNotEmpty);
-    return ids.firstOrNull;
+/// Whether [ruleset] already requires [context].
+bool rulesetRequiresContext(Map<String, dynamic> ruleset, String context) {
+  final rules = ruleset['rules'] as List<dynamic>? ?? const [];
+  for (final rule in rules) {
+    if (rule is! Map || rule['type'] != 'required_status_checks') continue;
+    final params = rule['parameters'] as Map<String, dynamic>?;
+    final checks =
+        params?['required_status_checks'] as List<dynamic>? ?? const [];
+    if (checks.any((c) => c is Map && c['context'] == context)) return true;
   }
+  return false;
+}
 
-  /// Builds the PUT payload, or `null` if the ruleset has no
-  /// `required_status_checks` rule to append to.
-  Map<String, dynamic>? _appendMarkdownCheck(Map<String, dynamic> ruleset) {
-    final rules = (ruleset['rules'] as List).cast<Map<String, dynamic>>();
-    final target = rules.firstWhereOrNull(
-      (Map<String, dynamic> rule) => rule['type'] == 'required_status_checks',
-    );
-    if (target == null) return null;
+/// Builds the ruleset PUT payload with [context] appended, or `null` if the
+/// ruleset has no `required_status_checks` rule to append to.
+///
+/// Only the writable subset of the ruleset is forwarded; `id`, `source`,
+/// `created_at`, `_links` and friends are server-owned. The rule parameters are
+/// mutated in place so sibling rules and untouched parameters ride along
+/// unchanged.
+Map<String, dynamic>? appendRequiredCheck(
+  Map<String, dynamic> ruleset,
+  String context,
+) {
+  final rules = (ruleset['rules'] as List).cast<Map<String, dynamic>>();
+  final target = rules.firstWhereOrNull(
+    (Map<String, dynamic> rule) => rule['type'] == 'required_status_checks',
+  );
+  if (target == null) return null;
 
-    final params = target['parameters'] as Map<String, dynamic>;
-    final checks = (params['required_status_checks'] as List).toList()
-      ..add({
-        'context': markdownCheckContext,
-        'integration_id': _githubActions,
-      });
-    params['required_status_checks'] = checks;
+  final params = target['parameters'] as Map<String, dynamic>;
+  final checks = (params['required_status_checks'] as List).toList()
+    ..add({'context': context, 'integration_id': githubActionsAppId});
+  params['required_status_checks'] = checks;
 
-    return {
-      'name': ruleset['name'],
-      'target': ruleset['target'],
-      'enforcement': ruleset['enforcement'],
-      'bypass_actors': ruleset['bypass_actors'] ?? <dynamic>[],
-      'conditions': ruleset['conditions'],
-      'rules': rules,
-    };
-  }
+  return {
+    'name': ruleset['name'],
+    'target': ruleset['target'],
+    'enforcement': ruleset['enforcement'],
+    'bypass_actors': ruleset['bypass_actors'] ?? <dynamic>[],
+    'conditions': ruleset['conditions'],
+    'rules': rules,
+  };
 }
 
 /// The GitHub App id for GitHub Actions. Pinning `integration_id` stops a
 /// third-party app from satisfying a required check.
-const int _githubActions = 15368;
+const int githubActionsAppId = 15368;
