@@ -292,90 +292,94 @@ void main() {
       check(File(p.join(localPath, 'merged.txt')).existsSync()).isTrue();
     });
 
-    test('deletes squash-merged branch when local branch is advanced onto squash commit', () async {
-      // 1. Create a remote repo with base commit
-      await d.dir('remote-squash', [
-        d.file('README.md', 'remote readme'),
-      ]).create();
-      final remotePath = p.join(d.sandbox, 'remote-squash');
-      final remoteGit = await GitDir.init(remotePath, allowContent: true);
-      await remoteGit.configureTestIdentity();
-      await remoteGit.runCommand(['branch', '-M', 'main']);
-      await remoteGit.runCommand(['add', '.']);
-      await remoteGit.runCommand(['commit', '-m', 'init']);
+    test(
+      'deletes squash-merged branch when local branch is advanced onto squash '
+      'commit',
+      () async {
+        // 1. Create a remote repo with base commit
+        await d.dir('remote-squash', [
+          d.file('README.md', 'remote readme'),
+        ]).create();
+        final remotePath = p.join(d.sandbox, 'remote-squash');
+        final remoteGit = await GitDir.init(remotePath, allowContent: true);
+        await remoteGit.configureTestIdentity();
+        await remoteGit.runCommand(['branch', '-M', 'main']);
+        await remoteGit.runCommand(['add', '.']);
+        await remoteGit.runCommand(['commit', '-m', 'init']);
 
-      // 2. Clone to local
-      final localPath = p.join(d.sandbox, 'local-squash');
-      await Process.run('git', ['clone', remotePath, localPath]);
-      final localGit = await GitDir.fromExisting(localPath);
-      await localGit.configureTestIdentity();
+        // 2. Clone to local
+        final localPath = p.join(d.sandbox, 'local-squash');
+        await Process.run('git', ['clone', remotePath, localPath]);
+        final localGit = await GitDir.fromExisting(localPath);
+        await localGit.configureTestIdentity();
 
-      // 3. Create feature branch in local with a commit
-      await localGit.runCommand(['checkout', '-b', 'feature-squash']);
-      await File(p.join(localPath, 'feature.txt'))
-          .writeAsString('feature content');
-      await localGit.runCommand(['add', '.']);
-      await localGit.runCommand(['commit', '-m', 'feature commit']);
-      final prHeadOid = (await localGit.runCommand(['rev-parse', 'HEAD']))
-          .stdout
-          .toString()
-          .trim();
+        // 3. Create feature branch in local with a commit
+        await localGit.runCommand(['checkout', '-b', 'feature-squash']);
+        await File(p.join(localPath, 'feature.txt'))
+            .writeAsString('feature content');
+        await localGit.runCommand(['add', '.']);
+        await localGit.runCommand(['commit', '-m', 'feature commit']);
+        final prHeadOid = (await localGit.runCommand(['rev-parse', 'HEAD']))
+            .stdout
+            .toString()
+            .trim();
 
-      // 4. On remote, create squash merge commit on main
-      await File(p.join(remotePath, 'feature.txt'))
-          .writeAsString('feature content');
-      await remoteGit.runCommand(['add', '.']);
-      await remoteGit.runCommand(['commit', '-m', 'Squash commit (#1)']);
+        // 4. On remote, create squash merge commit on main
+        await File(p.join(remotePath, 'feature.txt'))
+            .writeAsString('feature content');
+        await remoteGit.runCommand(['add', '.']);
+        await remoteGit.runCommand(['commit', '-m', 'Squash commit (#1)']);
 
-      // 5. In local, fetch origin and advance feature branch onto origin/main (simulating reset/advance)
-      await localGit.runCommand(['fetch', 'origin']);
-      await localGit.runCommand(['reset', '--hard', 'origin/main']);
-      await localGit.runCommand(['checkout', 'main']);
+        // 5. In local, fetch origin and advance feature branch onto origin/main (simulating reset/advance)
+        await localGit.runCommand(['fetch', 'origin']);
+        await localGit.runCommand(['reset', '--hard', 'origin/main']);
+        await localGit.runCommand(['checkout', 'main']);
 
-      final landedPr = (
-        number: 1,
-        title: 'Squash Feature',
-        url: 'https://github.com/test/local-squash/pull/1',
-        repository: 'test/local-squash',
-        repoUrl: 'https://github.com/test/local-squash',
-        headRefName: 'feature-squash',
-        headRefOid: prHeadOid,
-        baseRefName: 'main',
-        mergeSha: null,
-        mergedAt: DateTime.now(),
-        closedAt: DateTime.now(),
-      );
+        final landedPr = (
+          number: 1,
+          title: 'Squash Feature',
+          url: 'https://github.com/test/local-squash/pull/1',
+          repository: 'test/local-squash',
+          repoUrl: 'https://github.com/test/local-squash',
+          headRefName: 'feature-squash',
+          headRefOid: prHeadOid,
+          baseRefName: 'main',
+          mergeSha: null,
+          mergedAt: DateTime.now(),
+          closedAt: DateTime.now(),
+        );
 
-      final localInfo = (
-        repoName: 'test/local-squash',
-        repoNames: ['test/local-squash'],
-        repoPath: localPath,
-        currentBranch: 'main',
-        branches: [
-          (
-            name: 'feature-squash',
-            sha: '999',
-            upstream: null,
-            upstreamTrack: null,
-          ),
-          (
-            name: 'main',
-            sha: '000',
-            upstream: 'origin/main',
-            upstreamTrack: '',
-          ),
-        ],
-        worktrees: <LocalWorktreeEntry>[],
-      );
+        final localInfo = (
+          repoName: 'test/local-squash',
+          repoNames: ['test/local-squash'],
+          repoPath: localPath,
+          currentBranch: 'main',
+          branches: [
+            (
+              name: 'feature-squash',
+              sha: '999',
+              upstream: null,
+              upstreamTrack: null,
+            ),
+            (
+              name: 'main',
+              sha: '000',
+              upstream: 'origin/main',
+              upstreamTrack: '',
+            ),
+          ],
+          worktrees: <LocalWorktreeEntry>[],
+        );
 
-      final actions = executeCleanup(landedPr, localInfo);
-      check(actions.every((a) => a.success)).isTrue();
+        final actions = executeCleanup(landedPr, localInfo);
+        check(actions.every((a) => a.success)).isTrue();
 
-      // Branch should be deleted successfully without false positive error
-      final branchList = await localGit.runCommand(['branch', '--list']);
-      check(branchList.stdout as String)
-          .not((it) => it.contains('feature-squash'));
-    });
+        // Branch should be deleted successfully without false positive error
+        final branchList = await localGit.runCommand(['branch', '--list']);
+        check(branchList.stdout as String)
+            .not((it) => it.contains('feature-squash'));
+      },
+    );
 
     test(
       'refuses to delete branch with unpushed commits not in trunk',
