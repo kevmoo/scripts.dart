@@ -20,6 +20,7 @@ dart install 'kevmoo_scripts@{path: /path/to/scripts.dart}'
 | [`dart-clean`](#dart-clean)       | `bin/dart_clean.dart`    | Find and kill orphaned Dart processes.                                 |
 | [`gerrit-view`](#gerrit-view)     | `bin/gerrit_view.dart`   | Complete overview of your active work on Gerrit.                       |
 | [`gh-clean`](#gh-clean)           | `bin/gh_clean.dart`      | Clean up local branches and worktrees for merged GitHub pull requests. |
+| [`gh-issues`](#gh-issues)         | `bin/gh_issues.dart`     | Complete overview of your open assigned issues on GitHub.              |
 | [`gh-view`](#gh-view)             | `bin/gh_view.dart`       | Complete overview of your active pull requests on GitHub.              |
 | [`git-org-clean`](#git-org-clean) | `bin/git_org_clean.dart` | Analyze a GitHub organization for archive/delete candidates.           |
 | [`git-up`](#git-up)               | `bin/git_up.dart`        | Safely switch to and update the default branch.                        |
@@ -87,6 +88,33 @@ gh-clean [options]
     --[no-]skip-sync     Skip fast-forwarding default branches against origin.
     --[no-]skip-worktrees Skip pruning matching sibling worktrees.
     --[no-]include-owned Include repositories owned by the user. (defaults to on)
+-h, --help               Print this usage information.
+```
+
+### `gh-issues`
+
+Complete overview of your open assigned issues on GitHub.
+
+**Requirements:** This tool wraps the GitHub CLI (`gh`) and requires it to be
+installed and authenticated in your `PATH`.
+
+**Usage:**
+
+```shell
+gh-issues [options]
+
+-u, --user               The GitHub user assigned to the issues.
+                         (defaults to "@me")
+-R, --repo               Filter issues to a specific repository (owner/repo).
+-l, --limit              Maximum number of issues to retrieve.
+                         (defaults to "50")
+-d, --last-n-days        Filter issues updated in the last N days (positive integer).
+-c, --created-days       Filter issues created in the last N days (positive integer, 0 for no limit).
+                         (defaults to "365")
+    --[no-]linked-prs    Cross-reference linked Pull Requests.
+                         (defaults to on)
+    --json               Output results in JSON format.
+-m, --[no-]markdown      Output results as GitHub Flavored Markdown.
 -h, --help               Print this usage information.
 ```
 
