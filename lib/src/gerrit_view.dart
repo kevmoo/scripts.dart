@@ -168,7 +168,6 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
 
 Map<int, RemoteCL> _fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
   print(styleDim.wrap('Querying active CLs from Gerrit...')!);
-  print('GERRIT HOST: ${gerritHost}');
   final gobResult = Process.runSync('gob-curl', [
     'https://$gerritHost/changes/?q=owner:self+status:open&o=CURRENT_REVISION',
   ], workingDirectory: actualRepoRoot);
@@ -226,25 +225,29 @@ Map<String, int> _fetchLocalBranchIssues(String actualRepoRoot) {
     '--get-regexp',
     r'branch\..*\.gerritissue',
   ], workingDirectory: actualRepoRoot);
+  if (configResult.exitCode != 0) return {};
+
   final localBranchIssues = <String, int>{};
-  if (configResult.exitCode == 0) {
-    final lines = (configResult.stdout as String).trim().split('\n');
-    for (final line in lines) {
-      if (line.isEmpty) continue;
-      final lastSpace = line.lastIndexOf(' ');
-      if (lastSpace != -1) {
-        final key = line.substring(0, lastSpace);
-        final issueVal = int.tryParse(line.substring(lastSpace + 1));
-        if (issueVal != null) {
-          final match = RegExp(r'^branch\.(.*)\.gerritissue$').firstMatch(key);
-          if (match != null) {
-            localBranchIssues[match.group(1)!] = issueVal;
-          }
-        }
-      }
+  final lines = (configResult.stdout as String).trim().split('\n');
+  for (final line in lines) {
+    final entry = _parseBranchIssueLine(line);
+    if (entry != null) {
+      localBranchIssues[entry.$1] = entry.$2;
     }
   }
   return localBranchIssues;
+}
+
+(String, int)? _parseBranchIssueLine(String line) {
+  if (line.isEmpty) return null;
+  final lastSpace = line.lastIndexOf(' ');
+  if (lastSpace == -1) return null;
+  final key = line.substring(0, lastSpace);
+  final issueVal = int.tryParse(line.substring(lastSpace + 1));
+  if (issueVal == null) return null;
+  final match = RegExp(r'^branch\.(.*)\.gerritissue$').firstMatch(key);
+  if (match == null) return null;
+  return (match.group(1)!, issueVal);
 }
 
 Map<int, List<String>> _identifyConflatedBranches(
