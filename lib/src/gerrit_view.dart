@@ -130,13 +130,12 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
 (String, String, bool) _resolveGerritDetails(String actualRepoRoot) {
   var isGerrit = _getGitConfig('gerrit.host', actualRepoRoot) != null;
   var gerritHost = _getGitConfig('gerrit.host', actualRepoRoot);
+  if (gerritHost != null && gerritHost.toLowerCase() == 'true') {
+    gerritHost = null;
+  }
   var gerritProject = _getGitConfig('gerrit.project', actualRepoRoot);
 
   gerritHost ??= _parseGerritHostFromConfig(actualRepoRoot);
-  if (gerritHost == null && isGerrit) {
-    final val = _getGitConfig('gerrit.host', actualRepoRoot);
-    if (val != null && val.toLowerCase() != 'true') gerritHost = val;
-  }
   if (gerritHost == null || gerritProject == null) {
     final origin = _parseRemoteOrigin(actualRepoRoot);
     if (origin != null) {
@@ -169,6 +168,7 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
 
 Map<int, RemoteCL> _fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
   print(styleDim.wrap('Querying active CLs from Gerrit...')!);
+  print('GERRIT HOST: ${gerritHost}');
   final gobResult = Process.runSync('gob-curl', [
     'https://$gerritHost/changes/?q=owner:self+status:open&o=CURRENT_REVISION',
   ], workingDirectory: actualRepoRoot);
