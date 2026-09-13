@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'local_repo_scanner.dart';
 import 'process_utils.dart';
+import 'shared/graphql_utils.dart';
 
 /// Exception thrown by `gh-clean` operations.
 class GhCleanException implements Exception {
@@ -473,9 +474,7 @@ List<LandedPr> _parseGraphQLData(
     throw GhCleanException('GraphQL query returned errors:\n$errorMessages');
   }
 
-  final data = decoded['data'] as Map<String, dynamic>?;
-  final search = data?['search'] as Map<String, dynamic>?;
-  final nodes = search?['nodes'] as List<dynamic>? ?? [];
+  final nodes = extractGraphQLSearchNodes(decoded);
 
   return [
     for (final node in nodes.whereType<Map<String, dynamic>>())

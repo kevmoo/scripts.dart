@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import 'local_repo_scanner.dart';
 import 'process_utils.dart';
+import 'shared/graphql_utils.dart';
 
 export 'local_repo_scanner.dart' show normalizeRepoName;
 
@@ -454,9 +455,7 @@ query($q: String!, $limit: Int!) {
     throw GhViewException('Invalid GraphQL response structure.');
   }
 
-  final data = decoded['data'] as Map<String, dynamic>?;
-  final search = data?['search'] as Map<String, dynamic>?;
-  final nodes = search?['nodes'] as List<dynamic>? ?? [];
+  final nodes = extractGraphQLSearchNodes(decoded);
 
   return nodes
       .whereType<Map<String, dynamic>>()
@@ -939,30 +938,29 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
 }
 
 String _formatReviewBadgeTerminal(GhPr pr) {
+  String formatRequested(String label) {
+    if (pr.requestedReviewers.isNotEmpty) {
+      final text = '$label (@${pr.requestedReviewers.join(', @')})';
+      return yellow.wrap(text) ?? text;
+    }
+    return yellow.wrap(label) ?? label;
+  }
+
   if (pr.reviewDecision == 'APPROVED') {
     return green.wrap('Approved') ?? 'Approved';
   }
   if (pr.reviewDecision == 'CHANGES_REQUESTED') {
     if (pr.requestedReviewers.isNotEmpty) {
-      return yellow.wrap(
-            'Re-review Requested (@${pr.requestedReviewers.join(', @')})',
-          ) ??
-          'Re-review Requested';
+      return formatRequested('Re-review Requested');
     }
     if (pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0) {
-      return yellow.wrap('Changes Requested (Resolved: Re-review Needed)') ??
-          'Changes Requested (Resolved: Re-review Needed)';
+      const text = 'Changes Requested (Resolved: Re-review Needed)';
+      return yellow.wrap(text) ?? text;
     }
     return red.wrap('Changes Requested') ?? 'Changes Requested';
   }
   if (pr.reviewDecision == 'REVIEW_REQUIRED') {
-    if (pr.requestedReviewers.isNotEmpty) {
-      return yellow.wrap(
-            'Review Required (@${pr.requestedReviewers.join(', @')})',
-          ) ??
-          'Review Required';
-    }
-    return yellow.wrap('Review Required') ?? 'Review Required';
+    return formatRequested('Review Required');
   }
   return 'No Reviewers';
 }
