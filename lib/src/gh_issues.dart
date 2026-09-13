@@ -167,6 +167,45 @@ LinkedPr? parseLinkedPr(Map<String, dynamic> prObj) {
   return (number: number, url: url, state: state, repository: repository);
 }
 
+DateTime _parseDateTime(String? dateStr) => dateStr != null
+    ? DateTime.tryParse(dateStr) ?? DateTime.now()
+    : DateTime.now();
+
+List<String> _extractLabelsFromNode(Map<String, dynamic>? labelsObj) {
+  final labelNodes = labelsObj?['nodes'] as List<dynamic>? ?? const [];
+  final labels = <String>[];
+  for (final l in labelNodes) {
+    if (l is Map<String, dynamic>) {
+      final name = l['name'] as String?;
+      if (name != null && name.isNotEmpty) {
+        labels.add(name);
+      }
+    }
+  }
+  return labels;
+}
+
+List<LinkedPr> _extractClosedByPrs(Map<String, dynamic>? closedByPrsObj) {
+  final closedByNodes = closedByPrsObj?['nodes'] as List<dynamic>? ?? const [];
+  final prsMap = <String, LinkedPr>{};
+  for (final n in closedByNodes) {
+    if (n is Map<String, dynamic>) {
+      final pr = parseLinkedPr(n);
+      if (pr != null) {
+        prsMap[pr.url] = pr;
+      }
+    }
+  }
+  return _sortPrs(prsMap.values);
+}
+
+List<LinkedPr> _sortPrs(Iterable<LinkedPr> prs) => prs.toList()
+  ..sort((a, b) {
+    final repoComp = a.repository.compareTo(b.repository);
+    if (repoComp != 0) return repoComp;
+    return a.number.compareTo(b.number);
+  });
+
 /// Parses a single issue node from the search query.
 GhIssue? parseIssueNode(Map<String, dynamic> node) {
   final number = node['number'] as int?;
@@ -180,50 +219,8 @@ GhIssue? parseIssueNode(Map<String, dynamic> node) {
     return null;
   }
 
-  final createdAtStr = node['createdAt'] as String?;
-  final createdAt = createdAtStr != null
-      ? DateTime.tryParse(createdAtStr) ?? DateTime.now()
-      : DateTime.now();
-
-  final updatedAtStr = node['updatedAt'] as String?;
-  final updatedAt = updatedAtStr != null
-      ? DateTime.tryParse(updatedAtStr) ?? DateTime.now()
-      : DateTime.now();
-
-  final labelsObj = node['labels'] as Map<String, dynamic>?;
-  final labelNodes = labelsObj?['nodes'] as List<dynamic>? ?? [];
-  final labels = <String>[];
-  for (final l in labelNodes) {
-    if (l is Map<String, dynamic>) {
-      final name = l['name'] as String?;
-      if (name != null && name.isNotEmpty) {
-        labels.add(name);
-      }
-    }
-  }
-
   final commentsObj = node['comments'] as Map<String, dynamic>?;
   final commentsCount = commentsObj?['totalCount'] as int? ?? 0;
-
-  final closedByPrsObj =
-      node['closedByPullRequestsReferences'] as Map<String, dynamic>?;
-  final closedByNodes = closedByPrsObj?['nodes'] as List<dynamic>? ?? [];
-  final prsMap = <String, LinkedPr>{};
-  for (final n in closedByNodes) {
-    if (n is Map<String, dynamic>) {
-      final pr = parseLinkedPr(n);
-      if (pr != null) {
-        prsMap[pr.url] = pr;
-      }
-    }
-  }
-
-  final prsList = prsMap.values.toList()
-    ..sort((a, b) {
-      final repoComp = a.repository.compareTo(b.repository);
-      if (repoComp != 0) return repoComp;
-      return a.number.compareTo(b.number);
-    });
 
   return (
     number: number,
@@ -231,11 +228,13 @@ GhIssue? parseIssueNode(Map<String, dynamic> node) {
     url: url,
     repository: repository,
     repoUrl: repoUrl,
-    createdAt: createdAt,
-    updatedAt: updatedAt,
-    labels: labels,
+    createdAt: _parseDateTime(node['createdAt'] as String?),
+    updatedAt: _parseDateTime(node['updatedAt'] as String?),
+    labels: _extractLabelsFromNode(node['labels'] as Map<String, dynamic>?),
     commentsCount: commentsCount,
-    linkedPrs: prsList,
+    linkedPrs: _extractClosedByPrs(
+      node['closedByPullRequestsReferences'] as Map<String, dynamic>?,
+    ),
   );
 }
 
@@ -329,27 +328,7 @@ query($owner: String!, $name: String!, $number: Int!) {
   }
 }
 
-/// Fetches assigned issues via GitHub GraphQL.
-Future<List<GhIssue>> fetchAssignedIssues({
-  required String user,
-  String? repo,
-  int limit = 50,
-  int? lastNDays,
-  int? createdDays,
-  bool checkLinkedPrs = true,
-  ProcessRunner? processRunner,
-  DateTime? now,
-}) async {
-  final runner = processRunner ?? Process.run;
-  final searchQuery = buildSearchQuery(
-    user: user,
-    repo: repo,
-    lastNDays: lastNDays,
-    createdDays: createdDays,
-    now: now,
-  );
-
-  const graphqlSearchQuery = r'''
+const _graphqlSearchQuery = r'''
 query($q: String!, $limit: Int!) {
   search(query: $q, type: ISSUE, first: $limit) {
     issueCount
@@ -388,17 +367,7 @@ query($q: String!, $limit: Int!) {
 }
 ''';
 
-  final result = await runner('gh', [
-    'api',
-    'graphql',
-    '-f',
-    'query=$graphqlSearchQuery',
-    '-F',
-    'q=$searchQuery',
-    '-F',
-    'limit=$limit',
-  ]);
-
+Map<String, dynamic> _parseGraphQLResponse(ProcessResult result) {
   if (result.exitCode != 0) {
     throw GhIssuesException(
       'Failed to fetch issues via GitHub CLI (gh).\n'
@@ -422,67 +391,105 @@ query($q: String!, $limit: Int!) {
     throw GhIssuesException('Invalid GraphQL response structure.');
   }
 
-  final data = decoded['data'] as Map<String, dynamic>?;
-  final search = data?['search'] as Map<String, dynamic>?;
-  final nodes = search?['nodes'] as List<dynamic>? ?? [];
+  return decoded;
+}
 
-  final parsedIssues = nodes
+List<GhIssue> _extractIssuesFromSearchData(Map<String, dynamic> data) {
+  final search = data['search'] as Map<String, dynamic>?;
+  final nodes = search?['nodes'] as List<dynamic>? ?? const [];
+  return nodes
       .whereType<Map<String, dynamic>>()
       .map(parseIssueNode)
       .whereType<GhIssue>()
       .toList();
+}
+
+Future<GhIssue> _enrichSingleIssue(
+  GhIssue issue, {
+  required ProcessRunner runner,
+}) async {
+  try {
+    final additionalPrs = await fetchTimelinePrsForIssue(
+      issue: issue,
+      processRunner: runner,
+    );
+    if (additionalPrs.isEmpty) return issue;
+
+    final prMap = <String, LinkedPr>{
+      for (final pr in issue.linkedPrs) pr.url: pr,
+      for (final pr in additionalPrs) pr.url: pr,
+    };
+
+    return (
+      number: issue.number,
+      title: issue.title,
+      url: issue.url,
+      repository: issue.repository,
+      repoUrl: issue.repoUrl,
+      createdAt: issue.createdAt,
+      updatedAt: issue.updatedAt,
+      labels: issue.labels,
+      commentsCount: issue.commentsCount,
+      linkedPrs: _sortPrs(prMap.values),
+    );
+  } catch (_) {
+    return issue;
+  }
+}
+
+Future<List<GhIssue>> _enrichWithTimelinePrs(
+  List<GhIssue> issues, {
+  required ProcessRunner runner,
+}) {
+  final pool = Pool(8);
+  return Future.wait(
+    issues.map(
+      (issue) =>
+          pool.withResource(() => _enrichSingleIssue(issue, runner: runner)),
+    ),
+  );
+}
+
+/// Fetches assigned issues via GitHub GraphQL.
+Future<List<GhIssue>> fetchAssignedIssues({
+  required String user,
+  String? repo,
+  int limit = 50,
+  int? lastNDays,
+  int? createdDays,
+  bool checkLinkedPrs = true,
+  ProcessRunner? processRunner,
+  DateTime? now,
+}) async {
+  final runner = processRunner ?? Process.run;
+  final searchQuery = buildSearchQuery(
+    user: user,
+    repo: repo,
+    lastNDays: lastNDays,
+    createdDays: createdDays,
+    now: now,
+  );
+
+  final result = await runner('gh', [
+    'api',
+    'graphql',
+    '-f',
+    'query=$_graphqlSearchQuery',
+    '-F',
+    'q=$searchQuery',
+    '-F',
+    'limit=$limit',
+  ]);
+
+  final decoded = _parseGraphQLResponse(result);
+  final data = decoded['data'] as Map<String, dynamic>? ?? const {};
+  final parsedIssues = _extractIssuesFromSearchData(data);
 
   if (!checkLinkedPrs || parsedIssues.isEmpty) {
     return parsedIssues;
   }
 
-  // Fetch timeline items concurrently to discover cross-referenced PRs.
-  final pool = Pool(8);
-  final enriched = await Future.wait(
-    parsedIssues.map(
-      (issue) => pool.withResource(() async {
-        try {
-          final additionalPrs = await fetchTimelinePrsForIssue(
-            issue: issue,
-            processRunner: runner,
-          );
-          if (additionalPrs.isEmpty) return issue;
-
-          final prMap = <String, LinkedPr>{};
-          for (final pr in issue.linkedPrs) {
-            prMap[pr.url] = pr;
-          }
-          for (final pr in additionalPrs) {
-            prMap[pr.url] = pr;
-          }
-
-          final sortedPrs = prMap.values.toList()
-            ..sort((a, b) {
-              final repoComp = a.repository.compareTo(b.repository);
-              if (repoComp != 0) return repoComp;
-              return a.number.compareTo(b.number);
-            });
-
-          return (
-            number: issue.number,
-            title: issue.title,
-            url: issue.url,
-            repository: issue.repository,
-            repoUrl: issue.repoUrl,
-            createdAt: issue.createdAt,
-            updatedAt: issue.updatedAt,
-            labels: issue.labels,
-            commentsCount: issue.commentsCount,
-            linkedPrs: sortedPrs,
-          );
-        } catch (_) {
-          return issue;
-        }
-      }),
-    ),
-  );
-
-  return enriched;
+  return _enrichWithTimelinePrs(parsedIssues, runner: runner);
 }
 
 String _formatLabels(List<String> labels) {
@@ -589,6 +596,40 @@ String renderMarkdownReport(
   return buffer.toString();
 }
 
+String _formatTerminalLinkedPr(LinkedPr pr, String issueRepo) {
+  final icon = switch (pr.state) {
+    'OPEN' => green.wrap('●') ?? '●',
+    'MERGED' => magenta.wrap('●') ?? '●',
+    'CLOSED' => red.wrap('●') ?? '●',
+    _ => '○',
+  };
+  final label = pr.repository == issueRepo
+      ? '#${pr.number}'
+      : '${pr.repository}#${pr.number}';
+  return '$icon $label (${pr.state})';
+}
+
+void _formatTerminalIssue(StringBuffer buffer, GhIssue issue, DateTime now) {
+  final issueTag =
+      styleBold.wrap('${issue.repository}#${issue.number}') ??
+      '${issue.repository}#${issue.number}';
+  final touched = formatTouchedTerminal(issue.updatedAt, currentTime: now);
+  buffer
+    ..writeln()
+    ..writeln('$issueTag ($touched)')
+    ..writeln('  Title: ${issue.title}')
+    ..writeln('  URL: ${issue.url}');
+  if (issue.labels.isNotEmpty) {
+    buffer.writeln('  Labels: ${issue.labels.join(', ')}');
+  }
+  if (issue.linkedPrs.isNotEmpty) {
+    final prStrs = issue.linkedPrs
+        .map((pr) => _formatTerminalLinkedPr(pr, issue.repository))
+        .join(', ');
+    buffer.writeln('  Linked PRs: $prStrs');
+  }
+}
+
 /// Renders colorized terminal output.
 String renderTerminalReport(
   List<GhIssue> issues, {
@@ -608,35 +649,7 @@ ${styleBold.wrap('📋 GITHUB ASSIGNED ISSUES OVERVIEW')}
   }
 
   for (final issue in issues) {
-    final issueTag =
-        styleBold.wrap('${issue.repository}#${issue.number}') ??
-        '${issue.repository}#${issue.number}';
-    final touched = formatTouchedTerminal(issue.updatedAt, currentTime: now);
-    buffer
-      ..writeln()
-      ..writeln('$issueTag ($touched)')
-      ..writeln('  Title: ${issue.title}')
-      ..writeln('  URL: ${issue.url}');
-    if (issue.labels.isNotEmpty) {
-      buffer.writeln('  Labels: ${issue.labels.join(', ')}');
-    }
-    if (issue.linkedPrs.isNotEmpty) {
-      final prStrs = issue.linkedPrs
-          .map((pr) {
-            final icon = switch (pr.state) {
-              'OPEN' => green.wrap('●') ?? '●',
-              'MERGED' => magenta.wrap('●') ?? '●',
-              'CLOSED' => red.wrap('●') ?? '●',
-              _ => '○',
-            };
-            final label = pr.repository == issue.repository
-                ? '#${pr.number}'
-                : '${pr.repository}#${pr.number}';
-            return '$icon $label (${pr.state})';
-          })
-          .join(', ');
-      buffer.writeln('  Linked PRs: $prStrs');
-    }
+    _formatTerminalIssue(buffer, issue, now);
   }
 
   final withPrsCount = issues.where((i) => i.linkedPrs.isNotEmpty).length;
