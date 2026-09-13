@@ -113,7 +113,6 @@ class DartCleanOptions {
 
 String get dartCleanOptionsUsage => _$parserForDartCleanOptions.usage;
 
-
 class DartCleanException(final String message) implements Exception {
   @override
   String toString() => message;

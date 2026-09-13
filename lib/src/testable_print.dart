@@ -21,6 +21,7 @@ void setError({
 
   _theState.exitCode = exitCode;
 }
+
 // undead:ignore
 Future<int> wrappedForTesting(Future<void> Function() action) async {
   final state = _TestState();
@@ -66,6 +67,7 @@ final class _RuntimeState extends _HelperState {
     io.stderr.writeln(value);
   }
 }
+
 // undead:ignore
 final class _TestState extends _HelperState {
   @override

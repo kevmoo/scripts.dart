@@ -276,7 +276,6 @@ void main() {
       check(canonicalDependabotConfig).contains('package-ecosystem: "pub"');
       check(canonicalAnalysisOptions)
           .contains('package:dart_flutter_team_lints/analysis_options.yaml');
-
     });
 
     test('prettier config is scoped to markdown only', () {
@@ -488,7 +487,6 @@ analyzer:
       ).isFalse();
     });
   });
-
 }
 
 /// A minimally-aligned repo, so that any reported issue is attributable to the
