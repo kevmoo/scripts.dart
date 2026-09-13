@@ -113,11 +113,7 @@ String? _normalizeScpGitUrl(String text) {
       .split(path)
       .where((s) => s.isNotEmpty && s != '.')
       .toList();
-  if (segments.length != 2) return null;
-  final owner = segments[0];
-  var repo = segments[1];
-  if (repo.endsWith('.git')) repo = repo.substring(0, repo.length - 4);
-  return repo.isNotEmpty ? '$owner/$repo' : null;
+  return _extractOwnerAndRepo(segments);
 }
 
 String? _normalizeUriGitUrl(String text) {
@@ -128,13 +124,14 @@ String? _normalizeUriGitUrl(String text) {
   if (host != 'github.com' && host != 'www.github.com') return null;
 
   final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
-  if (segments.length != 2) return null;
+  return _extractOwnerAndRepo(segments);
+}
 
+String? _extractOwnerAndRepo(List<String> segments) {
+  if (segments.length != 2) return null;
   final owner = segments[0];
   var repo = segments[1];
-  if (repo.endsWith('.git')) {
-    repo = repo.substring(0, repo.length - 4);
-  }
+  if (repo.endsWith('.git')) repo = repo.substring(0, repo.length - 4);
   return repo.isNotEmpty ? '$owner/$repo' : null;
 }
 

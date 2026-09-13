@@ -494,11 +494,7 @@ String renderMarkdownReport(
   final now = currentTime ?? DateTime.now();
   final buffer = StringBuffer();
 
-  final withPrsCount = issues.where((i) => i.linkedPrs.isNotEmpty).length;
-  final recentCutoff = now.subtract(const Duration(days: 7));
-  final recentCount = issues
-      .where((i) => !i.updatedAt.isBefore(recentCutoff))
-      .length;
+  final summary = _computeSummary(issues, now);
 
   buffer
     ..writeln('# 📋 Open Assigned Issues')
@@ -507,15 +503,15 @@ String renderMarkdownReport(
     ..writeln('| Metric | Count | Description |')
     ..writeln('| :--- | :---: | :--- |')
     ..writeln(
-      '| **Total Open Issues** | **${issues.length}** | '
+      '| **Total Open Issues** | **${summary.total}** | '
       'Open issues assigned to ${options.user} |',
     )
     ..writeln(
-      '| 🔗 **With Linked PRs** | **$withPrsCount** | '
+      '| 🔗 **With Linked PRs** | **${summary.withPrs}** | '
       'Issues with linked or referenced pull requests |',
     )
     ..writeln(
-      '| ⏳ **Updated < 7 Days** | **$recentCount** | '
+      '| ⏳ **Updated < 7 Days** | **${summary.recent}** | '
       'Issues updated within the last week |',
     )
     ..writeln('<!-- mdformat on -->')
@@ -620,16 +616,12 @@ ${styleBold.wrap('📋 GITHUB ASSIGNED ISSUES OVERVIEW')}
     _formatTerminalIssue(buffer, issue, now);
   }
 
-  final withPrsCount = issues.where((i) => i.linkedPrs.isNotEmpty).length;
-  final recentCutoff = now.subtract(const Duration(days: 7));
-  final recentCount = issues
-      .where((i) => !i.updatedAt.isBefore(recentCutoff))
-      .length;
+  final summary = _computeSummary(issues, now);
 
   buffer.writeln('''
 
 ----------------------------------------------------------------------
-${styleBold.wrap('Summary:')} Total Open: ${issues.length} | With Linked PRs: $withPrsCount | Updated < 7d: $recentCount
+${styleBold.wrap('Summary:')} Total Open: ${summary.total} | With Linked PRs: ${summary.withPrs} | Updated < 7d: ${summary.recent}
 ----------------------------------------------------------------------''');
 
   return buffer.toString();
@@ -705,4 +697,15 @@ Future<void> runGhIssues({
       renderTerminalReport(issues, options: options, currentTime: currentTime),
     );
   }
+}
+
+typedef _Summary = ({int total, int withPrs, int recent});
+
+_Summary _computeSummary(List<GhIssue> issues, DateTime now) {
+  final withPrs = issues.where((i) => i.linkedPrs.isNotEmpty).length;
+  final recentCutoff = now.subtract(const Duration(days: 7));
+  final recent = issues
+      .where((i) => !i.updatedAt.isBefore(recentCutoff))
+      .length;
+  return (total: issues.length, withPrs: withPrs, recent: recent);
 }
