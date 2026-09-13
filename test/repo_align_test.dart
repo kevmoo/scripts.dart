@@ -326,6 +326,7 @@ void main() {
   group('legacyOrIgnoredRepos', () {
     test('contains holdings and other known legacy repos', () {
       check(legacyOrIgnoredRepos).contains('holdings');
+      check(legacyOrIgnoredRepos).contains('json_compare_bench');
       check(legacyOrIgnoredRepos).contains('wynette');
       check(legacyOrIgnoredRepos).contains('personal_dotfiles');
     });
