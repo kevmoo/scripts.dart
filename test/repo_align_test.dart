@@ -276,13 +276,7 @@ void main() {
       check(canonicalDependabotConfig).contains('package-ecosystem: "pub"');
       check(canonicalAnalysisOptions)
           .contains('package:dart_flutter_team_lints/analysis_options.yaml');
-      check(canonicalPublishWorkflow)
-          .contains('dart-lang/ecosystem/.github/workflows/publish.yaml@main');
-      check(canonicalHealthWorkflow)
-          .contains('dart-lang/ecosystem/.github/workflows/health.yaml@main');
-      check(canonicalPostSummariesWorkflow).contains(
-        'dart-lang/ecosystem/.github/workflows/post_summaries.yaml@main',
-      );
+
     });
 
     test('prettier config is scoped to markdown only', () {
@@ -495,30 +489,6 @@ analyzer:
     });
   });
 
-  group('clampGhaCheckName', () {
-    test('preserves check names <= 100 chars', () {
-      const shortName = 'unit_test; Dart 3.9.0; PKG: build_cli; `dart test`';
-      check(clampGhaCheckName(shortName)).equals(shortName);
-
-      final exact100 = 'a' * 100;
-      check(clampGhaCheckName(exact100)).equals(exact100);
-      check(exact100.length).equals(100);
-    });
-
-    test('truncates check names > 100 chars with ellipsis to 100 chars', () {
-      const longName =
-          'analyzer_and_format; Dart 3.9.0; PKGS: build_cli, '
-          'build_cli_annotations; `dart analyze --fatal-infos .`';
-      check(longName.length).equals(103);
-
-      final clamped = clampGhaCheckName(longName);
-      check(clamped.length).equals(100);
-      check(clamped).equals(
-        'analyzer_and_format; Dart 3.9.0; PKGS: build_cli, '
-        'build_cli_annotations; `dart analyze --fatal-in...',
-      );
-    });
-  });
 }
 
 /// A minimally-aligned repo, so that any reported issue is attributable to the

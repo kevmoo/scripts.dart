@@ -21,7 +21,7 @@ void setError({
 
   _theState.exitCode = exitCode;
 }
-
+// undead:ignore
 Future<int> wrappedForTesting(Future<void> Function() action) async {
   final state = _TestState();
   await runZoned(action, zoneValues: {_testStateKey: state});
@@ -66,7 +66,7 @@ final class _RuntimeState extends _HelperState {
     io.stderr.writeln(value);
   }
 }
-
+// undead:ignore
 final class _TestState extends _HelperState {
   @override
   int exitCode = 0;
