@@ -2,15 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
-
-import 'shared/gh_args.dart';
-
 import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 
 import 'local_repo_scanner.dart';
 import 'process_utils.dart';
+import 'shared/gh_args.dart';
 
 export 'local_repo_scanner.dart' show normalizeRepoName;
 

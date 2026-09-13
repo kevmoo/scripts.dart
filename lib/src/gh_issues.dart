@@ -2,15 +2,13 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
-
-import 'process_utils.dart';
-import 'shared/gh_args.dart';
-
 import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 import 'package:pool/pool.dart';
 
 import 'gh_view.dart' show formatTouchedMarkdown, formatTouchedTerminal;
+import 'process_utils.dart';
+import 'shared/gh_args.dart';
 
 /// Exception thrown by `gh-issues` operations.
 class GhIssuesException implements Exception {
