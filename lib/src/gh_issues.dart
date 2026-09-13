@@ -2,6 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:args/args.dart';
+
+import 'process_utils.dart';
+import 'shared/gh_args.dart';
+
 import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 import 'package:pool/pool.dart';
@@ -58,64 +62,30 @@ class GhIssuesOptions {
     this.markdown = false,
   });
 
-  static ArgParser createArgParser() => ArgParser()
-    ..addOption(
-      'user',
-      abbr: 'u',
-      defaultsTo: '@me',
-      help: 'The GitHub user assigned to the issues.',
-    )
-    ..addOption(
-      'repo',
-      abbr: 'R',
-      help: 'Filter issues to a specific repository (owner/repo).',
-    )
-    ..addOption(
-      'limit',
-      abbr: 'l',
-      defaultsTo: '50',
-      help: 'Maximum number of issues to retrieve.',
-    )
-    ..addOption(
-      'last-n-days',
-      abbr: 'd',
-      aliases: ['last-days', 'days'],
-      help: 'Filter issues updated in the last N days (positive integer).',
-    )
-    ..addOption(
-      'created-days',
-      abbr: 'c',
-      defaultsTo: '365',
-      help:
-          'Filter issues created in the last N days (positive integer, 0 for '
-          'no limit).',
-    )
-    ..addFlag(
-      'linked-prs',
-      defaultsTo: true,
-      help: 'Cross-reference linked Pull Requests.',
-    )
-    ..addFlag('json', negatable: false, help: 'Output results in JSON format.')
-    ..addFlag(
-      'markdown',
-      abbr: 'm',
-      negatable: false,
-      help: 'Output results as GitHub Flavored Markdown.',
-    )
-    ..addFlag(
-      'help',
-      abbr: 'h',
-      negatable: false,
-      help: 'Print this usage information.',
+  static ArgParser createArgParser() {
+    final parser = ArgParser();
+    addCommonGhArgs(
+      parser,
+      itemType: 'issues',
+      userHelp: 'The GitHub user assigned to the issues.',
     );
+    parser
+      ..addOption(
+        'created-days',
+        abbr: 'c',
+        defaultsTo: '365',
+        help:
+            'Filter issues created in the last N days (positive integer, 0 for '
+            'no limit).',
+      )
+      ..addFlag(
+        'linked-prs',
+        defaultsTo: true,
+        help: 'Cross-reference linked Pull Requests.',
+      );
+    return parser;
+  }
 }
-
-/// Function signature for running external processes.
-typedef ProcessRunner = Future<ProcessResult> Function(
-  String executable,
-  List<String> arguments, {
-  String? workingDirectory,
-});
 
 /// Constructs the GitHub search query for assigned issues.
 String buildSearchQuery({
