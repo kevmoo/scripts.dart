@@ -8,6 +8,7 @@ import 'package:path/path.dart' as p;
 
 import 'local_repo_scanner.dart';
 import 'process_utils.dart';
+import 'shared/gh_args.dart';
 import 'shared/graphql_utils.dart';
 
 export 'local_repo_scanner.dart' show normalizeRepoName;
@@ -83,66 +84,30 @@ class GhViewOptions {
     this.enricher,
   });
 
-  static ArgParser createArgParser() => ArgParser()
-    ..addOption(
-      'user',
-      abbr: 'u',
-      defaultsTo: '@me',
-      help: 'The GitHub user to inspect.',
-    )
-    ..addOption(
-      'repo',
-      abbr: 'R',
-      help: 'Filter PRs to a specific repository (owner/repo).',
-    )
-    ..addOption(
-      'limit',
-      abbr: 'l',
-      defaultsTo: '50',
-      help: 'Maximum number of PRs to retrieve.',
-    )
-    ..addOption(
-      'last-n-days',
-      abbr: 'd',
-      aliases: ['last-days', 'days'],
-      help: 'Filter PRs touched in the last N days (positive integer).',
-    )
-    ..addFlag('json', negatable: false, help: 'Output results in JSON format.')
-    ..addFlag(
-      'markdown',
-      abbr: 'm',
-      negatable: false,
-      help: 'Output results as GitHub Flavored Markdown.',
-    )
-    ..addFlag(
-      'local',
-      defaultsTo: true,
-      help: 'Cross-reference local workspace checkouts and worktrees.',
-    )
-    ..addOption(
-      'local-root',
-      help: 'Base directory for local Git repositories (defaults to ~/github).',
-    )
-    ..addOption(
-      'enricher',
-      abbr: 'e',
-      help:
-          'External command or script to enrich PRs with project/context '
-          'metadata.',
-    )
-    ..addFlag(
-      'help',
-      abbr: 'h',
-      negatable: false,
-      help: 'Print this usage information.',
-    );
+  static ArgParser createArgParser() {
+    final parser = ArgParser();
+    addCommonGhArgs(parser, itemType: 'PRs', lastNDaysAction: 'touched');
+    parser
+      ..addFlag(
+        'local',
+        defaultsTo: true,
+        help: 'Cross-reference local workspace checkouts and worktrees.',
+      )
+      ..addOption(
+        'local-root',
+        help:
+            'Base directory for local Git repositories (defaults to ~/github).',
+      )
+      ..addOption(
+        'enricher',
+        abbr: 'e',
+        help:
+            'External command or script to enrich PRs with project/context '
+            'metadata.',
+      );
+    return parser;
+  }
 }
-
-typedef ProcessRunner = Future<ProcessResult> Function(
-  String executable,
-  List<String> arguments, {
-  String? workingDirectory,
-});
 
 /// Function signature for running an external enricher command with stdin JSON
 /// payload.

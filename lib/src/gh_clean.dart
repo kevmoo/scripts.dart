@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 
 import 'local_repo_scanner.dart';
 import 'process_utils.dart';
+import 'shared/gh_args.dart';
 import 'shared/graphql_utils.dart';
 
 /// Exception thrown by `gh-clean` operations.
@@ -87,67 +88,42 @@ class GhCleanOptions {
     this.includeOwned = true,
   });
 
-  static ArgParser createArgParser() => ArgParser()
-    ..addOption(
-      'user',
-      abbr: 'u',
-      defaultsTo: '@me',
-      help: 'The GitHub user to inspect.',
-    )
-    ..addOption(
-      'repo',
-      abbr: 'R',
-      help: 'Filter PRs to a specific repository (owner/repo).',
-    )
-    ..addOption(
-      'limit',
-      abbr: 'l',
-      defaultsTo: '50',
-      help: 'Maximum number of PRs to retrieve (capped at 100).',
-    )
-    ..addOption(
-      'last-n-days',
-      abbr: 'd',
-      defaultsTo: '7',
-      help: 'Filter PRs merged in the last N days (positive integer).',
-    )
-    ..addFlag(
-      'apply',
-      negatable: false,
-      help: 'Execute worktree pruning, branch deletion, and trunk sync.',
-    )
-    ..addFlag('json', negatable: false, help: 'Output results in JSON format.')
-    ..addFlag(
-      'markdown',
-      abbr: 'm',
-      negatable: false,
-      help: 'Output results as GitHub Flavored Markdown.',
-    )
-    ..addOption(
-      'local-root',
-      help: 'Base directory for local Git repositories (defaults to ~/github).',
-    )
-    ..addFlag(
-      'skip-sync',
-      negatable: false,
-      help: 'Skip fast-forwarding default branches against origin.',
-    )
-    ..addFlag(
-      'skip-worktrees',
-      negatable: false,
-      help: 'Skip pruning matching sibling worktrees.',
-    )
-    ..addFlag(
-      'include-owned',
-      defaultsTo: true,
-      help: 'Include repositories owned by the user.',
-    )
-    ..addFlag(
-      'help',
-      abbr: 'h',
-      negatable: false,
-      help: 'Print this usage information.',
+  static ArgParser createArgParser() {
+    final parser = ArgParser();
+    addCommonGhArgs(
+      parser,
+      itemType: 'PRs',
+      lastNDaysAction: 'merged',
+      limitHelpSuffix: ' (capped at 100)',
     );
+    parser
+      ..addFlag(
+        'apply',
+        negatable: false,
+        help: 'Execute worktree pruning, branch deletion, and trunk sync.',
+      )
+      ..addOption(
+        'local-root',
+        help:
+            'Base directory for local Git repositories (defaults to ~/github).',
+      )
+      ..addFlag(
+        'skip-sync',
+        negatable: false,
+        help: 'Skip fast-forwarding default branches against origin.',
+      )
+      ..addFlag(
+        'skip-worktrees',
+        negatable: false,
+        help: 'Skip pruning matching sibling worktrees.',
+      )
+      ..addFlag(
+        'include-owned',
+        defaultsTo: true,
+        help: 'Include repositories owned by the user.',
+      );
+    return parser;
+  }
 }
 
 /// Main orchestration logic for `gh-clean`.
