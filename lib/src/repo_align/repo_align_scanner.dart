@@ -21,6 +21,7 @@ const Set<String> legacyOrIgnoredRepos = {
   'graf',
   'kevmoo.github.io',
   'dart_in_the_shell',
+  'holdings',
 };
 
 /// Known published packages on pub.dev.

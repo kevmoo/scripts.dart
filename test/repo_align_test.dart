@@ -323,6 +323,14 @@ void main() {
     });
   });
 
+  group('legacyOrIgnoredRepos', () {
+    test('contains holdings and other known legacy repos', () {
+      check(legacyOrIgnoredRepos).contains('holdings');
+      check(legacyOrIgnoredRepos).contains('wynette');
+      check(legacyOrIgnoredRepos).contains('personal_dotfiles');
+    });
+  });
+
   group('RepoAlignScanner', () {
     test('scans mock directory structure', () {
       final tempDir = Directory.systemTemp.createTempSync('repo_align_test_');
