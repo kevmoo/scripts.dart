@@ -44,6 +44,29 @@ extension GitDirExtensions on GitDir {
     return GitDir.fromExisting(gitRoot);
   }
 
+  /// Helper for executing a git command and throwing a ProcessException on
+  /// failure.
+  Future<ProcessResult> _runGit(List<String> args) async {
+    final result = await runCommand(args, throwOnError: false);
+    if (result.exitCode != 0) {
+      throw ProcessException(
+        'git',
+        args,
+        result.stderr as String,
+        result.exitCode,
+      );
+    }
+    return result;
+  }
+
+  /// Helper for running a command and returning its trimmed stdout on success,
+  /// or null if the exit code is non-zero.
+  Future<String?> _runAndGetStdout(List<String> args) async {
+    final result = await runCommand(args, throwOnError: false);
+    if (result.exitCode != 0) return null;
+    return (result.stdout as String).trim();
+  }
+
   /// Gets the short SHA of a given ref (defaults to 'HEAD').
   Future<String> getShortSha([String ref = 'HEAD']) async {
     final result = await runCommand(['rev-parse', '--short', ref]);
@@ -64,16 +87,8 @@ extension GitDirExtensions on GitDir {
   /// Gets the upstream of a branch.
   ///
   /// Returns null if no upstream is configured.
-  Future<String?> getUpstream(String branchName) async {
-    final result = await runCommand([
-      'rev-parse',
-      '--abbrev-ref',
-      '$branchName@{u}',
-    ], throwOnError: false);
-
-    if (result.exitCode != 0) return null;
-    return (result.stdout as String).trim();
-  }
+  Future<String?> getUpstream(String branchName) =>
+      _runAndGetStdout(['rev-parse', '--abbrev-ref', '$branchName@{u}']);
 
   /// Determines the default branch by checking origin/HEAD or sniffing for main/master.
   Future<String?> getDefaultBranch() async {
@@ -112,15 +127,7 @@ extension GitDirExtensions on GitDir {
     final args = ['fetch'];
     if (all) args.add('--all');
     if (prune) args.add('--prune');
-    final result = await runCommand(args, throwOnError: false);
-    if (result.exitCode != 0) {
-      throw ProcessException(
-        'git',
-        args,
-        result.stderr as String,
-        result.exitCode,
-      );
-    }
+    await _runGit(args);
   }
 
   /// Attempts to fast-forward merge the current branch with its upstream.
@@ -130,15 +137,7 @@ extension GitDirExtensions on GitDir {
   /// Deletes a local branch.
   Future<void> deleteBranch(String branchName, {bool force = false}) async {
     final args = ['branch', force ? '-D' : '-d', branchName];
-    final result = await runCommand(args, throwOnError: false);
-    if (result.exitCode != 0) {
-      throw ProcessException(
-        'git',
-        args,
-        result.stderr as String,
-        result.exitCode,
-      );
-    }
+    await _runGit(args);
   }
 
   /// Gets all local branches along with their upstream tracking status.
@@ -285,14 +284,12 @@ extension GitDirExtensions on GitDir {
   /// Gets the PR number stored in the local git config for [branchName], if
   /// any.
   Future<int?> getLocalPrNumber(String branchName) async {
-    final result = await runCommand([
+    final output = await _runAndGetStdout([
       'config',
       '--get',
       'branch.$branchName.gh-pr-number',
-    ], throwOnError: false);
-
-    if (result.exitCode != 0) return null;
-    final output = (result.stdout as String).trim();
+    ]);
+    if (output == null) return null;
     return int.tryParse(output);
   }
 
@@ -513,15 +510,7 @@ extension GitDirExtensions on GitDir {
     final args = ['worktree', 'remove'];
     if (force) args.add('--force');
     args.add(worktreePath);
-    final result = await runCommand(args, throwOnError: false);
-    if (result.exitCode != 0) {
-      throw ProcessException(
-        'git',
-        args,
-        result.stderr as String,
-        result.exitCode,
-      );
-    }
+    await _runGit(args);
   }
 
   /// Checks if [branchName] has commits that are not present in [headRefOid].
