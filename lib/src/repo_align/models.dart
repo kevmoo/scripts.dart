@@ -266,10 +266,3 @@ class RepoAlignmentStatus {
     'isAligned': isAligned,
   };
 }
-
-/// Clamps a GitHub Actions check run name to 100 characters to match the
-/// GitHub Checks API truncation limit (100 chars with `...`).
-String clampGhaCheckName(String name) {
-  if (name.length <= 100) return name;
-  return '${name.substring(0, 97)}...';
-}
