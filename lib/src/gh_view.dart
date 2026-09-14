@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import 'package:args/args.dart';
 import 'package:io/ansi.dart';
@@ -59,30 +60,63 @@ extension type const CiStatus(String value) implements String {
 }
 
 /// Representation of an open GitHub Pull Request.
-typedef GhPr = ({
-  int number,
-  String title,
-  String url,
-  bool isDraft,
-  String state,
-  ReviewDecision reviewDecision,
-  List<String> requestedReviewers,
-  int totalReviewThreads,
-  int unresolvedReviewThreads,
-  MergeableState mergeable,
-  MergeStateStatus mergeStateStatus,
-  bool isInMergeQueue,
-  String headRefName,
-  String headRefOid,
-  String baseRefName,
-  String repository,
-  String repoUrl,
-  bool isRepoArchived,
-  CiStatus ciStatus,
-  DateTime updatedAt,
-  LocalBranchStatus? localStatus,
-  String? context,
-});
+class GhPr {
+  final int number;
+  final String title;
+  final String url;
+  final String author;
+  final bool isDraft;
+  final String state;
+  final ReviewDecision reviewDecision;
+  final List<String> requestedReviewers;
+  final List<String> activeReviewers;
+  final int totalReviewThreads;
+  final int unresolvedReviewThreads;
+  final DateTime? lastAuthorCommentAt;
+  final DateTime? lastReviewerActivityAt;
+  final MergeableState mergeable;
+  final MergeStateStatus mergeStateStatus;
+  final bool isInMergeQueue;
+  final String headRefName;
+  final String headRefOid;
+  final String baseRefName;
+  final String repository;
+  final String repoUrl;
+  final bool isRepoArchived;
+  final CiStatus ciStatus;
+  final DateTime updatedAt;
+  final LocalBranchStatus? localStatus;
+  final String? context;
+
+  const new({
+    required this.number,
+    required this.title,
+    required this.url,
+    this.author = '',
+    required this.isDraft,
+    required this.state,
+    required this.reviewDecision,
+    required this.requestedReviewers,
+    this.activeReviewers = const [],
+    required this.totalReviewThreads,
+    required this.unresolvedReviewThreads,
+    this.lastAuthorCommentAt,
+    this.lastReviewerActivityAt,
+    required this.mergeable,
+    required this.mergeStateStatus,
+    required this.isInMergeQueue,
+    required this.headRefName,
+    required this.headRefOid,
+    required this.baseRefName,
+    required this.repository,
+    required this.repoUrl,
+    required this.isRepoArchived,
+    required this.ciStatus,
+    required this.updatedAt,
+    this.localStatus,
+    this.context,
+  });
+}
 
 /// Domain status helpers for [GhPr].
 extension GhPrStatus on GhPr {
@@ -102,6 +136,22 @@ extension GhPrStatus on GhPr {
   /// True when approved, passing CI, and mergeable, but blocked by branch protection/rulesets.
   bool get isBlockedByProtection =>
       isBlockedMergeState && isApproved && isCiPassing;
+
+  /// Returns human reviewers (from `activeReviewers` or human
+  /// `requestedReviewers`), falling back to `requestedReviewers` (which may
+  /// include CODEOWNERS teams).
+  List<String> get targetReviewers =>
+      activeReviewers.isNotEmpty ? activeReviewers : requestedReviewers;
+
+  /// True when the PR author has posted a top-level comment more recently than
+  /// the latest reviewer activity.
+  bool get isAlreadyPinged {
+    final authorComment = lastAuthorCommentAt;
+    if (authorComment == null) return false;
+    final reviewerActivity = lastReviewerActivityAt;
+    if (reviewerActivity == null) return true;
+    return authorComment.isAfter(reviewerActivity);
+  }
 }
 
 /// Local workspace status for a PR branch.
@@ -271,6 +321,8 @@ Future<void> runGhView({
     user: options.user,
     repo: options.repo,
     limit: options.limit,
+    lastNDays: options.lastNDays,
+    currentTime: currentTime,
     processRunner: runner,
   );
 
@@ -331,16 +383,20 @@ Future<GhPr> _attachLocalStatus(
   List<LocalRepoInfo>? localRepos, {
   String? context,
   ProcessRunner? processRunner,
-}) async => (
+}) async => GhPr(
   number: pr.number,
   title: pr.title,
   url: pr.url,
+  author: pr.author,
   isDraft: pr.isDraft,
   state: pr.state,
   reviewDecision: pr.reviewDecision,
   requestedReviewers: pr.requestedReviewers,
+  activeReviewers: pr.activeReviewers,
   totalReviewThreads: pr.totalReviewThreads,
   unresolvedReviewThreads: pr.unresolvedReviewThreads,
+  lastAuthorCommentAt: pr.lastAuthorCommentAt,
+  lastReviewerActivityAt: pr.lastReviewerActivityAt,
   mergeable: pr.mergeable,
   mergeStateStatus: pr.mergeStateStatus,
   isInMergeQueue: pr.isInMergeQueue,
@@ -360,25 +416,22 @@ Future<GhPr> _attachLocalStatus(
   context: context ?? pr.context,
 );
 
-/// Fetches open PRs via GitHub GraphQL.
-Future<List<GhPr>> fetchOpenPullRequests({
-  required String user,
-  String? repo,
-  int limit = 50,
-  ProcessRunner? processRunner,
-}) async {
-  final runner = processRunner ?? Process.run;
-  final searchQuery = _buildSearchQuery(user: user, repo: repo);
-
-  const graphqlQuery = r'''
-query($q: String!, $limit: Int!) {
-  search(query: $q, type: ISSUE, first: $limit) {
+const _pullRequestsGraphqlQuery = r'''
+query($q: String!, $limit: Int!, $cursor: String) {
+  search(query: $q, type: ISSUE, first: $limit, after: $cursor) {
     issueCount
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
     nodes {
       ... on PullRequest {
         number
         title
         url
+        author {
+          login
+        }
         isDraft
         state
         reviewDecision
@@ -396,10 +449,28 @@ query($q: String!, $limit: Int!) {
             }
           }
         }
-        reviewThreads(first: 50) {
+        reviewThreads(first: 25) {
           totalCount
           nodes {
             isResolved
+          }
+        }
+        reviews(last: 10) {
+          nodes {
+            author {
+              login
+            }
+            submittedAt
+            state
+          }
+        }
+        comments(last: 5) {
+          nodes {
+            author {
+              login
+            }
+            body
+            createdAt
           }
         }
         mergeable
@@ -443,16 +514,64 @@ query($q: String!, $limit: Int!) {
 }
 ''';
 
-  final result = await runner('gh', [
+/// Fetches open PRs via GitHub GraphQL (paginating in chunks of up to 25).
+Future<List<GhPr>> fetchOpenPullRequests({
+  required String user,
+  String? repo,
+  int limit = 50,
+  int? lastNDays,
+  DateTime? currentTime,
+  ProcessRunner? processRunner,
+}) async {
+  final runner = processRunner ?? Process.run;
+  final searchQuery = _buildSearchQuery(
+    user: user,
+    repo: repo,
+    lastNDays: lastNDays,
+    currentTime: currentTime,
+  );
+
+  final results = <GhPr>[];
+  String? cursor;
+
+  while (results.length < limit) {
+    final pageSize = math.min(25, limit - results.length);
+    final page = await _fetchPullRequestPage(
+      searchQuery: searchQuery,
+      pageSize: pageSize,
+      runner: runner,
+      afterCursor: cursor,
+    );
+    results.addAll(page.prs);
+    if (!page.hasNextPage || page.endCursor == null || page.prs.isEmpty) {
+      break;
+    }
+    cursor = page.endCursor;
+  }
+
+  return results;
+}
+
+Future<({List<GhPr> prs, bool hasNextPage, String? endCursor})>
+_fetchPullRequestPage({
+  required String searchQuery,
+  required int pageSize,
+  required ProcessRunner runner,
+  String? afterCursor,
+}) async {
+  final args = <String>[
     'api',
     'graphql',
     '-f',
-    'query=$graphqlQuery',
+    'query=$_pullRequestsGraphqlQuery',
     '-F',
     'q=$searchQuery',
     '-F',
-    'limit=$limit',
-  ]);
+    'limit=$pageSize',
+    if (afterCursor != null) ...['-F', 'cursor=$afterCursor'],
+  ];
+
+  final result = await runner('gh', args);
 
   if (result.exitCode != 0) {
     throw GhViewException(
@@ -477,19 +596,42 @@ query($q: String!, $limit: Int!) {
     throw GhViewException('Invalid GraphQL response structure.');
   }
 
+  final searchMap =
+      (decoded['data'] as Map<String, dynamic>?)?['search']
+          as Map<String, dynamic>?;
+  final pageInfo = searchMap?['pageInfo'] as Map<String, dynamic>?;
+  final hasNextPage = pageInfo?['hasNextPage'] as bool? ?? false;
+  final endCursor = pageInfo?['endCursor'] as String?;
+
   final nodes = extractGraphQLSearchNodes(decoded);
 
-  return nodes
+  final prs = nodes
       .whereType<Map<String, dynamic>>()
       .map(parsePrNode)
       .whereType<GhPr>()
       .toList();
+
+  return (prs: prs, hasNextPage: hasNextPage, endCursor: endCursor);
 }
 
-String _buildSearchQuery({required String user, String? repo}) {
+String _buildSearchQuery({
+  required String user,
+  String? repo,
+  int? lastNDays,
+  DateTime? currentTime,
+}) {
   final buffer = StringBuffer('is:pr is:open');
   if (user.isNotEmpty) buffer.write(' author:$user');
   if (repo != null && repo.isNotEmpty) buffer.write(' repo:$repo');
+  if (lastNDays != null) {
+    final cutoff = (currentTime ?? DateTime.now()).subtract(
+      Duration(days: lastNDays),
+    );
+    final yyyy = cutoff.year.toString().padLeft(4, '0');
+    final mm = cutoff.month.toString().padLeft(2, '0');
+    final dd = cutoff.day.toString().padLeft(2, '0');
+    buffer.write(' updated:>=$yyyy-$mm-$dd');
+  }
   buffer.write(' sort:updated-desc');
   return buffer.toString();
 }
@@ -506,14 +648,41 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     return null;
   }
 
+  final authorMap = node['author'] as Map<String, dynamic>?;
+  final prAuthor = authorMap?['login'] as String? ?? '';
+
   final updatedAtStr = node['updatedAt'] as String?;
   final updatedAt = updatedAtStr != null
       ? DateTime.tryParse(updatedAtStr) ?? DateTime.now()
       : DateTime.now();
 
-  final requestedReviewers = _extractRequestedReviewers(
+  final requested = _extractRequestedReviewers(
     node['reviewRequests'] as Map<String, dynamic>?,
   );
+  final reviewerActivity = _extractReviewerActivity(
+    node['reviews'] as Map<String, dynamic>?,
+    node['comments'] as Map<String, dynamic>?,
+    prAuthor,
+  );
+  final authorComment = _extractAuthorComment(
+    node['comments'] as Map<String, dynamic>?,
+    prAuthor,
+  );
+
+  final lastAuthorCommentAt = authorComment.lastAuthorCommentAt;
+  final lastReviewerActivityAt = reviewerActivity.lastReviewerActivityAt;
+  final isAlreadyPinged =
+      lastAuthorCommentAt != null &&
+      (lastReviewerActivityAt == null ||
+          lastAuthorCommentAt.isAfter(lastReviewerActivityAt));
+
+  final activeReviewers = _resolveActiveReviewers(
+    humanRequested: requested.humanReviewers,
+    humanParticipants: reviewerActivity.humanParticipants,
+    mentionedUsers: authorComment.mentionedUsers,
+    isAlreadyPinged: isAlreadyPinged,
+  );
+
   final threads = _extractReviewThreads(
     node['reviewThreads'] as Map<String, dynamic>?,
   );
@@ -522,18 +691,22 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     node['commits'] as Map<String, dynamic>?,
   );
 
-  return (
+  return GhPr(
     number: number,
     title: title,
     url: url,
+    author: prAuthor,
     isDraft: node['isDraft'] as bool? ?? false,
     state: node['state'] as String? ?? 'OPEN',
     reviewDecision: ReviewDecision(
       node['reviewDecision'] as String? ?? ReviewDecision.none,
     ),
-    requestedReviewers: requestedReviewers,
+    requestedReviewers: requested.allReviewers,
+    activeReviewers: activeReviewers,
     totalReviewThreads: threads.total,
     unresolvedReviewThreads: threads.unresolved,
+    lastAuthorCommentAt: lastAuthorCommentAt,
+    lastReviewerActivityAt: lastReviewerActivityAt,
     mergeable: MergeableState(
       node['mergeable'] as String? ?? MergeableState.unknown,
     ),
@@ -549,29 +722,142 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     isRepoArchived: repoMap?['isArchived'] as bool? ?? false,
     ciStatus: ciStatus,
     updatedAt: updatedAt,
-    localStatus: null,
-    context: null,
   );
 }
 
-List<String> _extractRequestedReviewers(
-  Map<String, dynamic>? reviewRequestsObj,
-) {
+const _knownBotLogins = <String>{
+  'cla-bot',
+  'codecov',
+  'codecov-commenter',
+  'coveralls',
+  'dependabot',
+  'flutter-dashboard',
+  'fluttergithubbot',
+  'gemini-code-assist',
+  'github-actions',
+  'google-cla',
+};
+
+bool _isBotLogin(String login) {
+  final lower = login.toLowerCase();
+  return lower.endsWith('[bot]') ||
+      lower.endsWith('-bot') ||
+      _knownBotLogins.contains(lower);
+}
+
+({List<String> allReviewers, List<String> humanReviewers})
+_extractRequestedReviewers(Map<String, dynamic>? reviewRequestsObj) {
   final requestNodes = reviewRequestsObj?['nodes'] as List<dynamic>? ?? [];
-  final reviewers = <String>[];
+  final allReviewers = <String>[];
+  final humanReviewers = <String>[];
   for (final r in requestNodes) {
     if (r is Map<String, dynamic>) {
       final reviewer = r['requestedReviewer'] as Map<String, dynamic>?;
-      final login =
-          reviewer?['login'] as String? ??
-          reviewer?['slug'] as String? ??
-          reviewer?['name'] as String?;
-      if (login != null && login.isNotEmpty) {
-        reviewers.add(login);
+      final userLogin = reviewer?['login'] as String?;
+      final teamSlug = reviewer?['slug'] as String?;
+      final teamName = reviewer?['name'] as String?;
+      final id = userLogin ?? teamSlug ?? teamName;
+      if (id != null && id.isNotEmpty) {
+        allReviewers.add(id);
+        if (userLogin != null && !_isBotLogin(userLogin)) {
+          humanReviewers.add(userLogin);
+        }
       }
     }
   }
-  return reviewers;
+  return (allReviewers: allReviewers, humanReviewers: humanReviewers);
+}
+
+String? _extractNodeLogin(Map<String, dynamic> item) {
+  final authorMap = item['author'] as Map<String, dynamic>?;
+  return authorMap?['login'] as String?;
+}
+
+DateTime? _extractNodeDateTime(Map<String, dynamic> item, String dateKey) {
+  final dateStr = item[dateKey] as String?;
+  return dateStr != null ? DateTime.tryParse(dateStr) : null;
+}
+
+bool _isHumanReviewer(String? login, String prAuthor) =>
+    login != null &&
+    login.isNotEmpty &&
+    login != prAuthor &&
+    !_isBotLogin(login);
+
+({DateTime? lastReviewerActivityAt, List<String> humanParticipants})
+_extractReviewerActivity(
+  Map<String, dynamic>? reviewsObj,
+  Map<String, dynamic>? commentsObj,
+  String prAuthor,
+) {
+  DateTime? lastActivity;
+  final participants = <String>{};
+
+  void processNodes(List<dynamic>? nodes, String dateKey) {
+    for (final item in (nodes ?? const []).whereType<Map<String, dynamic>>()) {
+      final login = _extractNodeLogin(item);
+      if (!_isHumanReviewer(login, prAuthor)) continue;
+      participants.add(login!);
+      final dt = _extractNodeDateTime(item, dateKey);
+      if (dt != null && (lastActivity == null || dt.isAfter(lastActivity!))) {
+        lastActivity = dt;
+      }
+    }
+  }
+
+  processNodes(reviewsObj?['nodes'] as List<dynamic>?, 'submittedAt');
+  processNodes(commentsObj?['nodes'] as List<dynamic>?, 'createdAt');
+  return (
+    lastReviewerActivityAt: lastActivity,
+    humanParticipants: participants.toList(),
+  );
+}
+
+({DateTime? lastAuthorCommentAt, List<String> mentionedUsers})
+_extractAuthorComment(Map<String, dynamic>? commentsObj, String prAuthor) {
+  if (prAuthor.isEmpty) {
+    return (lastAuthorCommentAt: null, mentionedUsers: const []);
+  }
+  DateTime? lastCommentAt;
+  var latestBody = '';
+  final nodes = commentsObj?['nodes'] as List<dynamic>? ?? const [];
+  for (final item in nodes.whereType<Map<String, dynamic>>()) {
+    if (_extractNodeLogin(item) != prAuthor) continue;
+    final dt = _extractNodeDateTime(item, 'createdAt');
+    if (dt != null && (lastCommentAt == null || dt.isAfter(lastCommentAt))) {
+      lastCommentAt = dt;
+      latestBody = item['body'] as String? ?? '';
+    }
+  }
+
+  return (
+    lastAuthorCommentAt: lastCommentAt,
+    mentionedUsers: _extractMentionedUsers(latestBody, prAuthor),
+  );
+}
+
+List<String> _extractMentionedUsers(String body, String prAuthor) {
+  if (body.isEmpty) return const [];
+  final mentioned = <String>{};
+  for (final match in RegExp('@([a-zA-Z0-9-]+)').allMatches(body)) {
+    final user = match.group(1);
+    if (_isHumanReviewer(user, prAuthor)) {
+      mentioned.add(user!);
+    }
+  }
+  return mentioned.toList();
+}
+
+List<String> _resolveActiveReviewers({
+  required List<String> humanRequested,
+  required List<String> humanParticipants,
+  required List<String> mentionedUsers,
+  required bool isAlreadyPinged,
+}) {
+  if (isAlreadyPinged && mentionedUsers.isNotEmpty) {
+    return {...mentionedUsers, ...humanRequested}.toList();
+  }
+  return {...humanRequested, ...humanParticipants}.toList();
 }
 
 ({int total, int unresolved}) _extractReviewThreads(
@@ -978,8 +1264,8 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
 
 String _formatReviewBadgeTerminal(GhPr pr) {
   String formatRequested(String label) {
-    if (pr.requestedReviewers.isNotEmpty) {
-      final text = '$label (@${pr.requestedReviewers.join(', @')})';
+    if (pr.targetReviewers.isNotEmpty) {
+      final text = '$label (@${pr.targetReviewers.join(', @')})';
       return yellow.wrap(text) ?? text;
     }
     return yellow.wrap(label) ?? label;
@@ -989,7 +1275,7 @@ String _formatReviewBadgeTerminal(GhPr pr) {
     return green.wrap('Approved') ?? 'Approved';
   }
   if (pr.reviewDecision == ReviewDecision.changesRequested) {
-    if (pr.requestedReviewers.isNotEmpty) {
+    if (pr.targetReviewers.isNotEmpty) {
       return formatRequested('Re-review Requested');
     }
     if (pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0) {
@@ -1174,6 +1460,7 @@ void _writeMarkdownPrRow(StringBuffer buffer, GhPr pr, DateTime now) {
     pr,
     areThreadsResolved: areThreadsResolved,
     isReadyToMerge: isReady,
+    now: now,
   );
 
   final prCell = prLines.join('<br>');
@@ -1191,6 +1478,7 @@ String _resolveActionItemMarkdown(
   GhPr pr, {
   required bool areThreadsResolved,
   required bool isReadyToMerge,
+  required DateTime now,
 }) {
   if (pr.isRepoArchived) return '📦 Archived repo (read-only)';
   if (isReadyToMerge) return '🚀 **Ready to merge**';
@@ -1198,11 +1486,15 @@ String _resolveActionItemMarkdown(
     return '🧱 **Blocked by ruleset/branch protection**';
   }
 
+  final reviewers = pr.targetReviewers;
+  final hasReviewers = reviewers.isNotEmpty;
+  final reviewersText = hasReviewers ? '@${reviewers.join(', @')}' : '';
+
   return switch ((
     pr.mergeable == MergeableState.conflicting,
     pr.ciStatus == CiStatus.failure,
     pr.reviewDecision,
-    pr.requestedReviewers.isNotEmpty,
+    hasReviewers,
     areThreadsResolved,
     pr.unresolvedReviewThreads,
     pr.isDraft,
@@ -1212,7 +1504,7 @@ String _resolveActionItemMarkdown(
     (_, true, _, _, _, _, true) => '🔴 **CI Failing** (draft)',
     (_, true, _, _, _, _, false) => '🔴 **CI Failing** (needs fix)',
     (_, _, ReviewDecision.changesRequested, true, _, _, _) =>
-      '🟡 **Re-review Requested** (@${pr.requestedReviewers.join(', @')})',
+      '🟡 **Re-review Requested** ($reviewersText)',
     (_, _, ReviewDecision.changesRequested, false, true, _, _) =>
       '🔄 **Re-review Needed** (threads resolved)',
     (_, _, ReviewDecision.changesRequested, false, false, > 0, _) =>
@@ -1220,66 +1512,58 @@ String _resolveActionItemMarkdown(
           'thread${pr.unresolvedReviewThreads > 1 ? 's' : ''})',
     (_, _, ReviewDecision.changesRequested, false, false, _, _) =>
       '🔴 **Changes Requested**',
-    (
-      _,
-      _,
-      ReviewDecision.reviewRequired || ReviewDecision.none,
-      true,
-      true,
-      _,
-      _,
-    ) =>
-      '🔔 **Ping Reviewer** (@${pr.requestedReviewers.join(', @')})',
-    (
-      _,
-      _,
-      ReviewDecision.reviewRequired || ReviewDecision.none,
-      false,
-      true,
-      _,
-      _,
-    ) =>
-      '🔔 **Ping Reviewer** (threads resolved)',
-    (
-      _,
-      _,
-      ReviewDecision.reviewRequired || ReviewDecision.none,
-      true,
-      false,
-      _,
-      _,
-    ) =>
-      '⏳ **Awaiting @${pr.requestedReviewers.join(', @')}**',
-    (
-      _,
-      _,
-      ReviewDecision.reviewRequired || ReviewDecision.none,
-      false,
-      false,
-      _,
-      true,
-    ) =>
-      '⚪ **Work in progress**',
-    (
-      _,
-      _,
-      ReviewDecision.reviewRequired || ReviewDecision.none,
-      false,
-      false,
-      _,
-      false,
-    ) =>
-      '⏳ **Awaiting review**',
+    (_, _, ReviewDecision.reviewRequired || ReviewDecision.none, _, _, _, _) =>
+      _resolveReviewRequiredActionMarkdown(
+        pr,
+        reviewersText: reviewersText,
+        areThreadsResolved: areThreadsResolved,
+        now: now,
+      ),
     (_, _, _, _, _, _, true) => '⚪ **Work in progress**',
     _ => '⚪ **Active**',
   };
 }
 
+bool _isRecentPing(GhPr pr, DateTime now) {
+  if (!pr.isAlreadyPinged) return false;
+  final authorComment = pr.lastAuthorCommentAt;
+  if (authorComment == null) return false;
+  return now.difference(authorComment).inDays < 7;
+}
+
+String _resolveReviewRequiredActionMarkdown(
+  GhPr pr, {
+  required String reviewersText,
+  required bool areThreadsResolved,
+  required DateTime now,
+}) {
+  if (_isRecentPing(pr, now)) {
+    final pingAge = formatTimeAgo(pr.lastAuthorCommentAt!, currentTime: now);
+    if (reviewersText.isNotEmpty) {
+      return '⏳ **Awaiting $reviewersText** (pinged $pingAge)';
+    }
+    return '⏳ **Awaiting Review** (pinged $pingAge)';
+  }
+  if (areThreadsResolved) {
+    if (reviewersText.isNotEmpty) {
+      return '🔔 **Ping Reviewer** ($reviewersText)';
+    }
+    return '🔔 **Ping Reviewer** (threads resolved)';
+  }
+  if (reviewersText.isNotEmpty) {
+    return '⏳ **Awaiting $reviewersText**';
+  }
+  if (pr.isDraft) {
+    return '⚪ **Work in progress**';
+  }
+  return '⏳ **Awaiting review**';
+}
+
 String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) {
   if (pr.reviewDecision == ReviewDecision.approved) return '🟢 Approved';
   if (pr.reviewDecision == ReviewDecision.changesRequested) {
-    if (pr.requestedReviewers.isNotEmpty) {
-      return '🟡 Re-review Requested (@${pr.requestedReviewers.join(', @')})';
+    if (pr.targetReviewers.isNotEmpty) {
+      return '🟡 Re-review Requested (@${pr.targetReviewers.join(', @')})';
     }
     if (areThreadsResolved) return '🔴 Changes Requested (Resolved)';
     if (pr.unresolvedReviewThreads > 0) {
@@ -1288,8 +1572,8 @@ String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) {
     return '🔴 Changes Requested';
   }
   if (pr.reviewDecision == ReviewDecision.reviewRequired) {
-    if (pr.requestedReviewers.isNotEmpty) {
-      return '🟡 Review Required (@${pr.requestedReviewers.join(', @')})';
+    if (pr.targetReviewers.isNotEmpty) {
+      return '🟡 Review Required (@${pr.targetReviewers.join(', @')})';
     }
     return '🟡 Review Required';
   }
@@ -1332,6 +1616,7 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'number': pr.number,
     'title': pr.title,
     'url': pr.url,
+    'author': pr.author,
     'repository': pr.repository,
     'repoUrl': pr.repoUrl,
     'isRepoArchived': pr.isRepoArchived,
@@ -1339,6 +1624,11 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'state': pr.state,
     'reviewDecision': pr.reviewDecision,
     'requestedReviewers': pr.requestedReviewers,
+    'activeReviewers': pr.activeReviewers,
+    'targetReviewers': pr.targetReviewers,
+    'isAlreadyPinged': pr.isAlreadyPinged,
+    'lastAuthorCommentAt': pr.lastAuthorCommentAt?.toIso8601String(),
+    'lastReviewerActivityAt': pr.lastReviewerActivityAt?.toIso8601String(),
     'totalReviewThreads': pr.totalReviewThreads,
     'unresolvedReviewThreads': pr.unresolvedReviewThreads,
     'areAllReviewThreadsResolved':
