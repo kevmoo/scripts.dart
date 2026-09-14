@@ -8,9 +8,11 @@ import 'package:path/path.dart' as p;
 import 'local_repo_scanner.dart';
 import 'process_utils.dart';
 import 'shared/gh_args.dart';
+import 'shared/gh_pr_ref.dart';
 import 'shared/graphql_utils.dart';
 
 export 'local_repo_scanner.dart' show normalizeRepoName;
+export 'shared/gh_pr_ref.dart' show GhPrRef;
 
 /// Exception thrown by `gh-view` operations.
 class GhViewException implements Exception {
@@ -58,10 +60,7 @@ extension type const CiStatus(String value) implements String {
 }
 
 /// Representation of an open GitHub Pull Request.
-class GhPr {
-  final int number;
-  final String title;
-  final String url;
+class GhPr extends GhPrRef {
   final String author;
   final bool isDraft;
   final String state;
@@ -75,11 +74,6 @@ class GhPr {
   final MergeableState mergeable;
   final MergeStateStatus mergeStateStatus;
   final bool isInMergeQueue;
-  final String headRefName;
-  final String headRefOid;
-  final String baseRefName;
-  final String repository;
-  final String repoUrl;
   final bool isRepoArchived;
   final CiStatus ciStatus;
   final DateTime updatedAt;
@@ -87,9 +81,9 @@ class GhPr {
   final String? context;
 
   const new({
-    required this.number,
-    required this.title,
-    required this.url,
+    required super.number,
+    required super.title,
+    required super.url,
     this.author = '',
     required this.isDraft,
     required this.state,
@@ -103,11 +97,11 @@ class GhPr {
     required this.mergeable,
     required this.mergeStateStatus,
     required this.isInMergeQueue,
-    required this.headRefName,
-    required this.headRefOid,
-    required this.baseRefName,
-    required this.repository,
-    required this.repoUrl,
+    required super.headRefName,
+    required super.headRefOid,
+    required super.baseRefName,
+    required super.repository,
+    required super.repoUrl,
     required this.isRepoArchived,
     required this.ciStatus,
     required this.updatedAt,
@@ -565,16 +559,10 @@ String _buildSearchQuery({
 
 /// Parses a single PR node from GraphQL.
 GhPr? parsePrNode(Map<String, dynamic> node) {
-  final number = node['number'] as int?;
-  final title = node['title'] as String?;
-  final url = node['url'] as String?;
+  final core = GhPrRef.parseCoreFields(node);
+  if (core == null) return null;
+
   final repoMap = node['repository'] as Map<String, dynamic>?;
-  final repository = repoMap?['nameWithOwner'] as String? ?? '';
-
-  if (number == null || title == null || url == null || repository.isEmpty) {
-    return null;
-  }
-
   final authorMap = node['author'] as Map<String, dynamic>?;
   final prAuthor = authorMap?['login'] as String? ?? '';
 
@@ -614,14 +602,14 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     node['reviewThreads'] as Map<String, dynamic>?,
   );
   final ciStatus = _extractCiStatus(
-    repository,
+    core.repository,
     node['commits'] as Map<String, dynamic>?,
   );
 
   return GhPr(
-    number: number,
-    title: title,
-    url: url,
+    number: core.number,
+    title: core.title,
+    url: core.url,
     author: prAuthor,
     isDraft: node['isDraft'] as bool? ?? false,
     state: node['state'] as String? ?? 'OPEN',
@@ -641,11 +629,11 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
       node['mergeStateStatus'] as String? ?? MergeStateStatus.unknown,
     ),
     isInMergeQueue: node['isInMergeQueue'] as bool? ?? false,
-    headRefName: node['headRefName'] as String? ?? '',
-    headRefOid: node['headRefOid'] as String? ?? '',
-    baseRefName: node['baseRefName'] as String? ?? '',
-    repository: repository,
-    repoUrl: repoMap?['url'] as String? ?? '',
+    headRefName: core.headRefName,
+    headRefOid: core.headRefOid,
+    baseRefName: core.baseRefName,
+    repository: core.repository,
+    repoUrl: core.repoUrl,
     isRepoArchived: repoMap?['isArchived'] as bool? ?? false,
     ciStatus: ciStatus,
     updatedAt: updatedAt,
@@ -856,7 +844,7 @@ Future<LocalBranchStatus?> _matchLocalStatus(
     (r) => r.repoNames.any((n) => n.toLowerCase() == repoKey),
   );
 
-  final location = _findLocalBranchLocation(matchingRepos, pr.headRefName);
+  final location = findLocalBranchLocation(matchingRepos, pr);
   if (location == null) return null;
 
   final shortSha = location.sha.length >= 7
@@ -882,28 +870,6 @@ Future<LocalBranchStatus?> _matchLocalStatus(
     isWorktree: location.isWorktree,
     displayStatus: display,
   );
-}
-
-({String repoPath, String sha, bool isWorktree})? _findLocalBranchLocation(
-  Iterable<LocalRepoInfo> repos,
-  String branchName,
-) {
-  for (final repo in repos) {
-    final wtMatch = repo.worktrees
-        .where((wt) => wt.branch == branchName)
-        .firstOrNull;
-    if (wtMatch != null) {
-      return (repoPath: wtMatch.path, sha: wtMatch.sha, isWorktree: true);
-    }
-
-    final branchMatch = repo.branches
-        .where((b) => b.name == branchName)
-        .firstOrNull;
-    if (branchMatch != null) {
-      return (repoPath: repo.repoPath, sha: branchMatch.sha, isWorktree: false);
-    }
-  }
-  return null;
 }
 
 /// Categorizes PRs into logical operational buckets.
