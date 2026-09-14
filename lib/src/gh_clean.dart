@@ -8,7 +8,12 @@ import 'package:path/path.dart' as p;
 import 'local_repo_scanner.dart';
 import 'process_utils.dart';
 import 'shared/gh_args.dart';
+import 'shared/gh_pr_ref.dart';
 import 'shared/graphql_utils.dart';
+
+export 'local_repo_scanner.dart'
+    show findMatchingWorktree, findMatchingWorktreeForPr;
+export 'shared/gh_pr_ref.dart' show GhPrRef;
 
 /// Exception thrown by `gh-clean` operations.
 class GhCleanException implements Exception {
@@ -22,19 +27,25 @@ class GhCleanException implements Exception {
 }
 
 /// Representation of a merged GitHub Pull Request.
-typedef LandedPr = ({
-  int number,
-  String title,
-  String url,
-  String repository,
-  String repoUrl,
-  String headRefName,
-  String headRefOid,
-  String baseRefName,
-  String? mergeSha,
-  DateTime? mergedAt,
-  DateTime? closedAt,
-});
+class LandedPr extends GhPrRef {
+  final String? mergeSha;
+  final DateTime? mergedAt;
+  final DateTime? closedAt;
+
+  const new({
+    required super.number,
+    required super.title,
+    required super.url,
+    required super.repository,
+    required super.repoUrl,
+    required super.headRefName,
+    required super.headRefOid,
+    required super.baseRefName,
+    this.mergeSha,
+    this.mergedAt,
+    this.closedAt,
+  });
+}
 
 /// A single cleanup action executed on a repository.
 typedef CleanAction = ({String description, bool success, String? error});
@@ -203,13 +214,7 @@ Future<void> runGhClean({
   final matchedWorktreePaths = <String>{};
   for (final r in results) {
     if (r.localRepo == null) continue;
-    final headBranch = r.pr.headRefName;
-    final repoShortName = r.pr.repository.split('/').last;
-    final matchingWt = findMatchingWorktree(
-      r.localRepo!,
-      headBranch,
-      repoShortName,
-    );
+    final matchingWt = findMatchingWorktreeForPr(r.localRepo!, r.pr);
     if (matchingWt != null) {
       matchedWorktreePaths.add(matchingWt.path);
     }
@@ -442,15 +447,8 @@ bool _isAllowedUserPr(
 
 /// Parses a landed PR node from GraphQL.
 LandedPr? parseLandedPrNode(Map<String, dynamic> node) {
-  final number = node['number'] as int?;
-  final title = node['title'] as String?;
-  final url = node['url'] as String?;
-  final repoMap = node['repository'] as Map<String, dynamic>?;
-  final repository = repoMap?['nameWithOwner'] as String? ?? '';
-
-  if (number == null || title == null || url == null || repository.isEmpty) {
-    return null;
-  }
+  final core = GhPrRef.parseCoreFields(node, defaultBaseRefName: 'main');
+  if (core == null) return null;
 
   final mergedAtStr = node['mergedAt'] as String?;
   final mergedAt = mergedAtStr != null ? DateTime.tryParse(mergedAtStr) : null;
@@ -461,15 +459,15 @@ LandedPr? parseLandedPrNode(Map<String, dynamic> node) {
   final mergeCommit = node['mergeCommit'] as Map<String, dynamic>?;
   final mergeSha = mergeCommit?['oid'] as String?;
 
-  return (
-    number: number,
-    title: title,
-    url: url,
-    repository: repository,
-    repoUrl: repoMap?['url'] as String? ?? '',
-    headRefName: node['headRefName'] as String? ?? '',
-    headRefOid: node['headRefOid'] as String? ?? '',
-    baseRefName: node['baseRefName'] as String? ?? 'main',
+  return LandedPr(
+    number: core.number,
+    title: core.title,
+    url: core.url,
+    repository: core.repository,
+    repoUrl: core.repoUrl,
+    headRefName: core.headRefName,
+    headRefOid: core.headRefOid,
+    baseRefName: core.baseRefName,
     mergeSha: mergeSha,
     mergedAt: mergedAt,
     closedAt: closedAt,
@@ -1082,29 +1080,6 @@ CleanAction _executeTrunkSync(
           success: false,
           error: (res.stderr as String).trim(),
         );
-}
-
-/// Discovers an attached worktree matching the PR branch or folder naming
-/// scheme.
-LocalWorktreeEntry? findMatchingWorktree(
-  LocalRepoInfo localRepo,
-  String branchName,
-  String repoShortName,
-) {
-  if (branchName.isEmpty) return null;
-
-  for (final wt in localRepo.worktrees) {
-    if (wt.path == localRepo.repoPath) continue;
-    if (wt.branch == branchName || wt.branch == 'refs/heads/$branchName') {
-      return wt;
-    }
-    final folder = p.basename(wt.path);
-    if (folder == '_$repoShortName-$branchName' ||
-        folder == '_${repoShortName}_$branchName') {
-      return wt;
-    }
-  }
-  return null;
 }
 
 bool _isDirDirty(String path, SyncProcessRunner runner) => isRepoDirtySync(

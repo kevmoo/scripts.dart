@@ -76,7 +76,7 @@ void main() {
   });
 
   group('planCleanup', () {
-    final samplePr = (
+    final samplePr = LandedPr(
       number: 1063,
       title: 'feat: new versioning',
       url: 'https://github.com/invertase/melos/pull/1063',
@@ -248,7 +248,7 @@ void main() {
       await remoteGit.runCommand(['add', '.']);
       await remoteGit.runCommand(['commit', '-m', 'Merge PR #1']);
 
-      final landedPr = (
+      final landedPr = LandedPr(
         number: 1,
         title: 'Feature X',
         url: 'https://github.com/test/local/pull/1',
@@ -346,7 +346,7 @@ void main() {
         ]);
         await localGit.runCommand(['checkout', 'main']);
 
-        final landedPr = (
+        final landedPr = LandedPr(
           number: 1,
           title: 'Squash Feature',
           url: 'https://github.com/test/local-squash/pull/1',
@@ -355,7 +355,6 @@ void main() {
           headRefName: 'feature-squash',
           headRefOid: prHeadOid,
           baseRefName: 'main',
-          mergeSha: null,
           mergedAt: DateTime.now(),
           closedAt: DateTime.now(),
         );
@@ -430,7 +429,7 @@ void main() {
         await localGit.runCommand(['commit', '-m', 'unpushed extra commit']);
         await localGit.runCommand(['checkout', 'main']);
 
-        final landedPr = (
+        final landedPr = LandedPr(
           number: 1,
           title: 'Unpushed Feature',
           url: 'https://github.com/test/local-unpushed/pull/1',
@@ -439,7 +438,6 @@ void main() {
           headRefName: 'feature-unpushed',
           headRefOid: prHeadOid,
           baseRefName: 'main',
-          mergeSha: null,
           mergedAt: DateTime.now(),
           closedAt: DateTime.now(),
         );
@@ -504,7 +502,7 @@ void main() {
       await localGit.runCommand(['commit', '-m', 'unmerged local commit']);
       await localGit.runCommand(['checkout', 'main']);
 
-      final landedPr = (
+      final landedPr = LandedPr(
         number: 1,
         title: 'Empty Head PR',
         url: 'https://github.com/test/local-empty-head/pull/1',
@@ -513,7 +511,6 @@ void main() {
         headRefName: 'feature-empty-head',
         headRefOid: '',
         baseRefName: 'main',
-        mergeSha: null,
         mergedAt: DateTime.now(),
         closedAt: DateTime.now(),
       );
@@ -557,7 +554,7 @@ void main() {
 
   group('Reports formatting', () {
     test('formatMarkdownReport formats table correctly', () {
-      final pr = (
+      final pr = LandedPr(
         number: 1063,
         title: 'feat: no cascade',
         url: 'https://github.com/invertase/melos/pull/1063',
@@ -601,7 +598,7 @@ void main() {
     });
 
     test('formatMarkdownReport sorts by org -> repo -> oldest PR number', () {
-      final prKevmoo8 = (
+      final prKevmoo8 = LandedPr(
         number: 8,
         title: 'pr 8',
         url: 'https://github.com/kevmoo/private_life/pull/8',
@@ -615,7 +612,7 @@ void main() {
         closedAt: DateTime.utc(2026, 8, 25),
       );
 
-      final prDart1 = (
+      final prDart1 = LandedPr(
         number: 1,
         title: 'pr 1',
         url: 'https://github.com/dart-lang/ecosystem/pull/1',
@@ -652,7 +649,7 @@ void main() {
     });
 
     test('formatJsonReport produces valid JSON schema', () {
-      final pr = (
+      final pr = LandedPr(
         number: 1063,
         title: 'feat: no cascade',
         url: 'https://github.com/invertase/melos/pull/1063',

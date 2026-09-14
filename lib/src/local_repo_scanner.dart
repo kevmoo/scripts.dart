@@ -1,8 +1,10 @@
 import 'dart:io';
 
+import 'package:collection/collection.dart';
 import 'package:path/path.dart' as p;
 
 import 'process_utils.dart';
+import 'shared/gh_pr_ref.dart';
 
 /// Information about a discovered local Git repository.
 typedef LocalRepoInfo = ({
@@ -338,4 +340,56 @@ List<LocalWorktreeEntry> _parseWorktrees(
   }
   flush();
   return worktrees;
+}
+
+/// Discovers an attached worktree matching the PR branch or folder naming
+/// scheme.
+LocalWorktreeEntry? findMatchingWorktree(
+  LocalRepoInfo localRepo,
+  String branchName,
+  String repoShortName,
+) {
+  if (branchName.isEmpty) return null;
+
+  for (final wt in localRepo.worktrees) {
+    if (wt.path == localRepo.repoPath) continue;
+    if (wt.branch == branchName || wt.branch == 'refs/heads/$branchName') {
+      return wt;
+    }
+    final folder = p.basename(wt.path);
+    if (folder == '_$repoShortName-$branchName' ||
+        folder == '_${repoShortName}_$branchName') {
+      return wt;
+    }
+  }
+  return null;
+}
+
+/// Discovers an attached worktree matching [pr]'s head branch or folder naming
+/// scheme.
+LocalWorktreeEntry? findMatchingWorktreeForPr(
+  LocalRepoInfo localRepo,
+  GhPrRef pr,
+) => findMatchingWorktree(localRepo, pr.headRefName, pr.repoShortName);
+
+/// Discovers a local checkout (worktree or root branch) matching [pr] across
+/// [repos].
+({String repoPath, String sha, bool isWorktree})? findLocalBranchLocation(
+  Iterable<LocalRepoInfo> repos,
+  GhPrRef pr,
+) {
+  for (final repo in repos) {
+    final wtMatch = findMatchingWorktreeForPr(repo, pr);
+    if (wtMatch != null) {
+      return (repoPath: wtMatch.path, sha: wtMatch.sha, isWorktree: true);
+    }
+
+    final branchMatch = repo.branches
+        .where((b) => b.name == pr.headRefName)
+        .firstOrNull;
+    if (branchMatch != null) {
+      return (repoPath: repo.repoPath, sha: branchMatch.sha, isWorktree: false);
+    }
+  }
+  return null;
 }
