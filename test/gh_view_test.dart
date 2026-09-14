@@ -144,6 +144,7 @@ void main() {
       check(pr.reviewDecision).equals('REVIEW_REQUIRED');
       check(pr.ciStatus).equals('FAILURE');
       check(pr.mergeable).equals('MERGEABLE');
+      check(pr.mergeStateStatus).equals('UNKNOWN');
       check(pr.isDraft).isFalse();
     });
 
@@ -268,6 +269,7 @@ void main() {
       int unresolvedReviewThreads = 0,
       String ciStatus = 'SUCCESS',
       String mergeable = 'MERGEABLE',
+      String mergeStateStatus = 'UNKNOWN',
     }) => (
       number: number,
       title: 'PR $number',
@@ -279,6 +281,7 @@ void main() {
       totalReviewThreads: totalReviewThreads,
       unresolvedReviewThreads: unresolvedReviewThreads,
       mergeable: mergeable,
+      mergeStateStatus: mergeStateStatus,
       isInMergeQueue: isInMergeQueue,
       headRefName: 'branch-$number',
       headRefOid: 'sha-$number',
@@ -316,11 +319,16 @@ void main() {
             reviewDecision: 'CHANGES_REQUESTED',
             requestedReviewers: ['harryterkelsen'],
           ),
+          makePr(
+            number: 9,
+            reviewDecision: 'APPROVED',
+            mergeStateStatus: 'BLOCKED',
+          ),
         ];
 
         final cat = categorizePullRequests(prs);
         check(cat.readyToMerge.map((p) => p.number)).deepEquals([1]);
-        check(cat.actionNeeded.map((p) => p.number)).deepEquals([2, 3, 4]);
+        check(cat.actionNeeded.map((p) => p.number)).deepEquals([2, 3, 4, 9]);
         check(cat.inReview.map((p) => p.number)).deepEquals([5, 8]);
         check(cat.drafts.map((p) => p.number)).deepEquals([6]);
         check(cat.archived.map((p) => p.number)).deepEquals([7]);
@@ -342,6 +350,7 @@ void main() {
         totalReviewThreads: 5,
         unresolvedReviewThreads: 0,
         mergeable: 'MERGEABLE',
+        mergeStateStatus: 'CLEAN',
         isInMergeQueue: false,
         headRefName: 'feat-xyz',
         headRefOid: 'abcdef1234567890',
@@ -381,6 +390,7 @@ void main() {
       check(readyList[0]['areAllReviewThreadsResolved']).equals(true);
       check(readyList[0]['isRepoArchived']).equals(false);
       check(readyList[0]['isInMergeQueue']).equals(false);
+      check(readyList[0]['mergeStateStatus']).equals('CLEAN');
       final localMap = readyList[0]['local'] as Map<String, dynamic>;
       check(localMap['status']).equals('🟢 Synced');
     });
@@ -400,6 +410,7 @@ void main() {
         totalReviewThreads: 0,
         unresolvedReviewThreads: 0,
         mergeable: 'MERGEABLE',
+        mergeStateStatus: 'CLEAN',
         isInMergeQueue: true,
         headRefName: 'feat-xyz',
         headRefOid: 'abcdef1234567890',
@@ -433,6 +444,39 @@ void main() {
       check(md).contains('🟢 Synced');
     });
 
+    test('renders blocked by ruleset/branch protection', () {
+      final now = DateTime.parse('2026-08-13T20:00:00Z');
+      final pr = (
+        number: 434,
+        title: 'blocked branch protection',
+        url: 'https://github.com/genkit-ai/genkit-dart/pull/434',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: 'APPROVED',
+        requestedReviewers: <String>[],
+        totalReviewThreads: 0,
+        unresolvedReviewThreads: 0,
+        mergeable: 'MERGEABLE',
+        mergeStateStatus: 'BLOCKED',
+        isInMergeQueue: false,
+        headRefName: 'blocked-branch',
+        headRefOid: 'abcdef1234567890',
+        baseRefName: 'main',
+        repository: 'genkit-ai/genkit-dart',
+        repoUrl: 'https://github.com/genkit-ai/genkit-dart',
+        isRepoArchived: false,
+        ciStatus: 'SUCCESS',
+        updatedAt: now.subtract(const Duration(hours: 1)),
+        localStatus: null,
+        context: null,
+      );
+
+      final md = renderMarkdownReport([pr], currentTime: now);
+      check(md).contains('## ⚠️ 2. Action Needed');
+      check(md).contains('🧱 **Blocked by ruleset/branch protection**');
+      check(md).contains('Merge:&nbsp;🧱&nbsp;Blocked');
+    });
+
     test(
       'renders Re-review Needed when changes requested but threads resolved',
       () {
@@ -448,6 +492,7 @@ void main() {
           totalReviewThreads: 12,
           unresolvedReviewThreads: 0,
           mergeable: 'MERGEABLE',
+          mergeStateStatus: 'UNKNOWN',
           isInMergeQueue: false,
           headRefName: 'dry-run-refactor',
           headRefOid: 'abcdef1234567890',
@@ -480,6 +525,7 @@ void main() {
         totalReviewThreads: 12,
         unresolvedReviewThreads: 0,
         mergeable: 'MERGEABLE',
+        mergeStateStatus: 'UNKNOWN',
         isInMergeQueue: false,
         headRefName: 'dry-run-refactor',
         headRefOid: 'abcdef1234567890',
@@ -510,6 +556,7 @@ void main() {
         totalReviewThreads: 3,
         unresolvedReviewThreads: 0,
         mergeable: 'MERGEABLE',
+        mergeStateStatus: 'UNKNOWN',
         isInMergeQueue: false,
         headRefName: 'safari_sily',
         headRefOid: 'abcdef1234567890',
@@ -738,6 +785,7 @@ void main() {
       totalReviewThreads: 0,
       unresolvedReviewThreads: 0,
       mergeable: 'MERGEABLE',
+      mergeStateStatus: 'UNKNOWN',
       isInMergeQueue: false,
       headRefName: 'fix-issue',
       headRefOid: 'sha42',
@@ -805,6 +853,7 @@ void main() {
         totalReviewThreads: 0,
         unresolvedReviewThreads: 0,
         mergeable: 'MERGEABLE',
+        mergeStateStatus: 'UNKNOWN',
         isInMergeQueue: false,
         headRefName: 'fix-issue',
         headRefOid: 'sha42',
@@ -843,6 +892,7 @@ void main() {
           totalReviewThreads: 0,
           unresolvedReviewThreads: 0,
           mergeable: 'MERGEABLE',
+          mergeStateStatus: 'UNKNOWN',
           isInMergeQueue: false,
           headRefName: 'fix-issue',
           headRefOid: 'sha42',

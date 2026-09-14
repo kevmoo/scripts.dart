@@ -36,6 +36,7 @@ typedef GhPr = ({
   int totalReviewThreads,
   int unresolvedReviewThreads,
   String mergeable,
+  String mergeStateStatus,
   bool isInMergeQueue,
   String headRefName,
   String headRefOid,
@@ -287,6 +288,7 @@ Future<GhPr> _attachLocalStatus(
   totalReviewThreads: pr.totalReviewThreads,
   unresolvedReviewThreads: pr.unresolvedReviewThreads,
   mergeable: pr.mergeable,
+  mergeStateStatus: pr.mergeStateStatus,
   isInMergeQueue: pr.isInMergeQueue,
   headRefName: pr.headRefName,
   headRefOid: pr.headRefOid,
@@ -347,6 +349,7 @@ query($q: String!, $limit: Int!) {
           }
         }
         mergeable
+        mergeStateStatus
         isInMergeQueue
         headRefName
         headRefOid
@@ -476,6 +479,7 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     totalReviewThreads: threads.total,
     unresolvedReviewThreads: threads.unresolved,
     mergeable: node['mergeable'] as String? ?? 'UNKNOWN',
+    mergeStateStatus: node['mergeStateStatus'] as String? ?? 'UNKNOWN',
     isInMergeQueue: node['isInMergeQueue'] as bool? ?? false,
     headRefName: node['headRefName'] as String? ?? '',
     headRefOid: node['headRefOid'] as String? ?? '',
@@ -690,7 +694,9 @@ bool _isReadyToMerge(GhPr pr) {
   final isApproved = pr.reviewDecision == 'APPROVED';
   final isCiSuccess = pr.ciStatus == 'SUCCESS' || pr.ciStatus == 'TREE_BROKEN';
   final isMergeable = pr.mergeable == 'MERGEABLE' || pr.isInMergeQueue;
-  return isApproved && isCiSuccess && isMergeable;
+  final isMergeStateValid =
+      pr.mergeStateStatus != 'BLOCKED' || pr.isInMergeQueue;
+  return isApproved && isCiSuccess && isMergeable && isMergeStateValid;
 }
 
 bool _isActionNeeded(GhPr pr) {
@@ -698,7 +704,13 @@ bool _isActionNeeded(GhPr pr) {
       pr.reviewDecision == 'CHANGES_REQUESTED' && pr.requestedReviewers.isEmpty;
   final isCiFailure = pr.ciStatus == 'FAILURE';
   final isConflicting = pr.mergeable == 'CONFLICTING';
-  return isChangesRequested || isCiFailure || isConflicting;
+  final isBlocked =
+      pr.mergeStateStatus == 'BLOCKED' &&
+      pr.reviewDecision == 'APPROVED' &&
+      (pr.ciStatus == 'SUCCESS' || pr.ciStatus == 'TREE_BROKEN') &&
+      pr.mergeable == 'MERGEABLE' &&
+      !pr.isInMergeQueue;
+  return isChangesRequested || isCiFailure || isConflicting || isBlocked;
 }
 
 /// Formats the last touched time relative to [currentTime].
@@ -876,6 +888,11 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
     ..add(_formatCiBadgeTerminal(pr));
   if (pr.isInMergeQueue) {
     statusBadges.add(cyan.wrap('🔀 In Merge Queue') ?? '🔀 In Merge Queue');
+  }
+  if (pr.mergeStateStatus == 'BLOCKED' &&
+      pr.mergeable == 'MERGEABLE' &&
+      !pr.isInMergeQueue) {
+    statusBadges.add(red.wrap('🧱 Blocked') ?? '🧱 Blocked');
   }
   if (pr.mergeable == 'CONFLICTING') {
     statusBadges.add(red.wrap('⚠️ Conflicting') ?? '⚠️ Conflicting');
@@ -1121,6 +1138,17 @@ String _resolveActionItemMarkdown(
   if (pr.isRepoArchived) return '📦 Archived repo (read-only)';
   if (isReadyToMerge) return '🚀 **Ready to merge**';
 
+  final isBlocked =
+      pr.mergeStateStatus == 'BLOCKED' &&
+      pr.reviewDecision == 'APPROVED' &&
+      (pr.ciStatus == 'SUCCESS' || pr.ciStatus == 'TREE_BROKEN') &&
+      pr.mergeable == 'MERGEABLE' &&
+      !pr.isInMergeQueue;
+
+  if (isBlocked) {
+    return '🧱 **Blocked by ruleset/branch protection**';
+  }
+
   return switch ((
     pr.mergeable == 'CONFLICTING',
     pr.ciStatus == 'FAILURE',
@@ -1188,6 +1216,12 @@ String _formatCiBadgeMarkdown(String ciStatus) => switch (ciStatus) {
 };
 
 String _formatMergeableBadgeMarkdown(GhPr pr) {
+  if (pr.mergeStateStatus == 'BLOCKED' &&
+      pr.mergeable == 'MERGEABLE' &&
+      !pr.isInMergeQueue) {
+    return '🧱 Blocked';
+  }
+
   final label = switch (pr.mergeable) {
     'MERGEABLE' => '✅ Yes',
     'CONFLICTING' => '⚠️ Conflicting',
@@ -1224,6 +1258,7 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
         pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0,
     'ciStatus': pr.ciStatus,
     'mergeable': pr.mergeable,
+    'mergeStateStatus': pr.mergeStateStatus,
     'isInMergeQueue': pr.isInMergeQueue,
     'headRefName': pr.headRefName,
     'headRefOid': pr.headRefOid,
