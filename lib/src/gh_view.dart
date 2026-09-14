@@ -24,6 +24,40 @@ class GhViewException implements Exception {
   String toString() => message;
 }
 
+/// GitHub GraphQL `PullRequestReviewDecision` values.
+extension type const ReviewDecision(String value) implements String {
+  static const approved = ReviewDecision('APPROVED');
+  static const changesRequested = ReviewDecision('CHANGES_REQUESTED');
+  static const reviewRequired = ReviewDecision('REVIEW_REQUIRED');
+  static const none = ReviewDecision('NONE');
+}
+
+/// GitHub GraphQL `MergeableState` values.
+extension type const MergeableState(String value) implements String {
+  static const mergeable = MergeableState('MERGEABLE');
+  static const conflicting = MergeableState('CONFLICTING');
+  static const unknown = MergeableState('UNKNOWN');
+}
+
+/// GitHub GraphQL `MergeStateStatus` values.
+extension type const MergeStateStatus(String value) implements String {
+  static const blocked = MergeStateStatus('BLOCKED');
+  static const clean = MergeStateStatus('CLEAN');
+  static const hasHooks = MergeStateStatus('HAS_HOOKS');
+  static const unknown = MergeStateStatus('UNKNOWN');
+}
+
+/// GitHub StatusCheckRollup / CI rollup state values (plus synthetic `TREE_BROKEN`).
+extension type const CiStatus(String value) implements String {
+  static const success = CiStatus('SUCCESS');
+  static const failure = CiStatus('FAILURE');
+  static const pending = CiStatus('PENDING');
+  static const treeBroken = CiStatus('TREE_BROKEN');
+  static const none = CiStatus('NONE');
+
+  bool get isPassing => this == success || this == treeBroken;
+}
+
 /// Representation of an open GitHub Pull Request.
 typedef GhPr = ({
   int number,
@@ -31,11 +65,12 @@ typedef GhPr = ({
   String url,
   bool isDraft,
   String state,
-  String reviewDecision,
+  ReviewDecision reviewDecision,
   List<String> requestedReviewers,
   int totalReviewThreads,
   int unresolvedReviewThreads,
-  String mergeable,
+  MergeableState mergeable,
+  MergeStateStatus mergeStateStatus,
   bool isInMergeQueue,
   String headRefName,
   String headRefOid,
@@ -43,11 +78,31 @@ typedef GhPr = ({
   String repository,
   String repoUrl,
   bool isRepoArchived,
-  String ciStatus,
+  CiStatus ciStatus,
   DateTime updatedAt,
   LocalBranchStatus? localStatus,
   String? context,
 });
+
+/// Domain status helpers for [GhPr].
+extension GhPrStatus on GhPr {
+  bool get isApproved => reviewDecision == ReviewDecision.approved;
+
+  bool get isCiPassing => ciStatus.isPassing;
+
+  bool get isMergeableOrQueued =>
+      mergeable == MergeableState.mergeable || isInMergeQueue;
+
+  /// True when branch protection/rulesets block merging despite being mergeable and not queued.
+  bool get isBlockedMergeState =>
+      mergeStateStatus == MergeStateStatus.blocked &&
+      mergeable == MergeableState.mergeable &&
+      !isInMergeQueue;
+
+  /// True when approved, passing CI, and mergeable, but blocked by branch protection/rulesets.
+  bool get isBlockedByProtection =>
+      isBlockedMergeState && isApproved && isCiPassing;
+}
 
 /// Local workspace status for a PR branch.
 typedef LocalBranchStatus = ({
@@ -287,6 +342,7 @@ Future<GhPr> _attachLocalStatus(
   totalReviewThreads: pr.totalReviewThreads,
   unresolvedReviewThreads: pr.unresolvedReviewThreads,
   mergeable: pr.mergeable,
+  mergeStateStatus: pr.mergeStateStatus,
   isInMergeQueue: pr.isInMergeQueue,
   headRefName: pr.headRefName,
   headRefOid: pr.headRefOid,
@@ -347,6 +403,7 @@ query($q: String!, $limit: Int!) {
           }
         }
         mergeable
+        mergeStateStatus
         isInMergeQueue
         headRefName
         headRefOid
@@ -471,11 +528,18 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     url: url,
     isDraft: node['isDraft'] as bool? ?? false,
     state: node['state'] as String? ?? 'OPEN',
-    reviewDecision: node['reviewDecision'] as String? ?? 'NONE',
+    reviewDecision: ReviewDecision(
+      node['reviewDecision'] as String? ?? ReviewDecision.none,
+    ),
     requestedReviewers: requestedReviewers,
     totalReviewThreads: threads.total,
     unresolvedReviewThreads: threads.unresolved,
-    mergeable: node['mergeable'] as String? ?? 'UNKNOWN',
+    mergeable: MergeableState(
+      node['mergeable'] as String? ?? MergeableState.unknown,
+    ),
+    mergeStateStatus: MergeStateStatus(
+      node['mergeStateStatus'] as String? ?? MergeStateStatus.unknown,
+    ),
     isInMergeQueue: node['isInMergeQueue'] as bool? ?? false,
     headRefName: node['headRefName'] as String? ?? '',
     headRefOid: node['headRefOid'] as String? ?? '',
@@ -524,22 +588,23 @@ List<String> _extractRequestedReviewers(
   return (total: totalThreads, unresolved: unresolvedThreads);
 }
 
-String _extractCiStatus(String repository, Map<String, dynamic>? commits) {
+CiStatus _extractCiStatus(String repository, Map<String, dynamic>? commits) {
   final commitNodes = commits?['nodes'] as List<dynamic>?;
-  if (commitNodes == null || commitNodes.isEmpty) return 'NONE';
+  if (commitNodes == null || commitNodes.isEmpty) return CiStatus.none;
 
   final firstCommit = commitNodes.first as Map<String, dynamic>?;
   final commitObj = firstCommit?['commit'] as Map<String, dynamic>?;
   final statusRollup = commitObj?['statusCheckRollup'] as Map<String, dynamic>?;
-  final rawState = statusRollup?['state'] as String? ?? 'NONE';
+  final rawState = statusRollup?['state'] as String? ?? CiStatus.none;
 
-  if (repository.toLowerCase() == 'flutter/flutter' && rawState == 'FAILURE') {
+  if (repository.toLowerCase() == 'flutter/flutter' &&
+      rawState == CiStatus.failure) {
     if (_isFlutterTreeStatusOnlyFailure(statusRollup)) {
-      return 'TREE_BROKEN';
+      return CiStatus.treeBroken;
     }
   }
 
-  return rawState;
+  return CiStatus(rawState);
 }
 
 bool _isFlutterTreeStatusOnlyFailure(Map<String, dynamic>? statusRollup) {
@@ -567,7 +632,7 @@ _FlutterContextStatus _evaluateFlutterContext(Map<String, dynamic> ctx) {
   final typename = ctx['__typename'] as String?;
   if (typename == 'StatusContext') {
     final state = ctx['state'] as String? ?? '';
-    if (state == 'FAILURE' || state == 'ERROR') {
+    if (state == CiStatus.failure || state == 'ERROR') {
       final contextName = ctx['context'] as String? ?? '';
       return contextName == 'tree-status'
           ? _FlutterContextStatus.treeStatusFailure
@@ -577,7 +642,7 @@ _FlutterContextStatus _evaluateFlutterContext(Map<String, dynamic> ctx) {
   }
   if (typename == 'CheckRun') {
     final conclusion = ctx['conclusion'] as String? ?? '';
-    if (conclusion == 'FAILURE' ||
+    if (conclusion == CiStatus.failure ||
         conclusion == 'TIMED_OUT' ||
         conclusion == 'CANCELLED') {
       return _FlutterContextStatus.realFailure;
@@ -687,18 +752,24 @@ categorizePullRequests(List<GhPr> prs) {
 }
 
 bool _isReadyToMerge(GhPr pr) {
-  final isApproved = pr.reviewDecision == 'APPROVED';
-  final isCiSuccess = pr.ciStatus == 'SUCCESS' || pr.ciStatus == 'TREE_BROKEN';
-  final isMergeable = pr.mergeable == 'MERGEABLE' || pr.isInMergeQueue;
-  return isApproved && isCiSuccess && isMergeable;
+  final isMergeStateValid =
+      pr.mergeStateStatus != MergeStateStatus.blocked || pr.isInMergeQueue;
+  return pr.isApproved &&
+      pr.isCiPassing &&
+      pr.isMergeableOrQueued &&
+      isMergeStateValid;
 }
 
 bool _isActionNeeded(GhPr pr) {
   final isChangesRequested =
-      pr.reviewDecision == 'CHANGES_REQUESTED' && pr.requestedReviewers.isEmpty;
-  final isCiFailure = pr.ciStatus == 'FAILURE';
-  final isConflicting = pr.mergeable == 'CONFLICTING';
-  return isChangesRequested || isCiFailure || isConflicting;
+      pr.reviewDecision == ReviewDecision.changesRequested &&
+      pr.requestedReviewers.isEmpty;
+  final isCiFailure = pr.ciStatus == CiStatus.failure;
+  final isConflicting = pr.mergeable == MergeableState.conflicting;
+  return isChangesRequested ||
+      isCiFailure ||
+      isConflicting ||
+      pr.isBlockedByProtection;
 }
 
 /// Formats the last touched time relative to [currentTime].
@@ -877,7 +948,10 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
   if (pr.isInMergeQueue) {
     statusBadges.add(cyan.wrap('🔀 In Merge Queue') ?? '🔀 In Merge Queue');
   }
-  if (pr.mergeable == 'CONFLICTING') {
+  if (pr.isBlockedMergeState) {
+    statusBadges.add(red.wrap('🧱 Blocked') ?? '🧱 Blocked');
+  }
+  if (pr.mergeable == MergeableState.conflicting) {
     statusBadges.add(red.wrap('⚠️ Conflicting') ?? '⚠️ Conflicting');
   }
 
@@ -911,10 +985,10 @@ String _formatReviewBadgeTerminal(GhPr pr) {
     return yellow.wrap(label) ?? label;
   }
 
-  if (pr.reviewDecision == 'APPROVED') {
+  if (pr.reviewDecision == ReviewDecision.approved) {
     return green.wrap('Approved') ?? 'Approved';
   }
-  if (pr.reviewDecision == 'CHANGES_REQUESTED') {
+  if (pr.reviewDecision == ReviewDecision.changesRequested) {
     if (pr.requestedReviewers.isNotEmpty) {
       return formatRequested('Re-review Requested');
     }
@@ -924,18 +998,18 @@ String _formatReviewBadgeTerminal(GhPr pr) {
     }
     return red.wrap('Changes Requested') ?? 'Changes Requested';
   }
-  if (pr.reviewDecision == 'REVIEW_REQUIRED') {
+  if (pr.reviewDecision == ReviewDecision.reviewRequired) {
     return formatRequested('Review Required');
   }
   return 'No Reviewers';
 }
 
 String _formatCiBadgeTerminal(GhPr pr) => switch (pr.ciStatus) {
-  'SUCCESS' => green.wrap('CI: Passing') ?? 'CI: Passing',
-  'TREE_BROKEN' =>
+  CiStatus.success => green.wrap('CI: Passing') ?? 'CI: Passing',
+  CiStatus.treeBroken =>
     yellow.wrap('CI: Tree Broken (PR Clean)') ?? 'CI: Tree Broken (PR Clean)',
-  'FAILURE' => red.wrap('CI: Failing') ?? 'CI: Failing',
-  'PENDING' => yellow.wrap('CI: Pending') ?? 'CI: Pending',
+  CiStatus.failure => red.wrap('CI: Failing') ?? 'CI: Failing',
+  CiStatus.pending => yellow.wrap('CI: Pending') ?? 'CI: Pending',
   _ => styleDim.wrap('CI: None') ?? 'CI: None',
 };
 
@@ -1120,10 +1194,13 @@ String _resolveActionItemMarkdown(
 }) {
   if (pr.isRepoArchived) return '📦 Archived repo (read-only)';
   if (isReadyToMerge) return '🚀 **Ready to merge**';
+  if (pr.isBlockedByProtection) {
+    return '🧱 **Blocked by ruleset/branch protection**';
+  }
 
   return switch ((
-    pr.mergeable == 'CONFLICTING',
-    pr.ciStatus == 'FAILURE',
+    pr.mergeable == MergeableState.conflicting,
+    pr.ciStatus == CiStatus.failure,
     pr.reviewDecision,
     pr.requestedReviewers.isNotEmpty,
     areThreadsResolved,
@@ -1134,24 +1211,64 @@ String _resolveActionItemMarkdown(
     (true, _, _, _, _, _, false) => '⚠️ **Conflicting** (needs rebase)',
     (_, true, _, _, _, _, true) => '🔴 **CI Failing** (draft)',
     (_, true, _, _, _, _, false) => '🔴 **CI Failing** (needs fix)',
-    (_, _, 'CHANGES_REQUESTED', true, _, _, _) =>
+    (_, _, ReviewDecision.changesRequested, true, _, _, _) =>
       '🟡 **Re-review Requested** (@${pr.requestedReviewers.join(', @')})',
-    (_, _, 'CHANGES_REQUESTED', false, true, _, _) =>
+    (_, _, ReviewDecision.changesRequested, false, true, _, _) =>
       '🔄 **Re-review Needed** (threads resolved)',
-    (_, _, 'CHANGES_REQUESTED', false, false, > 0, _) =>
+    (_, _, ReviewDecision.changesRequested, false, false, > 0, _) =>
       '🔴 **Changes Requested** (${pr.unresolvedReviewThreads} open '
           'thread${pr.unresolvedReviewThreads > 1 ? 's' : ''})',
-    (_, _, 'CHANGES_REQUESTED', false, false, _, _) =>
+    (_, _, ReviewDecision.changesRequested, false, false, _, _) =>
       '🔴 **Changes Requested**',
-    (_, _, 'REVIEW_REQUIRED' || 'NONE', true, true, _, _) =>
+    (
+      _,
+      _,
+      ReviewDecision.reviewRequired || ReviewDecision.none,
+      true,
+      true,
+      _,
+      _,
+    ) =>
       '🔔 **Ping Reviewer** (@${pr.requestedReviewers.join(', @')})',
-    (_, _, 'REVIEW_REQUIRED' || 'NONE', false, true, _, _) =>
+    (
+      _,
+      _,
+      ReviewDecision.reviewRequired || ReviewDecision.none,
+      false,
+      true,
+      _,
+      _,
+    ) =>
       '🔔 **Ping Reviewer** (threads resolved)',
-    (_, _, 'REVIEW_REQUIRED' || 'NONE', true, false, _, _) =>
+    (
+      _,
+      _,
+      ReviewDecision.reviewRequired || ReviewDecision.none,
+      true,
+      false,
+      _,
+      _,
+    ) =>
       '⏳ **Awaiting @${pr.requestedReviewers.join(', @')}**',
-    (_, _, 'REVIEW_REQUIRED' || 'NONE', false, false, _, true) =>
+    (
+      _,
+      _,
+      ReviewDecision.reviewRequired || ReviewDecision.none,
+      false,
+      false,
+      _,
+      true,
+    ) =>
       '⚪ **Work in progress**',
-    (_, _, 'REVIEW_REQUIRED' || 'NONE', false, false, _, false) =>
+    (
+      _,
+      _,
+      ReviewDecision.reviewRequired || ReviewDecision.none,
+      false,
+      false,
+      _,
+      false,
+    ) =>
       '⏳ **Awaiting review**',
     (_, _, _, _, _, _, true) => '⚪ **Work in progress**',
     _ => '⚪ **Active**',
@@ -1159,8 +1276,8 @@ String _resolveActionItemMarkdown(
 }
 
 String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) {
-  if (pr.reviewDecision == 'APPROVED') return '🟢 Approved';
-  if (pr.reviewDecision == 'CHANGES_REQUESTED') {
+  if (pr.reviewDecision == ReviewDecision.approved) return '🟢 Approved';
+  if (pr.reviewDecision == ReviewDecision.changesRequested) {
     if (pr.requestedReviewers.isNotEmpty) {
       return '🟡 Re-review Requested (@${pr.requestedReviewers.join(', @')})';
     }
@@ -1170,7 +1287,7 @@ String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) {
     }
     return '🔴 Changes Requested';
   }
-  if (pr.reviewDecision == 'REVIEW_REQUIRED') {
+  if (pr.reviewDecision == ReviewDecision.reviewRequired) {
     if (pr.requestedReviewers.isNotEmpty) {
       return '🟡 Review Required (@${pr.requestedReviewers.join(', @')})';
     }
@@ -1179,18 +1296,22 @@ String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) {
   return '⚪ None';
 }
 
-String _formatCiBadgeMarkdown(String ciStatus) => switch (ciStatus) {
-  'SUCCESS' => '🟢 Passing',
-  'TREE_BROKEN' => '🟠 Tree Broken (PR Clean)',
-  'FAILURE' => '🔴 Failing',
-  'PENDING' => '⏳ Pending',
+String _formatCiBadgeMarkdown(CiStatus ciStatus) => switch (ciStatus) {
+  CiStatus.success => '🟢 Passing',
+  CiStatus.treeBroken => '🟠 Tree Broken (PR Clean)',
+  CiStatus.failure => '🔴 Failing',
+  CiStatus.pending => '⏳ Pending',
   _ => '⚪ None',
 };
 
 String _formatMergeableBadgeMarkdown(GhPr pr) {
+  if (pr.isBlockedMergeState) {
+    return '🧱 Blocked';
+  }
+
   final label = switch (pr.mergeable) {
-    'MERGEABLE' => '✅ Yes',
-    'CONFLICTING' => '⚠️ Conflicting',
+    MergeableState.mergeable => '✅ Yes',
+    MergeableState.conflicting => '⚠️ Conflicting',
     _ => pr.isInMergeQueue ? '✅ Yes' : '⚪ Unknown',
   };
   return pr.isInMergeQueue ? '$label (🔀 Queue)' : label;
@@ -1224,6 +1345,7 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
         pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0,
     'ciStatus': pr.ciStatus,
     'mergeable': pr.mergeable,
+    'mergeStateStatus': pr.mergeStateStatus,
     'isInMergeQueue': pr.isInMergeQueue,
     'headRefName': pr.headRefName,
     'headRefOid': pr.headRefOid,

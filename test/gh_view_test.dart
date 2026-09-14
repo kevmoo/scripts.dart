@@ -141,9 +141,10 @@ void main() {
       check(pr!.number).equals(5078);
       check(pr.title).equals('Deduplicate compiler process execution');
       check(pr.repository).equals('dart-lang/build');
-      check(pr.reviewDecision).equals('REVIEW_REQUIRED');
-      check(pr.ciStatus).equals('FAILURE');
-      check(pr.mergeable).equals('MERGEABLE');
+      check(pr.reviewDecision).equals(ReviewDecision.reviewRequired);
+      check(pr.ciStatus).equals(CiStatus.failure);
+      check(pr.mergeable).equals(MergeableState.mergeable);
+      check(pr.mergeStateStatus).equals(MergeStateStatus.unknown);
       check(pr.isDraft).isFalse();
     });
 
@@ -196,7 +197,7 @@ void main() {
       final pr = parsePrNode(node);
       check(pr).isNotNull();
       check(pr!.repository).equals('flutter/flutter');
-      check(pr.ciStatus).equals('TREE_BROKEN');
+      check(pr.ciStatus).equals(CiStatus.treeBroken);
     });
 
     test('keeps FAILURE for flutter/flutter when real test fails', () {
@@ -250,7 +251,7 @@ void main() {
       final pr = parsePrNode(node);
       check(pr).isNotNull();
       check(pr!.repository).equals('flutter/flutter');
-      check(pr.ciStatus).equals('FAILURE');
+      check(pr.ciStatus).equals(CiStatus.failure);
     });
   });
 
@@ -262,12 +263,13 @@ void main() {
       bool isDraft = false,
       bool isRepoArchived = false,
       bool isInMergeQueue = false,
-      String reviewDecision = 'NONE',
+      ReviewDecision reviewDecision = ReviewDecision.none,
       List<String> requestedReviewers = const [],
       int totalReviewThreads = 0,
       int unresolvedReviewThreads = 0,
-      String ciStatus = 'SUCCESS',
-      String mergeable = 'MERGEABLE',
+      CiStatus ciStatus = CiStatus.success,
+      MergeableState mergeable = MergeableState.mergeable,
+      MergeStateStatus mergeStateStatus = MergeStateStatus.unknown,
     }) => (
       number: number,
       title: 'PR $number',
@@ -279,6 +281,7 @@ void main() {
       totalReviewThreads: totalReviewThreads,
       unresolvedReviewThreads: unresolvedReviewThreads,
       mergeable: mergeable,
+      mergeStateStatus: mergeStateStatus,
       isInMergeQueue: isInMergeQueue,
       headRefName: 'branch-$number',
       headRefOid: 'sha-$number',
@@ -296,31 +299,40 @@ void main() {
       'categorizes readyToMerge, actionNeeded, inReview, drafts, archived',
       () {
         final prs = [
-          makePr(number: 1, reviewDecision: 'APPROVED', isInMergeQueue: true),
-          makePr(number: 2, reviewDecision: 'CHANGES_REQUESTED'),
+          makePr(
+            number: 1,
+            reviewDecision: ReviewDecision.approved,
+            isInMergeQueue: true,
+          ),
+          makePr(number: 2, reviewDecision: ReviewDecision.changesRequested),
           makePr(
             number: 3,
-            reviewDecision: 'REVIEW_REQUIRED',
-            ciStatus: 'FAILURE',
+            reviewDecision: ReviewDecision.reviewRequired,
+            ciStatus: CiStatus.failure,
           ),
           makePr(
             number: 4,
-            reviewDecision: 'REVIEW_REQUIRED',
-            mergeable: 'CONFLICTING',
+            reviewDecision: ReviewDecision.reviewRequired,
+            mergeable: MergeableState.conflicting,
           ),
-          makePr(number: 5, reviewDecision: 'REVIEW_REQUIRED'),
+          makePr(number: 5, reviewDecision: ReviewDecision.reviewRequired),
           makePr(number: 6, isDraft: true),
           makePr(number: 7, isRepoArchived: true),
           makePr(
             number: 8,
-            reviewDecision: 'CHANGES_REQUESTED',
+            reviewDecision: ReviewDecision.changesRequested,
             requestedReviewers: ['harryterkelsen'],
+          ),
+          makePr(
+            number: 9,
+            reviewDecision: ReviewDecision.approved,
+            mergeStateStatus: MergeStateStatus.blocked,
           ),
         ];
 
         final cat = categorizePullRequests(prs);
         check(cat.readyToMerge.map((p) => p.number)).deepEquals([1]);
-        check(cat.actionNeeded.map((p) => p.number)).deepEquals([2, 3, 4]);
+        check(cat.actionNeeded.map((p) => p.number)).deepEquals([2, 3, 4, 9]);
         check(cat.inReview.map((p) => p.number)).deepEquals([5, 8]);
         check(cat.drafts.map((p) => p.number)).deepEquals([6]);
         check(cat.archived.map((p) => p.number)).deepEquals([7]);
@@ -337,11 +349,12 @@ void main() {
         url: 'https://github.com/org/repo/pull/100',
         isDraft: false,
         state: 'OPEN',
-        reviewDecision: 'APPROVED',
+        reviewDecision: ReviewDecision.approved,
         requestedReviewers: ['alice'],
         totalReviewThreads: 5,
         unresolvedReviewThreads: 0,
-        mergeable: 'MERGEABLE',
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.clean,
         isInMergeQueue: false,
         headRefName: 'feat-xyz',
         headRefOid: 'abcdef1234567890',
@@ -349,7 +362,7 @@ void main() {
         repository: 'org/repo',
         repoUrl: 'https://github.com/org/repo',
         isRepoArchived: false,
-        ciStatus: 'SUCCESS',
+        ciStatus: CiStatus.success,
         updatedAt: now.subtract(const Duration(hours: 2)),
         localStatus: (
           repoPath: '/path/to/repo',
@@ -381,6 +394,7 @@ void main() {
       check(readyList[0]['areAllReviewThreadsResolved']).equals(true);
       check(readyList[0]['isRepoArchived']).equals(false);
       check(readyList[0]['isInMergeQueue']).equals(false);
+      check(readyList[0]['mergeStateStatus']).equals('CLEAN');
       final localMap = readyList[0]['local'] as Map<String, dynamic>;
       check(localMap['status']).equals('🟢 Synced');
     });
@@ -395,11 +409,12 @@ void main() {
         url: 'https://github.com/org/repo/pull/100',
         isDraft: false,
         state: 'OPEN',
-        reviewDecision: 'APPROVED',
+        reviewDecision: ReviewDecision.approved,
         requestedReviewers: <String>[],
         totalReviewThreads: 0,
         unresolvedReviewThreads: 0,
-        mergeable: 'MERGEABLE',
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.clean,
         isInMergeQueue: true,
         headRefName: 'feat-xyz',
         headRefOid: 'abcdef1234567890',
@@ -407,7 +422,7 @@ void main() {
         repository: 'org/repo',
         repoUrl: 'https://github.com/org/repo',
         isRepoArchived: false,
-        ciStatus: 'SUCCESS',
+        ciStatus: CiStatus.success,
         updatedAt: now.subtract(const Duration(hours: 2)),
         localStatus: (
           repoPath: '/path/to/repo',
@@ -433,6 +448,39 @@ void main() {
       check(md).contains('🟢 Synced');
     });
 
+    test('renders blocked by ruleset/branch protection', () {
+      final now = DateTime.parse('2026-08-13T20:00:00Z');
+      final pr = (
+        number: 434,
+        title: 'blocked branch protection',
+        url: 'https://github.com/genkit-ai/genkit-dart/pull/434',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: ReviewDecision.approved,
+        requestedReviewers: <String>[],
+        totalReviewThreads: 0,
+        unresolvedReviewThreads: 0,
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.blocked,
+        isInMergeQueue: false,
+        headRefName: 'blocked-branch',
+        headRefOid: 'abcdef1234567890',
+        baseRefName: 'main',
+        repository: 'genkit-ai/genkit-dart',
+        repoUrl: 'https://github.com/genkit-ai/genkit-dart',
+        isRepoArchived: false,
+        ciStatus: CiStatus.success,
+        updatedAt: now.subtract(const Duration(hours: 1)),
+        localStatus: null,
+        context: null,
+      );
+
+      final md = renderMarkdownReport([pr], currentTime: now);
+      check(md).contains('## ⚠️ 2. Action Needed');
+      check(md).contains('🧱 **Blocked by ruleset/branch protection**');
+      check(md).contains('Merge:&nbsp;🧱&nbsp;Blocked');
+    });
+
     test(
       'renders Re-review Needed when changes requested but threads resolved',
       () {
@@ -443,11 +491,12 @@ void main() {
           url: 'https://github.com/flutter/flutter/pull/190891',
           isDraft: false,
           state: 'OPEN',
-          reviewDecision: 'CHANGES_REQUESTED',
+          reviewDecision: ReviewDecision.changesRequested,
           requestedReviewers: <String>[],
           totalReviewThreads: 12,
           unresolvedReviewThreads: 0,
-          mergeable: 'MERGEABLE',
+          mergeable: MergeableState.mergeable,
+          mergeStateStatus: MergeStateStatus.unknown,
           isInMergeQueue: false,
           headRefName: 'dry-run-refactor',
           headRefOid: 'abcdef1234567890',
@@ -455,7 +504,7 @@ void main() {
           repository: 'flutter/flutter',
           repoUrl: 'https://github.com/flutter/flutter',
           isRepoArchived: false,
-          ciStatus: 'TREE_BROKEN',
+          ciStatus: CiStatus.treeBroken,
           updatedAt: now.subtract(const Duration(hours: 19)),
           localStatus: null,
           context: null,
@@ -475,11 +524,12 @@ void main() {
         url: 'https://github.com/flutter/flutter/pull/190891',
         isDraft: false,
         state: 'OPEN',
-        reviewDecision: 'CHANGES_REQUESTED',
+        reviewDecision: ReviewDecision.changesRequested,
         requestedReviewers: ['harryterkelsen'],
         totalReviewThreads: 12,
         unresolvedReviewThreads: 0,
-        mergeable: 'MERGEABLE',
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.unknown,
         isInMergeQueue: false,
         headRefName: 'dry-run-refactor',
         headRefOid: 'abcdef1234567890',
@@ -487,7 +537,7 @@ void main() {
         repository: 'flutter/flutter',
         repoUrl: 'https://github.com/flutter/flutter',
         isRepoArchived: false,
-        ciStatus: 'TREE_BROKEN',
+        ciStatus: CiStatus.treeBroken,
         updatedAt: now.subtract(const Duration(hours: 19)),
         localStatus: null,
         context: null,
@@ -505,11 +555,12 @@ void main() {
         url: 'https://github.com/dart-lang/test/pull/2598',
         isDraft: false,
         state: 'OPEN',
-        reviewDecision: 'REVIEW_REQUIRED',
+        reviewDecision: ReviewDecision.reviewRequired,
         requestedReviewers: ['natebosch'],
         totalReviewThreads: 3,
         unresolvedReviewThreads: 0,
-        mergeable: 'MERGEABLE',
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.unknown,
         isInMergeQueue: false,
         headRefName: 'safari_sily',
         headRefOid: 'abcdef1234567890',
@@ -517,7 +568,7 @@ void main() {
         repository: 'dart-lang/test',
         repoUrl: 'https://github.com/dart-lang/test',
         isRepoArchived: false,
-        ciStatus: 'SUCCESS',
+        ciStatus: CiStatus.success,
         updatedAt: now.subtract(const Duration(days: 1)),
         localStatus: null,
         context: null,
@@ -733,11 +784,12 @@ void main() {
       url: 'https://github.com/dart-lang/tools/pull/42',
       isDraft: false,
       state: 'OPEN',
-      reviewDecision: 'APPROVED',
+      reviewDecision: ReviewDecision.approved,
       requestedReviewers: <String>[],
       totalReviewThreads: 0,
       unresolvedReviewThreads: 0,
-      mergeable: 'MERGEABLE',
+      mergeable: MergeableState.mergeable,
+      mergeStateStatus: MergeStateStatus.unknown,
       isInMergeQueue: false,
       headRefName: 'fix-issue',
       headRefOid: 'sha42',
@@ -745,7 +797,7 @@ void main() {
       repository: 'dart-lang/tools',
       repoUrl: 'https://github.com/dart-lang/tools',
       isRepoArchived: false,
-      ciStatus: 'SUCCESS',
+      ciStatus: CiStatus.success,
       updatedAt: DateTime.parse('2026-08-13T20:00:00Z'),
       localStatus: null,
       context: null,
@@ -800,11 +852,12 @@ void main() {
         url: 'https://github.com/dart-lang/tools/pull/42',
         isDraft: false,
         state: 'OPEN',
-        reviewDecision: 'APPROVED',
+        reviewDecision: ReviewDecision.approved,
         requestedReviewers: <String>[],
         totalReviewThreads: 0,
         unresolvedReviewThreads: 0,
-        mergeable: 'MERGEABLE',
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.unknown,
         isInMergeQueue: false,
         headRefName: 'fix-issue',
         headRefOid: 'sha42',
@@ -812,7 +865,7 @@ void main() {
         repository: 'dart-lang/tools',
         repoUrl: 'https://github.com/dart-lang/tools',
         isRepoArchived: false,
-        ciStatus: 'SUCCESS',
+        ciStatus: CiStatus.success,
         updatedAt: now.subtract(const Duration(hours: 1)),
         localStatus: null,
         context: '🎯 [dash-web](file:///projects/dash-web) · #A6ER2',
@@ -838,11 +891,12 @@ void main() {
           url: 'https://github.com/dart-lang/tools/pull/42',
           isDraft: false,
           state: 'OPEN',
-          reviewDecision: 'APPROVED',
+          reviewDecision: ReviewDecision.approved,
           requestedReviewers: <String>[],
           totalReviewThreads: 0,
           unresolvedReviewThreads: 0,
-          mergeable: 'MERGEABLE',
+          mergeable: MergeableState.mergeable,
+          mergeStateStatus: MergeStateStatus.unknown,
           isInMergeQueue: false,
           headRefName: 'fix-issue',
           headRefOid: 'sha42',
@@ -850,7 +904,7 @@ void main() {
           repository: 'dart-lang/tools',
           repoUrl: 'https://github.com/dart-lang/tools',
           isRepoArchived: false,
-          ciStatus: 'SUCCESS',
+          ciStatus: CiStatus.success,
           updatedAt: now.subtract(const Duration(hours: 1)),
           localStatus: null,
           context: 'Project: Foo | Bar',
