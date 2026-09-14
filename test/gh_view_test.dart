@@ -265,12 +265,15 @@ void main() {
       bool isInMergeQueue = false,
       ReviewDecision reviewDecision = ReviewDecision.none,
       List<String> requestedReviewers = const [],
+      List<String> activeReviewers = const [],
       int totalReviewThreads = 0,
       int unresolvedReviewThreads = 0,
+      DateTime? lastAuthorCommentAt,
+      DateTime? lastReviewerActivityAt,
       CiStatus ciStatus = CiStatus.success,
       MergeableState mergeable = MergeableState.mergeable,
       MergeStateStatus mergeStateStatus = MergeStateStatus.unknown,
-    }) => (
+    }) => GhPr(
       number: number,
       title: 'PR $number',
       url: 'https://github.com/dart-lang/build/pull/$number',
@@ -278,8 +281,11 @@ void main() {
       state: 'OPEN',
       reviewDecision: reviewDecision,
       requestedReviewers: requestedReviewers,
+      activeReviewers: activeReviewers,
       totalReviewThreads: totalReviewThreads,
       unresolvedReviewThreads: unresolvedReviewThreads,
+      lastAuthorCommentAt: lastAuthorCommentAt,
+      lastReviewerActivityAt: lastReviewerActivityAt,
       mergeable: mergeable,
       mergeStateStatus: mergeStateStatus,
       isInMergeQueue: isInMergeQueue,
@@ -291,8 +297,6 @@ void main() {
       isRepoArchived: isRepoArchived,
       ciStatus: ciStatus,
       updatedAt: now,
-      localStatus: null,
-      context: null,
     );
 
     test(
@@ -343,7 +347,7 @@ void main() {
   group('renderJsonOutput', () {
     test('serializes structured summary and items', () {
       final now = DateTime.parse('2026-08-13T20:00:00Z');
-      final pr = (
+      final pr = GhPr(
         number: 100,
         title: 'Feature XYZ',
         url: 'https://github.com/org/repo/pull/100',
@@ -373,7 +377,6 @@ void main() {
           isWorktree: false,
           displayStatus: '🟢 Synced',
         ),
-        context: null,
       );
 
       final jsonStr = renderJsonOutput([pr], currentTime: now);
@@ -403,7 +406,7 @@ void main() {
   group('renderMarkdownReport', () {
     test('renders markdown tables with sections', () {
       final now = DateTime.parse('2026-08-13T20:00:00Z');
-      final pr = (
+      final pr = GhPr(
         number: 100,
         title: 'Feature XYZ',
         url: 'https://github.com/org/repo/pull/100',
@@ -433,7 +436,6 @@ void main() {
           isWorktree: false,
           displayStatus: '🟢 Synced',
         ),
-        context: null,
       );
 
       final md = renderMarkdownReport([pr], currentTime: now);
@@ -450,7 +452,7 @@ void main() {
 
     test('renders blocked by ruleset/branch protection', () {
       final now = DateTime.parse('2026-08-13T20:00:00Z');
-      final pr = (
+      final pr = GhPr(
         number: 434,
         title: 'blocked branch protection',
         url: 'https://github.com/genkit-ai/genkit-dart/pull/434',
@@ -471,8 +473,6 @@ void main() {
         isRepoArchived: false,
         ciStatus: CiStatus.success,
         updatedAt: now.subtract(const Duration(hours: 1)),
-        localStatus: null,
-        context: null,
       );
 
       final md = renderMarkdownReport([pr], currentTime: now);
@@ -485,7 +485,7 @@ void main() {
       'renders Re-review Needed when changes requested but threads resolved',
       () {
         final now = DateTime.parse('2026-08-13T20:00:00Z');
-        final pr = (
+        final pr = GhPr(
           number: 190891,
           title: 'refactor wasm dry-run result handling',
           url: 'https://github.com/flutter/flutter/pull/190891',
@@ -506,8 +506,6 @@ void main() {
           isRepoArchived: false,
           ciStatus: CiStatus.treeBroken,
           updatedAt: now.subtract(const Duration(hours: 19)),
-          localStatus: null,
-          context: null,
         );
 
         final md = renderMarkdownReport([pr], currentTime: now);
@@ -518,7 +516,7 @@ void main() {
 
     test('renders Re-review Requested when review requests pending', () {
       final now = DateTime.parse('2026-08-13T20:00:00Z');
-      final pr = (
+      final pr = GhPr(
         number: 190891,
         title: 'refactor wasm dry-run result handling',
         url: 'https://github.com/flutter/flutter/pull/190891',
@@ -539,8 +537,6 @@ void main() {
         isRepoArchived: false,
         ciStatus: CiStatus.treeBroken,
         updatedAt: now.subtract(const Duration(hours: 19)),
-        localStatus: null,
-        context: null,
       );
 
       final md = renderMarkdownReport([pr], currentTime: now);
@@ -549,7 +545,7 @@ void main() {
 
     test('renders Ping Reviewer when review required and threads resolved', () {
       final now = DateTime.parse('2026-08-13T20:00:00Z');
-      final pr = (
+      final pr = GhPr(
         number: 2598,
         title: 'Move to Safari drive',
         url: 'https://github.com/dart-lang/test/pull/2598',
@@ -570,12 +566,82 @@ void main() {
         isRepoArchived: false,
         ciStatus: CiStatus.success,
         updatedAt: now.subtract(const Duration(days: 1)),
-        localStatus: null,
-        context: null,
       );
 
       final md = renderMarkdownReport([pr], currentTime: now);
       check(md).contains('🔔 **Ping Reviewer** (@natebosch)');
+    });
+
+    test('renders Awaiting @... (pinged X ago) when author commented '
+        'after last reviewer activity', () {
+      final now = DateTime.parse('2026-09-14T20:00:00Z');
+      final pr = GhPr(
+        number: 2448,
+        title: 'Add web coverage support',
+        url: 'https://github.com/dart-lang/tools/pull/2448',
+        author: 'kevmoo',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: ReviewDecision.reviewRequired,
+        requestedReviewers: ['dart-native-runtime-team', 'dart-ecosystem-team'],
+        activeReviewers: ['liamappelbe', 'natebosch'],
+        totalReviewThreads: 16,
+        unresolvedReviewThreads: 0,
+        lastAuthorCommentAt: DateTime.parse('2026-09-14T16:09:46Z'),
+        lastReviewerActivityAt: DateTime.parse('2026-09-14T02:01:55Z'),
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.clean,
+        isInMergeQueue: false,
+        headRefName: 'web_coverage',
+        headRefOid: 'abcdef1234567890',
+        baseRefName: 'main',
+        repository: 'dart-lang/tools',
+        repoUrl: 'https://github.com/dart-lang/tools',
+        isRepoArchived: false,
+        ciStatus: CiStatus.success,
+        updatedAt: DateTime.parse('2026-09-14T16:09:46Z'),
+      );
+
+      final md = renderMarkdownReport([pr], currentTime: now);
+      check(md)
+          .contains('⏳ **Awaiting @liamappelbe, @natebosch** (pinged 3h ago)');
+      check(md).contains(
+        'Review:&nbsp;🟡&nbsp;Review&nbsp;Required&nbsp;'
+        '(@liamappelbe,&nbsp;@natebosch)',
+      );
+    });
+
+    test('renders Ping Reviewer when author ping is older than 7 days', () {
+      final now = DateTime.parse('2026-09-14T20:00:00Z');
+      final pr = GhPr(
+        number: 1903,
+        title: 'cleanup and expand testing',
+        url: 'https://github.com/dart-lang/http/pull/1903',
+        author: 'kevmoo',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: ReviewDecision.reviewRequired,
+        requestedReviewers: ['brianquinlan'],
+        activeReviewers: ['brianquinlan'],
+        totalReviewThreads: 4,
+        unresolvedReviewThreads: 0,
+        lastAuthorCommentAt: now.subtract(const Duration(days: 10)),
+        lastReviewerActivityAt: now.subtract(const Duration(days: 12)),
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.blocked,
+        isInMergeQueue: false,
+        headRefName: 'test_node',
+        headRefOid: 'abcdef1234567890',
+        baseRefName: 'master',
+        repository: 'dart-lang/http',
+        repoUrl: 'https://github.com/dart-lang/http',
+        isRepoArchived: false,
+        ciStatus: CiStatus.success,
+        updatedAt: now.subtract(const Duration(days: 4)),
+      );
+
+      final md = renderMarkdownReport([pr], currentTime: now);
+      check(md).contains('🔔 **Ping Reviewer** (@brianquinlan)');
     });
   });
 
@@ -778,7 +844,7 @@ void main() {
   });
 
   group('fetchEnrichedContext', () {
-    final pr = (
+    final pr = GhPr(
       number: 42,
       title: 'Fix issue',
       url: 'https://github.com/dart-lang/tools/pull/42',
@@ -799,8 +865,6 @@ void main() {
       isRepoArchived: false,
       ciStatus: CiStatus.success,
       updatedAt: DateTime.parse('2026-08-13T20:00:00Z'),
-      localStatus: null,
-      context: null,
     );
 
     test('parses mapping by url and repo#number', () async {
@@ -846,7 +910,7 @@ void main() {
     'renderTerminalReport and renderMarkdownReport with enriched context',
     () {
       final now = DateTime.parse('2026-08-13T20:00:00Z');
-      final prWithContext = (
+      final prWithContext = GhPr(
         number: 42,
         title: 'Fix issue',
         url: 'https://github.com/dart-lang/tools/pull/42',
@@ -867,7 +931,6 @@ void main() {
         isRepoArchived: false,
         ciStatus: CiStatus.success,
         updatedAt: now.subtract(const Duration(hours: 1)),
-        localStatus: null,
         context: '🎯 [dash-web](file:///projects/dash-web) · #A6ER2',
       );
 
@@ -885,7 +948,7 @@ void main() {
       });
 
       test('renderMarkdownReport sanitizes pipe characters in context', () {
-        final prWithPipe = (
+        final prWithPipe = GhPr(
           number: 42,
           title: 'Fix issue',
           url: 'https://github.com/dart-lang/tools/pull/42',
@@ -906,7 +969,6 @@ void main() {
           isRepoArchived: false,
           ciStatus: CiStatus.success,
           updatedAt: now.subtract(const Duration(hours: 1)),
-          localStatus: null,
           context: 'Project: Foo | Bar',
         );
         final output = renderMarkdownReport([prWithPipe], currentTime: now);
@@ -915,6 +977,82 @@ void main() {
       });
     },
   );
+
+  group('parsePrNode reviewer and ping detection', () {
+    test('detects when author pinged after last reviewer activity', () {
+      final node = {
+        'number': 2448,
+        'title': 'Add web coverage support',
+        'url': 'https://github.com/dart-lang/tools/pull/2448',
+        'author': {'login': 'kevmoo'},
+        'isDraft': false,
+        'state': 'OPEN',
+        'reviewDecision': 'REVIEW_REQUIRED',
+        'reviewRequests': {
+          'nodes': [
+            {
+              'requestedReviewer': {'slug': 'dart-native-runtime-team'},
+            },
+            {
+              'requestedReviewer': {'slug': 'dart-ecosystem-team'},
+            },
+          ],
+        },
+        'reviews': {
+          'nodes': [
+            {
+              'author': {'login': 'gemini-code-assist'},
+              'submittedAt': '2026-09-14T18:00:00Z',
+              'state': 'COMMENTED',
+            },
+            {
+              'author': {'login': 'liamappelbe'},
+              'submittedAt': '2026-09-14T02:01:55Z',
+              'state': 'COMMENTED',
+            },
+          ],
+        },
+        'comments': {
+          'nodes': [
+            {
+              'author': {'login': 'natebosch'},
+              'body': 'Have you checked google3?',
+              'createdAt': '2026-08-18T00:01:57Z',
+            },
+            {
+              'author': {'login': 'kevmoo'},
+              'body': '@liamappelbe @natebosch PTAL',
+              'createdAt': '2026-09-14T16:09:46Z',
+            },
+          ],
+        },
+        'reviewThreads': {
+          'totalCount': 16,
+          'nodes': [
+            {'isResolved': true},
+          ],
+        },
+        'mergeable': 'MERGEABLE',
+        'mergeStateStatus': 'CLEAN',
+        'isInMergeQueue': false,
+        'headRefName': 'web_coverage',
+        'headRefOid': 'abc1234',
+        'baseRefName': 'main',
+        'updatedAt': '2026-09-14T16:09:46Z',
+        'repository': {
+          'nameWithOwner': 'dart-lang/tools',
+          'url': 'https://github.com/dart-lang/tools',
+          'isArchived': false,
+        },
+      };
+
+      final pr = parsePrNode(node)!;
+      check(pr.author).equals('kevmoo');
+      check(pr.isAlreadyPinged).isTrue();
+      check(pr.activeReviewers).deepEquals(['liamappelbe', 'natebosch']);
+      check(pr.targetReviewers).deepEquals(['liamappelbe', 'natebosch']);
+    });
+  });
 }
 
 Future<List<String>> _capturePrints(Future<void> Function() action) async {
