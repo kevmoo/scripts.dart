@@ -44,76 +44,81 @@ void main() {
       ).isNull();
     });
 
-    test('GhPr and LandedPr share GhPrRef properties and worktree matching', () {
-      final openPr = GhPr(
-        number: 101,
-        title: 'Open PR',
-        url: 'https://github.com/kevmoo/scripts.dart/pull/101',
-        isDraft: false,
-        state: 'OPEN',
-        reviewDecision: ReviewDecision.none,
-        requestedReviewers: const [],
-        totalReviewThreads: 0,
-        unresolvedReviewThreads: 0,
-        mergeable: MergeableState.mergeable,
-        mergeStateStatus: MergeStateStatus.clean,
-        isInMergeQueue: false,
-        headRefName: 'feature-worktree',
-        headRefOid: '1112223',
-        baseRefName: 'main',
-        repository: 'kevmoo/scripts.dart',
-        repoUrl: 'https://github.com/kevmoo/scripts.dart',
-        isRepoArchived: false,
-        ciStatus: CiStatus.success,
-        updatedAt: DateTime.utc(2026, 9, 14),
-      );
-
-      final landedPr = LandedPr(
-        number: 102,
-        title: 'Landed PR',
-        url: 'https://github.com/kevmoo/scripts.dart/pull/102',
-        repository: 'kevmoo/scripts.dart',
-        repoUrl: 'https://github.com/kevmoo/scripts.dart',
-        headRefName: 'feature-worktree',
-        headRefOid: '4445556',
-        baseRefName: 'main',
-      );
-
-      for (final GhPrRef pr in [openPr, landedPr]) {
-        check(pr.repoShortName).equals('scripts.dart');
-        check(pr.markdownLink).equals(
-          '[#${pr.number}](https://github.com/kevmoo/scripts.dart/pull/${pr.number})',
+    test(
+      'GhPr and LandedPr share GhPrRef properties and worktree matching',
+      () {
+        final openPr = GhPr(
+          number: 101,
+          title: 'Open PR',
+          url: 'https://github.com/kevmoo/scripts.dart/pull/101',
+          isDraft: false,
+          state: 'OPEN',
+          reviewDecision: ReviewDecision.none,
+          requestedReviewers: const [],
+          totalReviewThreads: 0,
+          unresolvedReviewThreads: 0,
+          mergeable: MergeableState.mergeable,
+          mergeStateStatus: MergeStateStatus.clean,
+          isInMergeQueue: false,
+          headRefName: 'feature-worktree',
+          headRefOid: '1112223',
+          baseRefName: 'main',
+          repository: 'kevmoo/scripts.dart',
+          repoUrl: 'https://github.com/kevmoo/scripts.dart',
+          isRepoArchived: false,
+          ciStatus: CiStatus.success,
+          updatedAt: DateTime.utc(2026, 9, 14),
         );
-        check(pr.markdownRepoLink).equals(
-          '[kevmoo/scripts.dart](https://github.com/kevmoo/scripts.dart)',
+
+        const landedPr = LandedPr(
+          number: 102,
+          title: 'Landed PR',
+          url: 'https://github.com/kevmoo/scripts.dart/pull/102',
+          repository: 'kevmoo/scripts.dart',
+          repoUrl: 'https://github.com/kevmoo/scripts.dart',
+          headRefName: 'feature-worktree',
+          headRefOid: '4445556',
+          baseRefName: 'main',
         );
-      }
 
-      // Verify sibling folder naming match works for both GhPr and LandedPr
-      final localRepo = (
-        repoName: 'kevmoo/scripts.dart',
-        repoNames: ['kevmoo/scripts.dart'],
-        repoPath: '/workspace/scripts.dart',
-        currentBranch: 'main',
-        branches: <LocalBranchEntry>[],
-        worktrees: [
-          (
-            path: '/workspace/_scripts.dart-feature-worktree',
-            branch: 'DETACHED',
-            sha: '1112223',
-          ),
-        ],
-      );
+        for (final pr in <GhPrRef>[openPr, landedPr]) {
+          check(pr.repoShortName).equals('scripts.dart');
+          check(pr.markdownLink).equals(
+            '[#${pr.number}]'
+            '(https://github.com/kevmoo/scripts.dart/pull/${pr.number})',
+          );
+          check(pr.markdownRepoLink).equals(
+            '[kevmoo/scripts.dart](https://github.com/kevmoo/scripts.dart)',
+          );
+        }
 
-      final openLoc = findLocalBranchLocation([localRepo], openPr);
-      check(openLoc).isNotNull();
-      check(openLoc!.repoPath)
-          .equals('/workspace/_scripts.dart-feature-worktree');
-      check(openLoc.isWorktree).isTrue();
+        // Verify sibling folder naming match works for both GhPr and LandedPr
+        final localRepo = (
+          repoName: 'kevmoo/scripts.dart',
+          repoNames: ['kevmoo/scripts.dart'],
+          repoPath: '/workspace/scripts.dart',
+          currentBranch: 'main',
+          branches: <LocalBranchEntry>[],
+          worktrees: [
+            (
+              path: '/workspace/_scripts.dart-feature-worktree',
+              branch: 'DETACHED',
+              sha: '1112223',
+            ),
+          ],
+        );
 
-      final landedWt = findMatchingWorktreeForPr(localRepo, landedPr);
-      check(landedWt).isNotNull();
-      check(landedWt!.path).equals('/workspace/_scripts.dart-feature-worktree');
-    });
+        final openLoc = findLocalBranchLocation([localRepo], openPr);
+        check(openLoc).isNotNull();
+        check(openLoc!.repoPath)
+            .equals('/workspace/_scripts.dart-feature-worktree');
+        check(openLoc.isWorktree).isTrue();
+
+        final landedWt = findMatchingWorktreeForPr(localRepo, landedPr);
+        check(landedWt).isNotNull();
+        check(landedWt!.path)
+            .equals('/workspace/_scripts.dart-feature-worktree');
+      },
+    );
   });
 }
