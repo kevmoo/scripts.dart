@@ -9,6 +9,7 @@ import 'package:pool/pool.dart';
 import 'gh_view.dart' show formatTouchedMarkdown, formatTouchedTerminal;
 import 'process_utils.dart';
 import 'shared/gh_args.dart';
+import 'shared/graphql_utils.dart';
 
 /// Exception thrown by `gh-issues` operations.
 class GhIssuesException implements Exception {
@@ -297,9 +298,13 @@ query($owner: String!, $name: String!, $number: Int!) {
 }
 
 const _graphqlSearchQuery = r'''
-query($q: String!, $limit: Int!) {
-  search(query: $q, type: ISSUE, first: $limit) {
+query($q: String!, $limit: Int!, $cursor: String) {
+  search(query: $q, type: ISSUE, first: $limit, after: $cursor) {
     issueCount
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
     nodes {
       ... on Issue {
         number
@@ -334,43 +339,6 @@ query($q: String!, $limit: Int!) {
   }
 }
 ''';
-
-Map<String, dynamic> _parseGraphQLResponse(ProcessResult result) {
-  if (result.exitCode != 0) {
-    throw GhIssuesException(
-      'Failed to fetch issues via GitHub CLI (gh).\n'
-      'Make sure `gh` is installed and authenticated (`gh auth login`).\n'
-      'Error: ${result.stderr}',
-      exitCode: ExitCode.software.code,
-    );
-  }
-
-  final dynamic decoded;
-  try {
-    decoded = jsonDecode(result.stdout as String);
-  } catch (e) {
-    throw GhIssuesException(
-      'Failed to parse GitHub GraphQL response: $e\nOutput:\n${result.stdout}',
-      exitCode: ExitCode.software.code,
-    );
-  }
-
-  if (decoded is! Map<String, dynamic>) {
-    throw GhIssuesException('Invalid GraphQL response structure.');
-  }
-
-  return decoded;
-}
-
-List<GhIssue> _extractIssuesFromSearchData(Map<String, dynamic> data) {
-  final search = data['search'] as Map<String, dynamic>?;
-  final nodes = search?['nodes'] as List<dynamic>? ?? const [];
-  return nodes
-      .whereType<Map<String, dynamic>>()
-      .map(parseIssueNode)
-      .whereType<GhIssue>()
-      .toList();
-}
 
 Future<GhIssue> _enrichSingleIssue(
   GhIssue issue, {
@@ -438,20 +406,17 @@ Future<List<GhIssue>> fetchAssignedIssues({
     now: now,
   );
 
-  final result = await runner('gh', [
-    'api',
-    'graphql',
-    '-f',
-    'query=$_graphqlSearchQuery',
-    '-F',
-    'q=$searchQuery',
-    '-F',
-    'limit=$limit',
-  ]);
+  final nodes = await paginateGraphQLSearch(
+    graphqlQuery: _graphqlSearchQuery,
+    searchQuery: searchQuery,
+    limit: limit,
+    runner: runner,
+    exceptionBuilder: (message, {exitCode = 1}) =>
+        GhIssuesException(message, exitCode: ExitCode.software.code),
+    maxPageSize: 50,
+  );
 
-  final decoded = _parseGraphQLResponse(result);
-  final data = decoded['data'] as Map<String, dynamic>? ?? const {};
-  final parsedIssues = _extractIssuesFromSearchData(data);
+  final parsedIssues = nodes.map(parseIssueNode).whereType<GhIssue>().toList();
 
   if (!checkLinkedPrs || parsedIssues.isEmpty) {
     return parsedIssues;

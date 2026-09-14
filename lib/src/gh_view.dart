@@ -1,10 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
-import 'dart:math' as math;
 
 import 'package:args/args.dart';
 import 'package:io/ansi.dart';
-import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 
 import 'local_repo_scanner.dart';
@@ -531,87 +529,16 @@ Future<List<GhPr>> fetchOpenPullRequests({
     currentTime: currentTime,
   );
 
-  final results = <GhPr>[];
-  String? cursor;
+  final nodes = await paginateGraphQLSearch(
+    graphqlQuery: _pullRequestsGraphqlQuery,
+    searchQuery: searchQuery,
+    limit: limit,
+    runner: runner,
+    exceptionBuilder: (message, {exitCode = 1}) =>
+        GhViewException(message, exitCode: exitCode),
+  );
 
-  while (results.length < limit) {
-    final pageSize = math.min(25, limit - results.length);
-    final page = await _fetchPullRequestPage(
-      searchQuery: searchQuery,
-      pageSize: pageSize,
-      runner: runner,
-      afterCursor: cursor,
-    );
-    results.addAll(page.prs);
-    if (!page.hasNextPage || page.endCursor == null || page.prs.isEmpty) {
-      break;
-    }
-    cursor = page.endCursor;
-  }
-
-  return results;
-}
-
-Future<({List<GhPr> prs, bool hasNextPage, String? endCursor})>
-_fetchPullRequestPage({
-  required String searchQuery,
-  required int pageSize,
-  required ProcessRunner runner,
-  String? afterCursor,
-}) async {
-  final args = <String>[
-    'api',
-    'graphql',
-    '-f',
-    'query=$_pullRequestsGraphqlQuery',
-    '-F',
-    'q=$searchQuery',
-    '-F',
-    'limit=$pageSize',
-    if (afterCursor != null) ...['-F', 'cursor=$afterCursor'],
-  ];
-
-  final result = await runner('gh', args);
-
-  if (result.exitCode != 0) {
-    throw GhViewException(
-      'Failed to fetch pull requests via GitHub CLI (gh).\n'
-      'Make sure `gh` is installed and authenticated (`gh auth login`).\n'
-      'Error: ${result.stderr}',
-      exitCode: ExitCode.software.code,
-    );
-  }
-
-  final dynamic decoded;
-  try {
-    decoded = jsonDecode(result.stdout as String);
-  } catch (e) {
-    throw GhViewException(
-      'Failed to parse GitHub GraphQL response: $e\nOutput:\n${result.stdout}',
-      exitCode: ExitCode.software.code,
-    );
-  }
-
-  if (decoded is! Map<String, dynamic>) {
-    throw GhViewException('Invalid GraphQL response structure.');
-  }
-
-  final searchMap =
-      (decoded['data'] as Map<String, dynamic>?)?['search']
-          as Map<String, dynamic>?;
-  final pageInfo = searchMap?['pageInfo'] as Map<String, dynamic>?;
-  final hasNextPage = pageInfo?['hasNextPage'] as bool? ?? false;
-  final endCursor = pageInfo?['endCursor'] as String?;
-
-  final nodes = extractGraphQLSearchNodes(decoded);
-
-  final prs = nodes
-      .whereType<Map<String, dynamic>>()
-      .map(parsePrNode)
-      .whereType<GhPr>()
-      .toList();
-
-  return (prs: prs, hasNextPage: hasNextPage, endCursor: endCursor);
+  return nodes.map(parsePrNode).whereType<GhPr>().toList();
 }
 
 String _buildSearchQuery({
@@ -725,26 +652,6 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
   );
 }
 
-const _knownBotLogins = <String>{
-  'cla-bot',
-  'codecov',
-  'codecov-commenter',
-  'coveralls',
-  'dependabot',
-  'flutter-dashboard',
-  'fluttergithubbot',
-  'gemini-code-assist',
-  'github-actions',
-  'google-cla',
-};
-
-bool _isBotLogin(String login) {
-  final lower = login.toLowerCase();
-  return lower.endsWith('[bot]') ||
-      lower.endsWith('-bot') ||
-      _knownBotLogins.contains(lower);
-}
-
 ({List<String> allReviewers, List<String> humanReviewers})
 _extractRequestedReviewers(Map<String, dynamic>? reviewRequestsObj) {
   final requestNodes = reviewRequestsObj?['nodes'] as List<dynamic>? ?? [];
@@ -759,7 +666,7 @@ _extractRequestedReviewers(Map<String, dynamic>? reviewRequestsObj) {
       final id = userLogin ?? teamSlug ?? teamName;
       if (id != null && id.isNotEmpty) {
         allReviewers.add(id);
-        if (userLogin != null && !_isBotLogin(userLogin)) {
+        if (userLogin != null && !isBotLogin(userLogin)) {
           humanReviewers.add(userLogin);
         }
       }
@@ -782,7 +689,7 @@ bool _isHumanReviewer(String? login, String prAuthor) =>
     login != null &&
     login.isNotEmpty &&
     login != prAuthor &&
-    !_isBotLogin(login);
+    !isBotLogin(login);
 
 ({DateTime? lastReviewerActivityAt, List<String> humanParticipants})
 _extractReviewerActivity(

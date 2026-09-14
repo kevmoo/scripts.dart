@@ -748,11 +748,14 @@ void main() {
         ..not((it) => it.contains('dart-lang/sdk'));
     });
 
-    test('fetchLandedPrs clamps limit to 100 in GraphQL call', () async {
+    test('fetchLandedPrs paginates in chunks of 50 when limit > 50', () async {
       String? passedLimit;
       final mockJson = jsonEncode({
         'data': {
-          'search': {'nodes': <dynamic>[]},
+          'search': {
+            'pageInfo': {'hasNextPage': false, 'endCursor': null},
+            'nodes': <dynamic>[],
+          },
         },
       });
 
@@ -769,7 +772,7 @@ void main() {
         },
       );
 
-      check(passedLimit).equals('100');
+      check(passedLimit).equals('50');
     });
 
     test('formatMarkdownReport formats unlinked worktrees table correctly', () {
