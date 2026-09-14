@@ -370,7 +370,6 @@ Future<List<LandedPr>> fetchLandedPrs({
   SyncProcessRunner? processRunner,
 }) async {
   final runner = processRunner ?? defaultSyncProcessRunner;
-  final effectiveLimit = limit.clamp(1, 100);
   final queryStr = buildLandedSearchQuery(
     user: user,
     repo: repo,
@@ -378,8 +377,12 @@ Future<List<LandedPr>> fetchLandedPrs({
   );
 
   const gqlQuery = r'''
-query($q: String!, $limit: Int!) {
-  search(query: $q, type: ISSUE, first: $limit) {
+query($q: String!, $limit: Int!, $cursor: String) {
+  search(query: $q, type: ISSUE, first: $limit, after: $cursor) {
+    pageInfo {
+      hasNextPage
+      endCursor
+    }
     nodes {
       ... on PullRequest {
         number
@@ -406,54 +409,17 @@ query($q: String!, $limit: Int!) {
 }
 ''';
 
-  final result = runner('gh', [
-    'api',
-    'graphql',
-    '-f',
-    'query=$gqlQuery',
-    '-F',
-    'q=$queryStr',
-    '-F',
-    'limit=$effectiveLimit',
-  ]);
-
-  if (result.exitCode != 0) {
-    throw GhCleanException(
-      'GitHub CLI (`gh`) failed with exit code ${result.exitCode}:\n'
-      '${result.stderr}',
-      exitCode: result.exitCode,
-    );
-  }
-
-  final stdoutStr = result.stdout as String;
-  return _parseGraphQLData(stdoutStr, user: user, includeOwned: includeOwned);
-}
-
-List<LandedPr> _parseGraphQLData(
-  String stdoutStr, {
-  required String user,
-  required bool includeOwned,
-}) {
-  Map<String, dynamic> decoded;
-  try {
-    decoded = jsonDecode(stdoutStr) as Map<String, dynamic>;
-  } catch (e) {
-    throw GhCleanException('Failed to parse GitHub GraphQL output: $e');
-  }
-
-  if (decoded.containsKey('errors')) {
-    final errors = decoded['errors'] as List<dynamic>? ?? [];
-    final errorMessages = errors
-        .whereType<Map<String, dynamic>>()
-        .map((e) => e['message'] as String? ?? 'Unknown GraphQL error')
-        .join('\n');
-    throw GhCleanException('GraphQL query returned errors:\n$errorMessages');
-  }
-
-  final nodes = extractGraphQLSearchNodes(decoded);
+  final nodes = paginateGraphQLSearchSync(
+    graphqlQuery: gqlQuery,
+    searchQuery: queryStr,
+    limit: limit,
+    runner: runner,
+    exceptionBuilder: (message, {exitCode = 1}) =>
+        GhCleanException(message, exitCode: exitCode),
+  );
 
   return [
-    for (final node in nodes.whereType<Map<String, dynamic>>())
+    for (final node in nodes)
       if (parseLandedPrNode(node) case final parsed?)
         if (!isDartSdkRepositoryName(parsed.repository) &&
             _isAllowedUserPr(
