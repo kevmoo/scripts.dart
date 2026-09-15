@@ -105,7 +105,7 @@ Future<void> _updateAnalysisOptions(
 
   final file = File(analysisOptionsFile);
   final editor = YamlEditor(file.readAsStringSync());
-  final yamlMap = _openYamlMap(analysisOptionsFile);
+  final yamlMap = openYamlMap(analysisOptionsFile);
 
   if (removedLints.isNotEmpty) {
     _removeRules(editor, yamlMap, removedLints);
@@ -157,15 +157,6 @@ void _removeLanguageEntries(YamlEditor editor, Iterable<String> keysToRemove) {
   if (updatedAnalyzer is Map && updatedAnalyzer.isEmpty) {
     editor.remove(['analyzer']);
   }
-}
-
-YamlMap _openYamlMap(String path) {
-  try {
-    final content = File(path).readAsStringSync();
-    final yaml = loadYaml(content, sourceUrl: Uri.file(path));
-    if (yaml is YamlMap) return yaml;
-  } catch (_) {}
-  return YamlMap();
 }
 
 @CliOptions()

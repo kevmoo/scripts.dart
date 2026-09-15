@@ -101,7 +101,7 @@ class AnalysisOptionsResolver {
       );
     }
 
-    final yaml = _openYamlMap(path);
+    final yaml = openYamlMap(path);
     final includedLints = <String>{};
     final includedLanguage = <String, dynamic>{};
 
@@ -186,13 +186,15 @@ class AnalysisOptionsResolver {
     }
     return const {};
   }
+}
 
-  YamlMap _openYamlMap(String path) {
-    try {
-      final content = File(path).readAsStringSync();
-      final yaml = loadYaml(content, sourceUrl: Uri.file(path));
-      if (yaml is YamlMap) return yaml;
-    } catch (_) {}
-    return YamlMap();
-  }
+/// Reads and parses a [YamlMap] from [path], returning an empty [YamlMap] on
+/// missing/invalid files.
+YamlMap openYamlMap(String path) {
+  try {
+    final content = File(path).readAsStringSync();
+    final yaml = loadYaml(content, sourceUrl: Uri.file(path));
+    if (yaml is YamlMap) return yaml;
+  } catch (_) {}
+  return YamlMap();
 }

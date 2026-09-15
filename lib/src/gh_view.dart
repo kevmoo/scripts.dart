@@ -15,14 +15,8 @@ export 'local_repo_scanner.dart' show normalizeRepoName;
 export 'shared/gh_pr_ref.dart' show GhPrRef;
 
 /// Exception thrown by `gh-view` operations.
-class GhViewException implements Exception {
-  final String message;
-  final int exitCode;
-
-  new(this.message, {this.exitCode = 1});
-
-  @override
-  String toString() => message;
+class GhViewException extends CliException {
+  const new(super.message, {super.exitCode = 1});
 }
 
 /// GitHub GraphQL `PullRequestReviewDecision` values.

@@ -12,14 +12,8 @@ import 'shared/gh_args.dart';
 import 'shared/graphql_utils.dart';
 
 /// Exception thrown by `gh-issues` operations.
-class GhIssuesException implements Exception {
-  final String message;
-  final int exitCode;
-
-  new(this.message, {this.exitCode = 1});
-
-  @override
-  String toString() => message;
+class GhIssuesException extends CliException {
+  const new(super.message, {super.exitCode = 1});
 }
 
 /// Representation of a linked GitHub Pull Request.

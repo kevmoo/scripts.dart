@@ -1,9 +1,8 @@
 #!/usr/bin/env dart
 
 import 'package:args/args.dart';
-import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/gerrit_view.dart';
-import 'package:kevmoo_scripts/src/testable_print.dart';
+import 'package:kevmoo_scripts/src/shared/gh_args.dart';
 
 Future<void> main(List<String> arguments) async {
   final parser = ArgParser()
@@ -19,36 +18,14 @@ Future<void> main(List<String> arguments) async {
       help: 'Print this usage information.',
     );
 
-  ArgResults results;
-  try {
-    results = parser.parse(arguments);
-  } on FormatException catch (e) {
-    setError(
-      message: '${e.message}\n\n${parser.usage}',
-      exitCode: ExitCode.usage.code,
-    );
-    return;
-  }
-
-  if (results['help'] as bool) {
-    print('Complete overview of your active work on Gerrit.');
-    print('');
-    print('Usage: gerrit-view [options]');
-    print(parser.usage);
-    return;
-  }
+  final results = parseCliArgs(
+    parser,
+    arguments,
+    commandName: 'gerrit-view',
+    description: 'Complete overview of your active work on Gerrit.',
+  );
+  if (results == null) return;
 
   final gerritRepo = results['path-to-gerrit-repo'] as String?;
-
-  try {
-    await runGerritView(gerritRepo: gerritRepo);
-  } on GerritViewException catch (e, stack) {
-    setError(message: e.message, exitCode: e.exitCode, stack: stack);
-  } catch (e, stack) {
-    setError(
-      message: 'Unexpected error: $e',
-      exitCode: ExitCode.software.code,
-      stack: stack,
-    );
-  }
+  await runCliGuarded(() => runGerritView(gerritRepo: gerritRepo));
 }
