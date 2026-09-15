@@ -77,6 +77,7 @@ Future<void> main(List<String> arguments) async {
     localRoot: results['local-root'] as String?,
     skipSync: results['skip-sync'] as bool,
     skipWorktrees: results['skip-worktrees'] as bool,
+    skipRemoteBranches: results['skip-remote-branches'] as bool,
     includeOwned: results['include-owned'] as bool,
   );
 
