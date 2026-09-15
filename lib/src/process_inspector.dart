@@ -39,7 +39,7 @@ abstract interface class ProcessInspector {
     } else if (Platform.isMacOS) {
       return WitrProcessInspector();
     } else {
-      throw DartCleanException(
+      throw const DartCleanException(
         'dart-clean is currently only supported on macOS and Linux.',
       );
     }

@@ -10,6 +10,7 @@ import 'package:build_cli_annotations/build_cli_annotations.dart';
 import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
 
+import 'shared/gh_args.dart';
 import 'util.dart';
 
 part 'puppy.g.dart';
@@ -51,9 +52,8 @@ Future<void> runPuppy(RunArgs args, {String? cwd}) async {
   }
 }
 
-class PuppyException(final String message) implements Exception {
-  @override
-  String toString() => message;
+class PuppyException extends CliException {
+  const new(super.message) : super(exitCode: 70);
 }
 
 @CliOptions()

@@ -4,11 +4,12 @@ import 'dart:io';
 import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 
+import 'git_extensions.dart';
+import 'shared/gh_args.dart';
+
 /// Exception thrown by Gerrit View tool operations.
-class GerritViewException(final String message, {final int exitCode = 1})
-    implements Exception {
-  @override
-  String toString() => message;
+class GerritViewException extends CliException {
+  const new(super.message, {super.exitCode = 1});
 }
 
 typedef CommitDetails = ({
@@ -933,36 +934,7 @@ CleanupSafety _checkCleanupSafety(
   return (isSafe: unmerged.isEmpty, unmergedShas: unmerged);
 }
 
-String _getDefaultBranch(String repoPath) {
-  final result = Process.runSync('git', [
-    'rev-parse',
-    '--abbrev-ref',
-    'origin/HEAD',
-  ], workingDirectory: repoPath);
-
-  if (result.exitCode == 0) {
-    final output = (result.stdout as String).trim();
-    if (output.startsWith('origin/')) {
-      return output.substring('origin/'.length);
-    }
-    return output;
-  }
-
-  // Sniff fallback
-  for (final branch in ['main', 'master']) {
-    final check = Process.runSync('git', [
-      'show-ref',
-      '--verify',
-      '--quiet',
-      'refs/remotes/origin/$branch',
-    ], workingDirectory: repoPath);
-    if (check.exitCode == 0) {
-      return branch;
-    }
-  }
-
-  return 'main';
-}
+String _getDefaultBranch(String repoPath) => sniffDefaultBranchSync(repoPath);
 
 String? _getCurrentBranch(String repoPath) {
   final result = Process.runSync('git', [

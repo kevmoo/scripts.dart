@@ -1,11 +1,10 @@
 #!/usr/bin/env dart
 
-import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/dart_clean.dart';
-import 'package:kevmoo_scripts/src/testable_print.dart';
+import 'package:kevmoo_scripts/src/shared/gh_args.dart';
 
 Future<void> main(List<String> args) async {
-  try {
+  await runCliGuarded(() async {
     final options = parseDartCleanOptions(args);
 
     if (options.help) {
@@ -16,18 +15,5 @@ Future<void> main(List<String> args) async {
     }
 
     await runDartClean(options);
-  } on FormatException catch (e) {
-    setError(
-      message: '${e.message}\n\n$dartCleanOptionsUsage',
-      exitCode: ExitCode.usage.code,
-    );
-  } on DartCleanException catch (e) {
-    setError(message: e.message, exitCode: ExitCode.software.code);
-  } catch (e, stack) {
-    setError(
-      message: 'An unexpected error occurred: $e',
-      exitCode: ExitCode.software.code,
-      stack: stack,
-    );
-  }
+  }, usageForFormatException: dartCleanOptionsUsage);
 }

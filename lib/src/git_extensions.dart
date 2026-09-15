@@ -99,11 +99,10 @@ extension GitDirExtensions on GitDir {
     ], throwOnError: false);
 
     if (revParseResult.exitCode == 0) {
-      final output = (revParseResult.stdout as String).trim();
-      if (output.startsWith('origin/')) {
-        return output.substring('origin/'.length);
-      }
-      return output;
+      final parsed = parseOriginHeadBranchOutput(
+        revParseResult.stdout as String,
+      );
+      if (parsed != null) return parsed;
     }
 
     // Sniff for main or master
@@ -588,4 +587,44 @@ extension GitDirExtensions on GitDir {
     final expectedWorktreePrefix = p.join(canonicalGitCommonDir, 'worktrees');
     return p.isWithin(expectedWorktreePrefix, canonicalGitDir);
   }
+}
+
+/// Normalizes stdout from `git rev-parse --abbrev-ref origin/HEAD` by stripping
+/// a leading `origin/` prefix.
+String? parseOriginHeadBranchOutput(String rawStdout) {
+  final output = rawStdout.trim();
+  if (output.isEmpty) return null;
+  if (output.startsWith('origin/')) {
+    return output.substring('origin/'.length);
+  }
+  return output;
+}
+
+/// Synchronously determines the default branch of [repoPath] by inspecting
+/// `origin/HEAD` or sniffing `origin/main` and `origin/master`.
+String sniffDefaultBranchSync(String repoPath, {String fallback = 'main'}) {
+  final result = Process.runSync('git', [
+    'rev-parse',
+    '--abbrev-ref',
+    'origin/HEAD',
+  ], workingDirectory: repoPath);
+
+  if (result.exitCode == 0) {
+    final parsed = parseOriginHeadBranchOutput(result.stdout as String);
+    if (parsed != null) return parsed;
+  }
+
+  for (final branch in ['main', 'master']) {
+    final check = Process.runSync('git', [
+      'show-ref',
+      '--verify',
+      '--quiet',
+      'refs/remotes/origin/$branch',
+    ], workingDirectory: repoPath);
+    if (check.exitCode == 0) {
+      return branch;
+    }
+  }
+
+  return fallback;
 }

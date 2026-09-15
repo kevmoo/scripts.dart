@@ -16,14 +16,8 @@ export 'local_repo_scanner.dart'
 export 'shared/gh_pr_ref.dart' show GhPrRef;
 
 /// Exception thrown by `gh-clean` operations.
-class GhCleanException implements Exception {
-  final String message;
-  final int exitCode;
-
-  new(this.message, {this.exitCode = 1});
-
-  @override
-  String toString() => message;
+class GhCleanException extends CliException {
+  const new(super.message, {super.exitCode = 1});
 }
 
 /// Representation of a merged GitHub Pull Request.
@@ -559,24 +553,29 @@ List<_CandidateBranch> _collectCandidateBranches(
   String? repoFilter,
 }) {
   final candidates = <_CandidateBranch>[];
-  final rootRepos = localRepos.where(
-    (r) => isRootGitRepository(Directory(r.repoPath)),
-  );
-
-  for (final repo in rootRepos) {
-    if (!_isRepoMatchingFilter(repo, repoFilter)) continue;
-    final parsedRepo = _parseRepoOwnerAndName(repo);
-    if (parsedRepo == null) continue;
-
+  for (final r in _filteredRootRepos(localRepos, repoFilter: repoFilter)) {
     _collectRepoCandidateBranches(
-      repo,
-      parsedRepo.owner,
-      parsedRepo.name,
+      r.repo,
+      r.owner,
+      r.name,
       alreadyMatchedBranches,
       candidates,
     );
   }
   return candidates;
+}
+
+Iterable<({LocalRepoInfo repo, String owner, String name})> _filteredRootRepos(
+  List<LocalRepoInfo> localRepos, {
+  String? repoFilter,
+}) sync* {
+  for (final repo in localRepos) {
+    if (!isRootGitRepository(Directory(repo.repoPath))) continue;
+    if (!_isRepoMatchingFilter(repo, repoFilter)) continue;
+    final parsedRepo = _parseRepoOwnerAndName(repo);
+    if (parsedRepo == null) continue;
+    yield (repo: repo, owner: parsedRepo.owner, name: parsedRepo.name);
+  }
 }
 
 void _collectRepoCandidateBranches(
@@ -1272,19 +1271,11 @@ _collectCandidateWorktrees(
   final candidates = <_CandidateWorktree>[];
   final detachedCandidates = <({LocalRepoInfo repo, LocalWorktreeEntry wt})>[];
 
-  final rootRepos = localRepos.where(
-    (r) => isRootGitRepository(Directory(r.repoPath)),
-  );
-  for (final repo in rootRepos) {
-    if (!_isRepoMatchingFilter(repo, repoFilter)) continue;
-
-    final parsedRepo = _parseRepoOwnerAndName(repo);
-    if (parsedRepo == null) continue;
-
+  for (final r in _filteredRootRepos(localRepos, repoFilter: repoFilter)) {
     _classifyRepoWorktrees(
-      repo,
-      parsedRepo.owner,
-      parsedRepo.name,
+      r.repo,
+      r.owner,
+      r.name,
       matchedWorktreePaths,
       candidates,
       detachedCandidates,

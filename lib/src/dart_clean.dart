@@ -8,6 +8,7 @@ import 'package:pool/pool.dart';
 
 import 'process_inspector.dart';
 import 'process_utils.dart';
+import 'shared/gh_args.dart';
 import 'util.dart';
 
 part 'dart_clean.g.dart';
@@ -113,9 +114,8 @@ class DartCleanOptions {
 
 String get dartCleanOptionsUsage => _$parserForDartCleanOptions.usage;
 
-class DartCleanException(final String message) implements Exception {
-  @override
-  String toString() => message;
+class DartCleanException extends CliException {
+  const new(super.message) : super(exitCode: 70);
 }
 
 class _ProcessNode({
