@@ -31,6 +31,9 @@ class LandedPr extends GhPrRef {
   final String? mergeSha;
   final DateTime? mergedAt;
   final DateTime? closedAt;
+  final bool headRefExists;
+  final String? headRepository;
+  final String? headRepoPermission;
 
   const new({
     required super.number,
@@ -44,7 +47,23 @@ class LandedPr extends GhPrRef {
     this.mergeSha,
     this.mergedAt,
     this.closedAt,
+    this.headRefExists = false,
+    this.headRepository,
+    this.headRepoPermission,
   });
+
+  /// Whether the remote head branch still exists on GitHub and can be
+  /// deleted by the current viewer.
+  bool get canDeleteRemoteHeadBranch =>
+      headRefExists &&
+      headRepository != null &&
+      headRepository!.isNotEmpty &&
+      headRefName.isNotEmpty &&
+      headRefName != baseRefName &&
+      !_isTrunkBranchName(headRefName) &&
+      (headRepository!.toLowerCase() != repository.toLowerCase() ||
+          !_isProtectedBranch(headRefName)) &&
+      (headRepoPermission == 'ADMIN' || headRepoPermission == 'WRITE');
 }
 
 /// A single cleanup action executed on a repository.
@@ -83,6 +102,7 @@ class GhCleanOptions {
   final String? localRoot;
   final bool skipSync;
   final bool skipWorktrees;
+  final bool skipRemoteBranches;
   final bool includeOwned;
 
   const new({
@@ -96,6 +116,7 @@ class GhCleanOptions {
     this.localRoot,
     this.skipSync = false,
     this.skipWorktrees = false,
+    this.skipRemoteBranches = false,
     this.includeOwned = true,
   });
 
@@ -127,6 +148,11 @@ class GhCleanOptions {
         'skip-worktrees',
         negatable: false,
         help: 'Skip pruning matching sibling worktrees.',
+      )
+      ..addFlag(
+        'skip-remote-branches',
+        negatable: false,
+        help: 'Skip deleting merged head branches on GitHub remotes.',
       )
       ..addFlag(
         'include-owned',
@@ -266,16 +292,15 @@ PrCleanResult _processPr(
     localRepo,
     skipSync: options.skipSync,
     skipWorktrees: options.skipWorktrees,
+    skipRemoteBranches: options.skipRemoteBranches,
     processRunner: runner,
   );
 
   var executed = <CleanAction>[];
   var status = 'Pending';
 
-  if (localRepo == null) {
-    status = 'Not cloned locally';
-  } else if (planned.isEmpty) {
-    status = 'Clean (nothing to do)';
+  if (planned.isEmpty) {
+    status = localRepo == null ? 'Not cloned locally' : 'Clean (nothing to do)';
   } else if (options.apply) {
     onProgress?.call(
       '[apply] Cleaning ${pr.repository} #${pr.number} (${pr.headRefName})...',
@@ -285,6 +310,7 @@ PrCleanResult _processPr(
       localRepo,
       skipSync: options.skipSync,
       skipWorktrees: options.skipWorktrees,
+      skipRemoteBranches: options.skipRemoteBranches,
       processRunner: runner,
       onProgress: onProgress,
     );
@@ -399,6 +425,13 @@ query($q: String!, $limit: Int!, $cursor: String) {
         closedAt
         headRefName
         headRefOid
+        headRef {
+          name
+        }
+        headRepository {
+          nameWithOwner
+          viewerPermission
+        }
         baseRefName
         repository {
           nameWithOwner
@@ -459,6 +492,11 @@ LandedPr? parseLandedPrNode(Map<String, dynamic> node) {
   final mergeCommit = node['mergeCommit'] as Map<String, dynamic>?;
   final mergeSha = mergeCommit?['oid'] as String?;
 
+  final headRefExists = node['headRef'] != null;
+  final headRepoMap = node['headRepository'] as Map<String, dynamic>?;
+  final headRepository = headRepoMap?['nameWithOwner'] as String?;
+  final headRepoPermission = headRepoMap?['viewerPermission'] as String?;
+
   return LandedPr(
     number: core.number,
     title: core.title,
@@ -471,6 +509,9 @@ LandedPr? parseLandedPrNode(Map<String, dynamic> node) {
     mergeSha: mergeSha,
     mergedAt: mergedAt,
     closedAt: closedAt,
+    headRefExists: headRefExists,
+    headRepository: headRepository,
+    headRepoPermission: headRepoPermission,
   );
 }
 
@@ -645,6 +686,13 @@ String _buildBatchCrossAuthorQuery(List<_CandidateBranch> batch) {
       '        closedAt\n'
       '        headRefName\n'
       '        headRefOid\n'
+      '        headRef {\n'
+      '          name\n'
+      '        }\n'
+      '        headRepository {\n'
+      '          nameWithOwner\n'
+      '          viewerPermission\n'
+      '        }\n'
       '        baseRefName\n'
       '        mergeCommit {\n'
       '          oid\n'
@@ -721,11 +769,19 @@ List<String> planCleanup(
   LocalRepoInfo? localRepo, {
   bool skipSync = false,
   bool skipWorktrees = false,
+  bool skipRemoteBranches = false,
   SyncProcessRunner? processRunner,
 }) {
-  if (localRepo == null) return const [];
-  final runner = processRunner ?? defaultSyncProcessRunner;
   final actions = <String>[];
+
+  if (!skipRemoteBranches && pr.canDeleteRemoteHeadBranch) {
+    actions.add(
+      'Delete remote branch `${pr.headRepository}:${pr.headRefName}`',
+    );
+  }
+
+  if (localRepo == null) return actions;
+  final runner = processRunner ?? defaultSyncProcessRunner;
 
   final headBranch = pr.headRefName;
   final trunkBranch = _resolveTrunkBranch(pr, localRepo);
@@ -760,78 +816,135 @@ List<String> planCleanup(
   return actions;
 }
 
-/// Executes worktree pruning, branch deletion, and default branch sync.
+/// Executes worktree pruning, branch deletion, default branch sync, and remote
+/// branch deletion.
 List<CleanAction> executeCleanup(
   LandedPr pr,
-  LocalRepoInfo localRepo, {
+  LocalRepoInfo? localRepo, {
   bool skipSync = false,
   bool skipWorktrees = false,
+  bool skipRemoteBranches = false,
   SyncProcessRunner? processRunner,
   void Function(String message)? onProgress,
 }) {
   final runner = processRunner ?? defaultSyncProcessRunner;
   final actions = <CleanAction>[];
-  final headBranch = pr.headRefName;
-  final trunkBranch = _resolveTrunkBranch(pr, localRepo);
-  final repoShortName = pr.repository.split('/').last;
 
-  if (!skipWorktrees) {
-    final wtAction = _executeWorktreePrune(
-      localRepo,
-      headBranch,
-      repoShortName,
-      runner,
-    );
-    if (wtAction != null) {
-      actions.add(wtAction);
-      onProgress?.call(
-        '  ${wtAction.success ? "✓" : "✗"} ${wtAction.description}',
+  if (localRepo != null) {
+    final headBranch = pr.headRefName;
+    final trunkBranch = _resolveTrunkBranch(pr, localRepo);
+    final repoShortName = pr.repository.split('/').last;
+
+    if (!skipWorktrees) {
+      final wtAction = _executeWorktreePrune(
+        localRepo,
+        headBranch,
+        repoShortName,
+        runner,
       );
+      if (wtAction != null) {
+        actions.add(wtAction);
+        onProgress?.call(
+          '  ${wtAction.success ? "✓" : "✗"} ${wtAction.description}',
+        );
+      }
     }
-  }
 
-  final checkoutAction = _executeBranchCheckout(
-    localRepo,
-    headBranch,
-    trunkBranch,
-    runner,
-  );
-  if (checkoutAction != null) {
-    actions.add(checkoutAction);
-    onProgress?.call(
-      '  ${checkoutAction.success ? "✓" : "✗"} ${checkoutAction.description}',
-    );
-  }
-
-  if (!skipSync) {
-    final syncAction = _executeTrunkSync(
+    final checkoutAction = _executeBranchCheckout(
       localRepo,
       headBranch,
       trunkBranch,
       runner,
     );
-    actions.add(syncAction);
-    onProgress?.call(
-      '  ${syncAction.success ? "✓" : "✗"} ${syncAction.description}',
+    if (checkoutAction != null) {
+      actions.add(checkoutAction);
+      onProgress?.call(
+        '  ${checkoutAction.success ? "✓" : "✗"} ${checkoutAction.description}',
+      );
+    }
+
+    if (!skipSync) {
+      final syncAction = _executeTrunkSync(
+        localRepo,
+        headBranch,
+        trunkBranch,
+        runner,
+      );
+      actions.add(syncAction);
+      onProgress?.call(
+        '  ${syncAction.success ? "✓" : "✗"} ${syncAction.description}',
+      );
+    }
+
+    final deleteAction = _executeBranchDeletion(
+      localRepo,
+      headBranch,
+      trunkBranch,
+      pr.headRefOid,
+      runner,
+      prNumber: pr.number,
     );
+    if (deleteAction != null) {
+      actions.add(deleteAction);
+      onProgress?.call(
+        '  ${deleteAction.success ? "✓" : "✗"} ${deleteAction.description}',
+      );
+    }
   }
 
-  final deleteAction = _executeBranchDeletion(
-    localRepo,
-    headBranch,
-    trunkBranch,
-    pr.headRefOid,
-    runner,
-    prNumber: pr.number,
-  );
-  if (deleteAction != null) {
-    actions.add(deleteAction);
-    onProgress?.call(
-      '  ${deleteAction.success ? "✓" : "✗"} ${deleteAction.description}',
+  if (!skipRemoteBranches && pr.canDeleteRemoteHeadBranch) {
+    final remoteDeleteAction = _executeRemoteBranchDeletion(
+      pr,
+      localRepo,
+      runner,
     );
+    if (remoteDeleteAction != null) {
+      actions.add(remoteDeleteAction);
+      onProgress?.call(
+        '  ${remoteDeleteAction.success ? "✓" : "✗"} '
+        '${remoteDeleteAction.description}',
+      );
+    }
   }
 
   return actions;
+}
+
+CleanAction? _executeRemoteBranchDeletion(
+  LandedPr pr,
+  LocalRepoInfo? localRepo,
+  SyncProcessRunner runner,
+) {
+  if (!pr.canDeleteRemoteHeadBranch) return null;
+  final headRepo = pr.headRepository!;
+  final headBranch = pr.headRefName;
+  final res = runner('gh', [
+    'api',
+    '-X',
+    'DELETE',
+    'repos/$headRepo/git/refs/heads/$headBranch',
+  ]);
+  if (res.exitCode != 0) {
+    return (
+      description: 'Delete remote branch `$headRepo:$headBranch`',
+      success: false,
+      error: res.stderr.toString().trim(),
+    );
+  }
+  if (localRepo != null) {
+    for (final remote in {'origin', headRepo.split('/').first}) {
+      runner('git', [
+        'branch',
+        '-dr',
+        '$remote/$headBranch',
+      ], workingDirectory: localRepo.repoPath);
+    }
+  }
+  return (
+    description: 'Deleted remote branch `$headRepo:$headBranch`',
+    success: true,
+    error: null,
+  );
 }
 
 /// Resolves the default/trunk branch name for [localRepo].
@@ -1089,13 +1202,18 @@ bool _isDirDirty(String path, SyncProcessRunner runner) => isRepoDirtySync(
   failClosedOnProcessError: true,
 );
 
+bool _isTrunkBranchName(String branch) {
+  final lower = branch.toLowerCase().trim();
+  const trunkNames = {'main', 'master', 'trunk', 'dev', 'release', 'head'};
+  return trunkNames.contains(lower);
+}
+
 bool _isProtectedBranch(String branch) {
   final lower = branch.toLowerCase().trim();
   if (lower.startsWith('release/') || lower.startsWith('release-')) {
     return true;
   }
-  const protected = {'main', 'master', 'trunk', 'dev', 'release', 'head'};
-  return protected.contains(lower);
+  return _isTrunkBranchName(lower);
 }
 
 typedef _CandidateWorktree = ({
@@ -1485,19 +1603,18 @@ typedef _ReportRow = ({
   String markdown,
 });
 
-bool _hasLocalBranchOrWorktreeAction(PrCleanResult r) {
-  if (r.localRepo == null) return false;
-  return r.plannedActions.any(
-        (a) =>
-            a.startsWith('Prune worktree') ||
-            a.startsWith('Delete local branch'),
-      ) ||
-      r.executedActions.any(
-        (a) =>
-            a.description.contains('worktree') ||
-            a.description.contains('branch'),
-      );
-}
+bool _hasLocalBranchOrWorktreeAction(PrCleanResult r) =>
+    r.plannedActions.any(
+      (a) =>
+          a.startsWith('Prune worktree') ||
+          a.startsWith('Delete local branch') ||
+          a.startsWith('Delete remote branch'),
+    ) ||
+    r.executedActions.any(
+      (a) =>
+          a.description.contains('worktree') ||
+          a.description.contains('branch'),
+    );
 
 String _formatActionableMarkdownRow(PrCleanResult r, {required bool applied}) {
   final pr = r.pr;
@@ -1673,6 +1790,8 @@ Map<String, dynamic> formatJsonReport(
             'headRefName': r.pr.headRefName,
             'baseRefName': r.pr.baseRefName,
             'mergedAt': r.pr.mergedAt?.toIso8601String(),
+            'headRefExists': r.pr.headRefExists,
+            'headRepository': r.pr.headRepository,
           },
           'localRepo': r.localRepo != null
               ? {

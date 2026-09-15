@@ -1450,4 +1450,120 @@ void main() {
       },
     );
   });
+
+  group('remote head branch cleanup', () {
+    test('parseLandedPrNode parses headRef and headRepository permissions', () {
+      final writePr = parseLandedPrNode({
+        'number': 192710,
+        'title': 'fix warning',
+        'url': 'https://github.com/flutter/flutter/pull/192710',
+        'repository': {
+          'nameWithOwner': 'flutter/flutter',
+          'url': 'https://github.com/flutter/flutter',
+        },
+        'headRefName': 'warn-dart-html-removal',
+        'headRefOid': 'abc1234',
+        'headRef': {'name': 'warn-dart-html-removal'},
+        'headRepository': {
+          'nameWithOwner': 'kevmoo/flutter',
+          'viewerPermission': 'ADMIN',
+        },
+        'baseRefName': 'master',
+      })!;
+
+      check(writePr.headRefExists).isTrue();
+      check(writePr.headRepository).equals('kevmoo/flutter');
+      check(writePr.headRepoPermission).equals('ADMIN');
+      check(writePr.canDeleteRemoteHeadBranch).isTrue();
+
+      final readOnlyPr = parseLandedPrNode({
+        'number': 192711,
+        'title': 'collaborator pr',
+        'url': 'https://github.com/flutter/flutter/pull/192711',
+        'repository': {
+          'nameWithOwner': 'flutter/flutter',
+          'url': 'https://github.com/flutter/flutter',
+        },
+        'headRefName': 'other-branch',
+        'headRefOid': 'def5678',
+        'headRef': {'name': 'other-branch'},
+        'headRepository': {
+          'nameWithOwner': 'other/flutter',
+          'viewerPermission': 'READ',
+        },
+        'baseRefName': 'master',
+      })!;
+
+      check(readOnlyPr.headRefExists).isTrue();
+      check(readOnlyPr.canDeleteRemoteHeadBranch).isFalse();
+
+      final deletedRefPr = parseLandedPrNode({
+        'number': 192712,
+        'title': 'deleted ref pr',
+        'url': 'https://github.com/flutter/flutter/pull/192712',
+        'repository': {
+          'nameWithOwner': 'flutter/flutter',
+          'url': 'https://github.com/flutter/flutter',
+        },
+        'headRefName': 'already-deleted',
+        'headRefOid': '0123456',
+        'headRef': null,
+        'headRepository': {
+          'nameWithOwner': 'kevmoo/flutter',
+          'viewerPermission': 'ADMIN',
+        },
+        'baseRefName': 'master',
+      })!;
+
+      check(deletedRefPr.headRefExists).isFalse();
+      check(deletedRefPr.canDeleteRemoteHeadBranch).isFalse();
+    });
+
+    test(
+      'planCleanup and executeCleanup delete remote branch even without local '
+      'repo',
+      () {
+        const pr = LandedPr(
+          number: 324,
+          title: 'release 0.5.5',
+          url: 'https://github.com/firebase/firebase-admin-dart/pull/324',
+          repository: 'firebase/firebase-admin-dart',
+          repoUrl: 'https://github.com/firebase/firebase-admin-dart',
+          headRefName: 'release-0.5.5',
+          headRefOid: 'abc1234',
+          baseRefName: 'main',
+          headRefExists: true,
+          headRepository: 'kevmoo/dart_firebase_admin',
+          headRepoPermission: 'WRITE',
+        );
+
+        final planned = planCleanup(pr, null);
+        check(planned).contains(
+          'Delete remote branch `kevmoo/dart_firebase_admin:release-0.5.5`',
+        );
+
+        final skipped = planCleanup(pr, null, skipRemoteBranches: true);
+        check(skipped).isEmpty();
+
+        final calls = <String>[];
+        final executed = executeCleanup(
+          pr,
+          null,
+          processRunner: (exe, args, {workingDirectory}) {
+            calls.add('$exe ${args.join(" ")}');
+            return ProcessResult(1, 0, '', '');
+          },
+        );
+
+        check(calls).contains(
+          'gh api -X DELETE repos/kevmoo/dart_firebase_admin/git/refs/heads/release-0.5.5',
+        );
+        check(executed.length).equals(1);
+        check(executed.first.success).isTrue();
+        check(executed.first.description).equals(
+          'Deleted remote branch `kevmoo/dart_firebase_admin:release-0.5.5`',
+        );
+      },
+    );
+  });
 }
