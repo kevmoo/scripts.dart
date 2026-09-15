@@ -831,83 +831,85 @@ List<CleanAction> executeCleanup(
   final actions = <CleanAction>[];
 
   if (localRepo != null) {
-    final headBranch = pr.headRefName;
-    final trunkBranch = _resolveTrunkBranch(pr, localRepo);
-    final repoShortName = pr.repository.split('/').last;
-
-    if (!skipWorktrees) {
-      final wtAction = _executeWorktreePrune(
-        localRepo,
-        headBranch,
-        repoShortName,
-        runner,
-      );
-      if (wtAction != null) {
-        actions.add(wtAction);
-        onProgress?.call(
-          '  ${wtAction.success ? "✓" : "✗"} ${wtAction.description}',
-        );
-      }
-    }
-
-    final checkoutAction = _executeBranchCheckout(
+    _executeLocalRepoCleanup(
+      pr,
       localRepo,
-      headBranch,
-      trunkBranch,
-      runner,
+      skipSync: skipSync,
+      skipWorktrees: skipWorktrees,
+      runner: runner,
+      actions: actions,
+      onProgress: onProgress,
     );
-    if (checkoutAction != null) {
-      actions.add(checkoutAction);
-      onProgress?.call(
-        '  ${checkoutAction.success ? "✓" : "✗"} ${checkoutAction.description}',
-      );
-    }
+  }
 
-    if (!skipSync) {
-      final syncAction = _executeTrunkSync(
-        localRepo,
-        headBranch,
-        trunkBranch,
-        runner,
-      );
-      actions.add(syncAction);
-      onProgress?.call(
-        '  ${syncAction.success ? "✓" : "✗"} ${syncAction.description}',
-      );
-    }
+  if (!skipRemoteBranches && pr.canDeleteRemoteHeadBranch) {
+    _recordAction(
+      actions,
+      _executeRemoteBranchDeletion(pr, localRepo, runner),
+      onProgress,
+    );
+  }
 
-    final deleteAction = _executeBranchDeletion(
+  return actions;
+}
+
+void _recordAction(
+  List<CleanAction> actions,
+  CleanAction? action,
+  void Function(String message)? onProgress,
+) {
+  if (action == null) return;
+  actions.add(action);
+  onProgress?.call('  ${action.success ? "✓" : "✗"} ${action.description}');
+}
+
+void _executeLocalRepoCleanup(
+  LandedPr pr,
+  LocalRepoInfo localRepo, {
+  required bool skipSync,
+  required bool skipWorktrees,
+  required SyncProcessRunner runner,
+  required List<CleanAction> actions,
+  void Function(String message)? onProgress,
+}) {
+  final headBranch = pr.headRefName;
+  final trunkBranch = _resolveTrunkBranch(pr, localRepo);
+  final repoShortName = pr.repository.split('/').last;
+
+  if (!skipWorktrees) {
+    _recordAction(
+      actions,
+      _executeWorktreePrune(localRepo, headBranch, repoShortName, runner),
+      onProgress,
+    );
+  }
+
+  _recordAction(
+    actions,
+    _executeBranchCheckout(localRepo, headBranch, trunkBranch, runner),
+    onProgress,
+  );
+
+  if (!skipSync) {
+    _recordAction(
+      actions,
+      _executeTrunkSync(localRepo, headBranch, trunkBranch, runner),
+      onProgress,
+    );
+  }
+
+  _recordAction(
+    actions,
+    _executeBranchDeletion(
       localRepo,
       headBranch,
       trunkBranch,
       pr.headRefOid,
       runner,
       prNumber: pr.number,
-    );
-    if (deleteAction != null) {
-      actions.add(deleteAction);
-      onProgress?.call(
-        '  ${deleteAction.success ? "✓" : "✗"} ${deleteAction.description}',
-      );
-    }
-  }
-
-  if (!skipRemoteBranches && pr.canDeleteRemoteHeadBranch) {
-    final remoteDeleteAction = _executeRemoteBranchDeletion(
-      pr,
-      localRepo,
-      runner,
-    );
-    if (remoteDeleteAction != null) {
-      actions.add(remoteDeleteAction);
-      onProgress?.call(
-        '  ${remoteDeleteAction.success ? "✓" : "✗"} '
-        '${remoteDeleteAction.description}',
-      );
-    }
-  }
-
-  return actions;
+    ),
+    onProgress,
+  );
 }
 
 CleanAction? _executeRemoteBranchDeletion(
