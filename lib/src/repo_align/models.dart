@@ -141,20 +141,21 @@ class RepoAlignmentStatus {
     }
   }
 
-  void _checkCiIssues(List<String> result) {
-    if (kind == RepoKind.publishedPackage) {
-      if (!hasLowerBound) result.add('Missing lower_bound.yml');
-      if (!hasCogComp) result.add('Missing complexity.yml');
-      if (!hasAutosubmit) result.add('Missing autosubmit.yml');
-      if (!hasDependabot) result.add('Missing .github/dependabot.yml');
-      return;
-    }
+  /// Whether this repository kind requires standard Dart CI workflows
+  /// (`complexity.yml`, `autosubmit.yml`, and `.github/dependabot.yml`).
+  bool get requiresStandardCiWorkflows =>
+      kind == RepoKind.publishedPackage ||
+      kind == RepoKind.monorepoWorkspace ||
+      kind == RepoKind.toolOrApp;
 
-    if (kind == RepoKind.monorepoWorkspace || kind == RepoKind.toolOrApp) {
-      if (!hasCogComp) result.add('Missing complexity.yml');
-      if (!hasAutosubmit) result.add('Missing autosubmit.yml');
-      if (!hasDependabot) result.add('Missing .github/dependabot.yml');
+  void _checkCiIssues(List<String> result) {
+    if (!requiresStandardCiWorkflows) return;
+    if (kind == RepoKind.publishedPackage && !hasLowerBound) {
+      result.add('Missing lower_bound.yml');
     }
+    if (!hasCogComp) result.add('Missing complexity.yml');
+    if (!hasAutosubmit) result.add('Missing autosubmit.yml');
+    if (!hasDependabot) result.add('Missing .github/dependabot.yml');
   }
 
   /// Markdown standardization applies to *every* repo kind, including
