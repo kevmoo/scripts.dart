@@ -358,6 +358,76 @@ analyzer:
       check(results.first.hasFullStrictMode).isTrue();
       check(results.first.hasPubspec).isTrue();
     });
+
+    test('classifies published package with workspace as publishedPackage', () {
+      final tempDir = Directory.systemTemp.createTempSync('repo_align_ws_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final buildCliRepo = Directory(p.join(tempDir.path, 'build_cli'))
+        ..createSync();
+      File(p.join(buildCliRepo.path, '.git')).writeAsStringSync('gitdir: ...');
+      File(p.join(buildCliRepo.path, 'pubspec.yaml')).writeAsStringSync('''
+name: build_cli_workspace
+environment:
+  sdk: ^3.6.0
+workspace:
+  - build_cli
+  - build_cli_annotations
+''');
+
+      final scanner = RepoAlignScanner(
+        baseDirPath: tempDir.path,
+        queryGitHubApi: false,
+      );
+      final status = scanner.scanSingleRepo(buildCliRepo);
+
+      check(status.kind).equals(RepoKind.publishedPackage);
+      check(status.issues).contains('Missing lower_bound.yml');
+      check(status.issues).contains('Missing complexity.yml');
+    });
+
+    test('flags missing complexity.yml on monorepoWorkspace and toolOrApp', () {
+      for (final kind in [RepoKind.monorepoWorkspace, RepoKind.toolOrApp]) {
+        final status = RepoAlignmentStatus(
+          name: 'ws_repo',
+          path: '/tmp/ws_repo',
+          kind: kind,
+          isArchived: false,
+          isFork: false,
+          isPrivate: false,
+          defaultBranch: 'main',
+          hasPubspec: true,
+          sdkConstraint: '^3.0.0',
+          packageNames: ['ws_repo'],
+          hasAnalysisOptions: true,
+          analysisInclude:
+              'package:dart_flutter_team_lints/analysis_options.yaml',
+          strictCasts: true,
+          strictInference: true,
+          strictRawTypes: true,
+          customLints: [],
+          workflowFiles: ['ci.yml', 'autosubmit.yml', 'markdown.yml'],
+          hasCi: true,
+          hasLowerBound: false,
+          hasCogComp: false,
+          hasAutosubmit: true,
+          hasDependabot: true,
+          hasPublish: false,
+          hasPrettierRc: true,
+          hasMarkdownWorkflow: true,
+          autoMergeAllowed: true,
+          hasRulesetOrProtection: true,
+          requiredChecks: ['build', 'markdown'],
+          defaultBranchRulesetId: '123',
+          defaultBranchRequiredChecks: ['build', 'markdown'],
+        );
+
+        check(
+          because: 'kind $kind should require complexity.yml',
+          status.issues,
+        ).contains('Missing complexity.yml');
+      }
+    });
   });
 
   group('ruleset payload', () {

@@ -151,6 +151,7 @@ class RepoAlignmentStatus {
     }
 
     if (kind == RepoKind.monorepoWorkspace || kind == RepoKind.toolOrApp) {
+      if (!hasCogComp) result.add('Missing complexity.yml');
       if (!hasAutosubmit) result.add('Missing autosubmit.yml');
       if (!hasDependabot) result.add('Missing .github/dependabot.yml');
     }
