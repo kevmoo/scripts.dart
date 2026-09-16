@@ -189,12 +189,12 @@ class RepoAlignScanner {
     if (name == 'dash_skills' || name == 'kevmoo_skills') {
       return RepoKind.agentSkills;
     }
-    if (pub.isWorkspace || name == 'analytica.dart' || name == 'dtt') {
-      return RepoKind.monorepoWorkspace;
-    }
     if (publishedPackages.contains(name) ||
         (pub.hasPubspec && pub.packageNames.any(publishedPackages.contains))) {
       return RepoKind.publishedPackage;
+    }
+    if (pub.isWorkspace || name == 'analytica.dart' || name == 'dtt') {
+      return RepoKind.monorepoWorkspace;
     }
     if (name == 'scripts.dart' ||
         name == 'slide_puzzle' ||

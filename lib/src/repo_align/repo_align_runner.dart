@@ -85,7 +85,7 @@ class RepoAlignRunner {
 
   String _complexityIcon(RepoAlignmentStatus r) {
     if (r.hasCogComp) return '✅';
-    if (r.kind == RepoKind.publishedPackage) return '❌';
+    if (r.requiresStandardCiWorkflows) return '❌';
     return '-';
   }
 
@@ -256,9 +256,7 @@ class RepoAlignRunner {
     Directory workflowsDir, {
     required bool dryRun,
   }) {
-    final eligible =
-        r.kind == RepoKind.publishedPackage || r.kind == RepoKind.toolOrApp;
-    if (!eligible || r.hasCogComp) return;
+    if (!r.requiresStandardCiWorkflows || r.hasCogComp) return;
     final ccFile = File(p.join(workflowsDir.path, 'complexity.yml'));
     print(
       '  🚀 ${dryRun ? 'Would create' : 'Creating'} .github/workflows/complexity.yml',
