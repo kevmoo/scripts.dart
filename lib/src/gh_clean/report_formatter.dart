@@ -1,7 +1,42 @@
+import 'dart:convert';
+
 import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
 
-import 'models.dart';
+import '../gh_clean.dart';
+
+/// Renders and prints the `gh-clean` report according to [options].
+void outputGhCleanReport(
+  List<PrCleanResult> results,
+  GhCleanOptions options, {
+  List<UnlinkedWorktree> unlinkedWorktrees = const [],
+}) {
+  if (options.json) {
+    print(
+      jsonEncode(
+        formatJsonReport(
+          results,
+          applied: options.apply,
+          unlinkedWorktrees: unlinkedWorktrees,
+        ),
+      ),
+    );
+  } else if (options.markdown) {
+    print(
+      formatMarkdownReport(
+        results,
+        applied: options.apply,
+        unlinkedWorktrees: unlinkedWorktrees,
+      ),
+    );
+  } else {
+    printTerminalReport(
+      results,
+      applied: options.apply,
+      unlinkedWorktrees: unlinkedWorktrees,
+    );
+  }
+}
 
 /// Formats output as GitHub Flavored Markdown.
 ///

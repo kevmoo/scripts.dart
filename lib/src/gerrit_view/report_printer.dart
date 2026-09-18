@@ -1,7 +1,6 @@
 import 'package:io/ansi.dart';
-import 'package:meta/meta.dart';
 
-import 'models.dart';
+import '../gerrit_view.dart';
 
 void _printSection1Aligned(
   Map<String, (RemoteCL, CommitDetails, AlignmentResult)> alignedBranches,
@@ -308,7 +307,6 @@ void _printSection4ClosedAndAbandoned(
   }
 }
 
-@internal
 void groupAndPrintReport({
   required String actualRepoRoot,
   required String defaultBranch,

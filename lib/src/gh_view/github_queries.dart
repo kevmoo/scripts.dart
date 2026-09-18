@@ -1,9 +1,8 @@
 import 'dart:io';
 
+import '../gh_view.dart';
 import '../process_utils.dart';
-import '../shared/gh_pr_ref.dart';
 import '../shared/graphql_utils.dart';
-import 'models.dart';
 
 const _pullRequestsGraphqlQuery = r'''
 query($q: String!, $limit: Int!, $cursor: String) {
