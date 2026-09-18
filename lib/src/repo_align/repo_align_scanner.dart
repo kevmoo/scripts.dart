@@ -198,7 +198,8 @@ class RepoAlignScanner {
     }
     if (name == 'scripts.dart' ||
         name == 'slide_puzzle' ||
-        name == 'kevmoo.com') {
+        name == 'kevmoo.com' ||
+        name == 'flutter_web_cache_check') {
       return RepoKind.toolOrApp;
     }
     return RepoKind.experimentalOrPrototype;

@@ -273,7 +273,9 @@ void main() {
       check(canonicalComplexityWorkflow).contains('fail-threshold: 15');
       check(canonicalComplexityWorkflow).contains('fail-on-increase: true');
       check(canonicalAutosubmitWorkflow).contains('pull_request_target');
-      check(canonicalDependabotConfig).contains('package-ecosystem: "pub"');
+      check(canonicalDependabotConfig)
+          .contains('package-ecosystem: github-actions');
+      check(canonicalDependabotConfig).contains('groups:');
       check(canonicalAnalysisOptions)
           .contains('package:dart_flutter_team_lints/analysis_options.yaml');
     });

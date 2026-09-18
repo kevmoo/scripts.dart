@@ -118,16 +118,21 @@ jobs:
 ''';
 
 const String canonicalDependabotConfig = '''
+# Dependabot configuration file.
+# See https://docs.github.com/en/code-security/dependabot/dependabot-version-updates
 version: 2
+
 updates:
-  - package-ecosystem: "github-actions"
-    directory: "/"
+  - package-ecosystem: github-actions
+    directory: /
     schedule:
-      interval: "weekly"
-  - package-ecosystem: "pub"
-    directory: "/"
-    schedule:
-      interval: "weekly"
+      interval: monthly
+    labels:
+      - autosubmit
+    groups:
+      github-actions:
+        patterns:
+          - "*"
 ''';
 
 /// Prettier configuration, scoped to markdown via `overrides` so that a stray
