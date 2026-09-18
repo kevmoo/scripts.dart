@@ -4,8 +4,11 @@ import 'dart:io';
 import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 
+import 'gerrit_view/report_printer.dart';
 import 'git_extensions.dart';
 import 'shared/gh_args.dart';
+
+export 'gerrit_view/report_printer.dart';
 
 /// Exception thrown by Gerrit View tool operations.
 class GerritViewException extends CliException {
@@ -57,6 +60,147 @@ typedef _BranchAnalysis = ({
   Map<int, RemoteCL> remoteOnlyCLs,
 });
 
+typedef CleanupSafety = ({bool isSafe, List<String> unmergedShas});
+
+AlignmentResult calculateAlignment(
+  String repoPath,
+  String branchName,
+  CommitDetails local,
+  RemoteCL remote,
+) {
+  if (local.sha == remote.currentRevision) {
+    return (
+      state: AlignmentState.inSync,
+      display: green.wrap(
+        '✅ IN SYNC (Commit perfectly matches Gerrit latest)',
+      )!,
+    );
+  }
+
+  // Check if remote commit exists locally after batch fetch
+  final remoteTreeResult = Process.runSync('git', [
+    'rev-parse',
+    '--verify',
+    '--quiet',
+    '${remote.currentRevision}^{tree}',
+  ], workingDirectory: repoPath);
+
+  if (remoteTreeResult.exitCode != 0) {
+    return (
+      state: AlignmentState.diverged,
+      display: yellow.wrap(
+        '⚠️ DIVERGED (Commit differs; shadow fetch failed)',
+      )!,
+    );
+  }
+
+  // Read local tree hash
+  final localTreeResult = Process.runSync('git', [
+    'rev-parse',
+    '$branchName^{tree}',
+  ], workingDirectory: repoPath);
+
+  if (remoteTreeResult.exitCode == 0 && localTreeResult.exitCode == 0) {
+    final remoteTree = (remoteTreeResult.stdout as String).trim();
+    final localTree = (localTreeResult.stdout as String).trim();
+
+    if (remoteTree == localTree) {
+      return (
+        state: AlignmentState.contentIdentical,
+        display: green.wrap(
+          '✅ CONTENT IDENTICAL (Commits differ, but file content matches '
+          'Gerrit)',
+        )!,
+      );
+    }
+  }
+
+  return (
+    state: AlignmentState.diverged,
+    display: yellow.wrap(
+      '⚠️ DIVERGED (Commits and file contents both differ from Gerrit)',
+    )!,
+  );
+}
+
+CleanupSafety checkCleanupSafety(
+  String repoPath,
+  String branchName,
+  String defaultBranch,
+) {
+  final result = Process.runSync('git', [
+    'cherry',
+    'origin/$defaultBranch',
+    branchName,
+  ], workingDirectory: repoPath);
+
+  if (result.exitCode != 0) {
+    return (isSafe: false, unmergedShas: <String>[]);
+  }
+
+  final output = (result.stdout as String).trim();
+  if (output.isEmpty) {
+    return (isSafe: true, unmergedShas: <String>[]);
+  }
+
+  final lines = output.split('\n');
+  final unmerged = <String>[];
+  for (final line in lines) {
+    if (line.startsWith('+ ')) {
+      unmerged.add(line.substring(2).trim());
+    }
+  }
+
+  return (isSafe: unmerged.isEmpty, unmergedShas: unmerged);
+}
+
+String _getDefaultBranch(String repoPath) => sniffDefaultBranchSync(repoPath);
+
+String? _getCurrentBranch(String repoPath) {
+  final result = Process.runSync('git', [
+    'rev-parse',
+    '--abbrev-ref',
+    'HEAD',
+  ], workingDirectory: repoPath);
+
+  if (result.exitCode == 0) {
+    final output = (result.stdout as String).trim();
+    if (output.isNotEmpty && output != 'HEAD') {
+      return output;
+    }
+  }
+  return null;
+}
+
+Map<String, String> getWorktreeBranches(String repoPath) {
+  final result = Process.runSync('git', [
+    'worktree',
+    'list',
+    '--porcelain',
+  ], workingDirectory: repoPath);
+
+  if (result.exitCode != 0) return {};
+
+  final worktrees = <String, String>{};
+  final lines = (result.stdout as String).split('\n');
+  String? currentWorktree;
+
+  for (final line in lines) {
+    if (line.startsWith('worktree ')) {
+      currentWorktree = line.substring('worktree '.length).trim();
+    } else if (line.startsWith('branch refs/heads/')) {
+      final branch = line.substring('branch refs/heads/'.length).trim();
+      if (currentWorktree != null) {
+        worktrees[branch] = currentWorktree;
+      }
+    } else if (line.isEmpty) {
+      currentWorktree = null;
+    }
+  }
+
+  return worktrees;
+}
+
 String _resolveRepoInfo(String? gerritRepo) {
   final repoPath = gerritRepo == null
       ? Directory.current.absolute.path
@@ -92,40 +236,35 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
     '--get-regexp',
     r'branch\..*\.gerritserver',
   ], workingDirectory: actualRepoRoot);
-  if (serverResult.exitCode == 0) {
-    final lines = (serverResult.stdout as String).trim().split('\n');
-    for (final line in lines) {
-      if (line.isEmpty) continue;
-      final lastSpace = line.lastIndexOf(' ');
-      if (lastSpace != -1) {
-        final url = line.substring(lastSpace + 1).trim();
-        final uri = Uri.tryParse(url);
-        if (uri != null && uri.host.isNotEmpty) return uri.host;
-      }
-    }
+  if (serverResult.exitCode != 0) return null;
+
+  for (final line in (serverResult.stdout as String).trim().split('\n')) {
+    final lastSpace = line.lastIndexOf(' ');
+    if (lastSpace == -1) continue;
+    final uri = Uri.tryParse(line.substring(lastSpace + 1).trim());
+    if (uri != null && uri.host.isNotEmpty) return uri.host;
   }
   return null;
 }
 
 (String, String?)? _parseRemoteOrigin(String actualRepoRoot) {
   final remoteUrl = _getGitConfig('remote.origin.url', actualRepoRoot);
-  if (remoteUrl != null &&
-      (remoteUrl.contains('googlesource.com') ||
-          remoteUrl.contains('review.chrome'))) {
-    final uri = Uri.tryParse(remoteUrl);
-    if (uri != null && uri.host.isNotEmpty) {
-      final gHost = uri.host;
-      String? gProject;
-      if (uri.pathSegments.isNotEmpty) {
-        final lastSeg = uri.pathSegments.last;
-        gProject = lastSeg.endsWith('.git')
-            ? lastSeg.substring(0, lastSeg.length - 4)
-            : lastSeg;
-      }
-      return (gHost, gProject);
-    }
+  if (remoteUrl == null ||
+      (!remoteUrl.contains('googlesource.com') &&
+          !remoteUrl.contains('review.chrome'))) {
+    return null;
   }
-  return null;
+  final uri = Uri.tryParse(remoteUrl);
+  if (uri == null || uri.host.isEmpty) return null;
+
+  String? gProject;
+  if (uri.pathSegments.isNotEmpty) {
+    final lastSeg = uri.pathSegments.last;
+    gProject = lastSeg.endsWith('.git')
+        ? lastSeg.substring(0, lastSeg.length - 4)
+        : lastSeg;
+  }
+  return (uri.host, gProject);
 }
 
 (String, String, bool) _resolveGerritDetails(String actualRepoRoot) {
@@ -239,6 +378,8 @@ Map<String, int> _fetchLocalBranchIssues(String actualRepoRoot) {
   return localBranchIssues;
 }
 
+final _branchIssueRegex = RegExp(r'^branch\.(.*)\.gerritissue$');
+
 (String, int)? _parseBranchIssueLine(String line) {
   if (line.isEmpty) return null;
   final lastSpace = line.lastIndexOf(' ');
@@ -246,7 +387,7 @@ Map<String, int> _fetchLocalBranchIssues(String actualRepoRoot) {
   final key = line.substring(0, lastSpace);
   final issueVal = int.tryParse(line.substring(lastSpace + 1));
   if (issueVal == null) return null;
-  final match = RegExp(r'^branch\.(.*)\.gerritissue$').firstMatch(key);
+  final match = _branchIssueRegex.firstMatch(key);
   if (match == null) return null;
   return (match.group(1)!, issueVal);
 }
@@ -316,7 +457,7 @@ _BranchAnalysis _buildBranchGroups(
     alignedBranches[branch] = (
       remote,
       details,
-      _calculateAlignment(actualRepoRoot, branch, details, remote),
+      calculateAlignment(actualRepoRoot, branch, details, remote),
     );
   }
 
@@ -329,358 +470,81 @@ _BranchAnalysis _buildBranchGroups(
   );
 }
 
-void _printSection1Aligned(
-  Map<String, (RemoteCL, CommitDetails, AlignmentResult)> alignedBranches,
-  String gerritHost,
-  String gerritProject,
-  String? currentBranch,
-) {
-  if (alignedBranches.isEmpty) return;
-  print(styleBold.wrap('✅ ACTIVE & ALIGNED LOCAL BRANCHES')!);
-  for (final entry in alignedBranches.entries) {
-    final branch = entry.key;
-    final (remote, details, alignment) = entry.value;
-    final String shaLine;
-    if (alignment.state == AlignmentState.inSync) {
-      shaLine = '    SHA:        ${remote.currentRevision}';
-    } else {
-      shaLine =
-          '    Local SHA:  ${details.sha}\n'
-          '    Remote SHA: ${remote.currentRevision}';
-    }
-    print('''
-  ${branch == currentBranch ? '⭐' : '•'} ${styleBold.wrap(branch)} ➔ CL ${remote.number} (${styleDim.wrap(remote.subject)})
-    URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
-$shaLine
-    Alignment:  ${alignment.display}
-    Last Touch: ${details.relativeDate}
-''');
-  }
-}
+final _changeIdRegex = RegExp(
+  r'^Change-Id:\s+(I[a-fA-F0-9]+)\s*$',
+  multiLine: true,
+  caseSensitive: false,
+);
 
-void _printSection2RemoteOnly(
-  Map<int, RemoteCL> remoteOnlyCLs,
-  String gerritHost,
-  String gerritProject,
-) {
-  if (remoteOnlyCLs.isEmpty) return;
-  print(styleBold.wrap('🌐 REMOTE-ONLY CLS (No local branch tracking)')!);
-  print(
-    styleDim.wrap(
-      '   These open CLs are on Gerrit but have no corresponding local branch:',
-    )!,
-  );
-  for (final cl in remoteOnlyCLs.values) {
-    print('''
-  • CL ${cl.number}: ${cl.subject}
-    URL:        https://$gerritHost/c/$gerritProject/+/${cl.number}
-    Remote SHA: ${cl.currentRevision}
-''');
-  }
-}
+CommitDetails? _fetchCommitDetails(String repoPath, String branchName) {
+  final result = Process.runSync('git', [
+    'log',
+    '-n',
+    '1',
+    '--format=COMMIT_METADATA_START%n%H%n%ar%n%B',
+    branchName,
+  ], workingDirectory: repoPath);
+  if (result.exitCode != 0) return null;
 
-void _printConflatedBranchRow(
-  String branch,
-  CommitDetails? details,
-  RemoteCL? remote,
-  String actualRepoRoot,
-  String? currentBranch,
-) {
-  if (details == null) return;
-  var changeIdStatus = '❌ MISMATCH';
-  var shaStatus = '❌ OUT OF SYNC';
-  var treeStatus = '❌ DIFFERENT';
+  final output = result.stdout as String;
+  if (!output.startsWith('COMMIT_METADATA_START\n')) return null;
 
-  if (remote != null) {
-    if (details.changeId == remote.changeId) {
-      changeIdStatus = '✅ MATCH';
-    } else if (details.changeId.isNotEmpty) {
-      changeIdStatus = '⚠️ OTHER CL';
+  final lines = output.substring('COMMIT_METADATA_START\n'.length).split('\n');
+  if (lines case [final String rawSha, final String rawRelativeDate, ...]) {
+    final sha = rawSha.trim();
+    final relativeDate = rawRelativeDate.trim();
+    final rawBody = lines.sublist(2).join('\n');
+
+    var changeId = '';
+    final changeIdMatch = _changeIdRegex.firstMatch(rawBody);
+    if (changeIdMatch != null) {
+      changeId = changeIdMatch.group(1)!;
     }
 
-    final alignment = _calculateAlignment(
-      actualRepoRoot,
-      branch,
-      details,
-      remote,
-    );
-    if (alignment.state == AlignmentState.inSync) {
-      shaStatus = '✅ SYNCED';
-      treeStatus = '✅ IDENTICAL';
-    } else if (alignment.state == AlignmentState.contentIdentical) {
-      shaStatus = '❌ OUT OF SYNC';
-      treeStatus = '✅ IDENTICAL';
-    }
-  }
-
-  final branchCol = (branch == currentBranch ? '⭐ $branch' : branch).padRight(
-    branch == currentBranch ? 24 : 25,
-  );
-  final changeIdCol = changeIdStatus.padRight(12);
-  final shaCol = shaStatus.padRight(12);
-  final treeCol = treeStatus.padRight(15);
-  final dateCol = details.relativeDate.padRight(15);
-  print('    $branchCol $changeIdCol $shaCol $treeCol $dateCol');
-}
-
-void _printConflatedIssues(
-  Map<int, List<String>> conflatedBranches,
-  Map<int, RemoteCL> remoteCLs,
-  Map<String, CommitDetails> branchDetails,
-  String gerritHost,
-  String gerritProject,
-  String? currentBranch,
-  String actualRepoRoot,
-) {
-  for (final entry in conflatedBranches.entries) {
-    final issue = entry.key;
-    final branchesList = entry.value;
-    final remote = remoteCLs[issue];
-    final subject = remote?.subject ?? 'Unknown CL';
-
-    final urlLine = remote != null
-        ? '    URL:        https://$gerritHost/c/$gerritProject/+/$issue\n'
-        : '';
-    final shaLine = remote != null
-        ? '    Remote SHA: ${remote.currentRevision}\n'
-        : '';
-    final conflatedLabel = styleDim.wrap(
-      'The following ${branchesList.length} branches target this CL:',
-    );
-    print('''
-  ${red.wrap('• CONFLATED CL:')} $issue ($subject)
-$urlLine$shaLine    $conflatedLabel
-    ${'Branch'.padRight(25)} ${'Change-Id'.padRight(12)} ${'Commit SHA'.padRight(12)} ${'Tree (Content)'.padRight(15)} ${'Last Commit'.padRight(15)}
-    --------------------------------------------------------------------''');
-
-    for (final branch in branchesList) {
-      _printConflatedBranchRow(
-        branch,
-        branchDetails[branch],
-        remote,
-        actualRepoRoot,
-        currentBranch,
-      );
-    }
-    print('');
-  }
-}
-
-void _printMismatchedChangeIds(
-  Map<String, (RemoteCL, CommitDetails)> mismatchedChangeIdBranches,
-  String gerritHost,
-  String gerritProject,
-  String? currentBranch,
-) {
-  for (final entry in mismatchedChangeIdBranches.entries) {
-    final branch = entry.key;
-    final (remote, details) = entry.value;
-    print('''
-  ${branch == currentBranch ? '⭐' : red.wrap('•')} ${red.wrap('MISMATCHED CHANGE-ID:')} ${styleBold.wrap(branch)}
-    Target CL:  ${remote.number} (${remote.subject})
-    URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
-    Local SHA:  ${details.sha}
-    Remote SHA: ${remote.currentRevision}
-    Local ID:   ${details.changeId}
-    Remote ID:  ${remote.changeId}
-    To Push:    git commit --amend (set Change-Id to: ${remote.changeId}) && git cl upload
-''');
-  }
-}
-
-void _printSection3ConflatedAndMismatched(
-  Map<int, List<String>> conflatedBranches,
-  Map<String, (RemoteCL, CommitDetails)> mismatchedChangeIdBranches,
-  Map<int, RemoteCL> remoteCLs,
-  Map<String, CommitDetails> branchDetails,
-  String gerritHost,
-  String gerritProject,
-  String? currentBranch,
-  String actualRepoRoot,
-) {
-  if (conflatedBranches.isEmpty && mismatchedChangeIdBranches.isEmpty) return;
-
-  print(red.wrap(styleBold.wrap('⚠️  CONFLATED OR MISMATCHED BRANCHES')!)!);
-  print(
-    styleDim.wrap(
-      '   These branches have conflicting configuration '
-      'or divergent Change-Ids:',
-    )!,
-  );
-  print('');
-
-  _printConflatedIssues(
-    conflatedBranches,
-    remoteCLs,
-    branchDetails,
-    gerritHost,
-    gerritProject,
-    currentBranch,
-    actualRepoRoot,
-  );
-  _printMismatchedChangeIds(
-    mismatchedChangeIdBranches,
-    gerritHost,
-    gerritProject,
-    currentBranch,
-  );
-}
-
-void _printClosedClBranch(
-  String branch,
-  int issue,
-  CommitDetails details,
-  ClStatus status,
-  String gerritHost,
-  String gerritProject,
-  String actualRepoRoot,
-  String defaultBranch,
-  String? currentBranch,
-  Map<String, String> worktreeBranches,
-) {
-  final safety = _checkCleanupSafety(actualRepoRoot, branch, defaultBranch);
-  final String safetyStatus;
-  final String actionText;
-  final worktreePath = worktreeBranches[branch];
-
-  if (branch == defaultBranch) {
-    safetyStatus = yellow.wrap(
-      '⚠️  Protected Default Branch (Do NOT delete this branch!)',
-    )!;
-    actionText =
-        '    Archive:    git config --unset branch.$branch.gerritissue';
-  } else if (safety.isSafe) {
-    safetyStatus = green.wrap(
-      '✅ Safe to delete (All changes exist in origin/$defaultBranch)',
-    )!;
-    if (worktreePath != null) {
-      actionText =
-          '    Run:        git worktree remove $worktreePath --force '
-          '&& git branch -D $branch';
-    } else {
-      actionText = '    Run:        git branch -D $branch';
-    }
-  } else {
-    final count = safety.unmergedShas.length;
-    safetyStatus = red.wrap(
-      '⚠️  Warning: Has $count unmerged commit(s) not in origin/$defaultBranch!',
-    )!;
-    if (worktreePath != null) {
-      actionText =
-          '    Inspect:    git diff origin/$defaultBranch..$branch\n'
-          '    Run:        git worktree remove $worktreePath --force '
-          '&& git branch -D $branch\n'
-          '    Archive:    git config --unset branch.$branch.gerritissue';
-    } else {
-      actionText =
-          '    Inspect:    git diff origin/$defaultBranch..$branch\n'
-          '    Run:        git branch -D $branch (Force discard)\n'
-          '    Archive:    git config --unset branch.$branch.gerritissue';
-    }
-  }
-
-  final styledStatus = switch (status) {
-    ClStatus.merged => green.wrap(status.value)!,
-    ClStatus.abandoned => yellow.wrap(status.value)!,
-    ClStatus.newCl => styleBold.wrap(status.value)!,
-    ClStatus.unknown => styleDim.wrap(status.value)!,
-  };
-
-  print('''
-  ${branch == currentBranch ? '⭐' : '•'} ${styleBold.wrap(branch)} ➔ CL $issue [$styledStatus]
-    URL:        https://$gerritHost/c/$gerritProject/+/$issue
-    Last Touch: ${details.relativeDate}
-    Safety:     $safetyStatus
-$actionText
-''');
-}
-
-void _printSection4ClosedAndAbandoned(
-  Map<String, (int, CommitDetails, ClStatus)> closedClBranches,
-  String gerritHost,
-  String gerritProject,
-  String actualRepoRoot,
-  String defaultBranch,
-  String? currentBranch,
-) {
-  if (closedClBranches.isEmpty) return;
-
-  print(
-    yellow.wrap(
-      styleBold.wrap('🧹 CLEANUP CANDIDATES (Closed/Abandoned CL Branches)')!,
-    )!,
-  );
-  print(
-    styleDim.wrap(
-      '   These local branches point to CLs that are '
-      'merged, abandoned, or closed:',
-    )!,
-  );
-
-  final worktreeBranches = _getWorktreeBranches(actualRepoRoot);
-  for (final entry in closedClBranches.entries) {
-    _printClosedClBranch(
-      entry.key,
-      entry.value.$1,
-      entry.value.$2,
-      entry.value.$3,
-      gerritHost,
-      gerritProject,
-      actualRepoRoot,
-      defaultBranch,
-      currentBranch,
-      worktreeBranches,
+    return (
+      sha: sha,
+      relativeDate: relativeDate,
+      changeId: changeId,
+      rawBody: rawBody,
     );
   }
+
+  return null;
 }
 
-void _groupAndPrintReport({
-  required String actualRepoRoot,
-  required String defaultBranch,
-  required String? currentBranch,
-  required String gerritHost,
-  required String gerritProject,
-  required Map<String, (RemoteCL, CommitDetails, AlignmentResult)>
-  alignedBranches,
-  required Map<String, (int, CommitDetails, ClStatus)> closedClBranches,
-  required Map<int, List<String>> conflatedBranches,
-  required Map<String, (RemoteCL, CommitDetails)> mismatchedChangeIdBranches,
-  required Map<int, RemoteCL> remoteOnlyCLs,
-  required Map<int, RemoteCL> remoteCLs,
-  required Map<String, CommitDetails> branchDetails,
-}) {
-  print(
-    '''\n======================================================================
-${styleBold.wrap('🔍 GERRIT WORKSPACE OVERVIEW')}
-${styleDim.wrap('Repository: $actualRepoRoot')}
-======================================================================\n''',
-  );
+Map<int, ClStatus> _fetchRemoteCLStatuses(
+  String repoPath,
+  List<int> clNumbers,
+  String gerritHost,
+) {
+  final statuses = <int, ClStatus>{};
+  if (clNumbers.isEmpty) return statuses;
 
-  _printSection1Aligned(
-    alignedBranches,
-    gerritHost,
-    gerritProject,
-    currentBranch,
-  );
-  _printSection2RemoteOnly(remoteOnlyCLs, gerritHost, gerritProject);
-  _printSection3ConflatedAndMismatched(
-    conflatedBranches,
-    mismatchedChangeIdBranches,
-    remoteCLs,
-    branchDetails,
-    gerritHost,
-    gerritProject,
-    currentBranch,
-    actualRepoRoot,
-  );
-  _printSection4ClosedAndAbandoned(
-    closedClBranches,
-    gerritHost,
-    gerritProject,
-    actualRepoRoot,
-    defaultBranch,
-    currentBranch,
-  );
+  final query = clNumbers.map((n) => 'change:$n').join('+OR+');
+  final result = Process.runSync('gob-curl', [
+    'https://$gerritHost/changes/?q=$query',
+  ], workingDirectory: repoPath);
+
+  if (result.exitCode != 0) return statuses;
+
+  final rawJson = (result.stdout as String).trim();
+  final cleanedJson = rawJson.replaceFirst(")]}'", '').trim();
+
+  try {
+    final list = jsonDecode(cleanedJson) as List<dynamic>;
+    for (final item in list) {
+      if (item case {
+        '_number': final int number,
+        'status': final String status,
+      }) {
+        statuses[number] = ClStatus.parse(status);
+      }
+    }
+  } catch (_) {
+    // Fallback
+  }
+
+  return statuses;
 }
 
 Future<void> runGerritView({String? gerritRepo}) async {
@@ -749,7 +613,7 @@ Future<void> runGerritView({String? gerritRepo}) async {
     closedStatuses,
   );
 
-  _groupAndPrintReport(
+  groupAndPrintReport(
     actualRepoRoot: actualRepoRoot,
     defaultBranch: defaultBranch,
     currentBranch: currentBranch,
@@ -763,220 +627,4 @@ Future<void> runGerritView({String? gerritRepo}) async {
     remoteCLs: remoteCLs,
     branchDetails: branchDetails,
   );
-}
-
-CommitDetails? _fetchCommitDetails(String repoPath, String branchName) {
-  final result = Process.runSync('git', [
-    'log',
-    '-n',
-    '1',
-    '--format=COMMIT_METADATA_START%n%H%n%ar%n%B',
-    branchName,
-  ], workingDirectory: repoPath);
-  if (result.exitCode != 0) return null;
-
-  final output = result.stdout as String;
-  if (!output.startsWith('COMMIT_METADATA_START\n')) return null;
-
-  final lines = output.substring('COMMIT_METADATA_START\n'.length).split('\n');
-  if (lines case [final String rawSha, final String rawRelativeDate, ...]) {
-    final sha = rawSha.trim();
-    final relativeDate = rawRelativeDate.trim();
-    final rawBody = lines.sublist(2).join('\n');
-
-    var changeId = '';
-    final changeIdMatch = RegExp(
-      r'^Change-Id:\s+(I[a-fA-F0-9]+)\s*$',
-      multiLine: true,
-      caseSensitive: false,
-    ).firstMatch(rawBody);
-    if (changeIdMatch != null) {
-      changeId = changeIdMatch.group(1)!;
-    }
-
-    return (
-      sha: sha,
-      relativeDate: relativeDate,
-      changeId: changeId,
-      rawBody: rawBody,
-    );
-  }
-
-  return null;
-}
-
-Map<int, ClStatus> _fetchRemoteCLStatuses(
-  String repoPath,
-  List<int> clNumbers,
-  String gerritHost,
-) {
-  final statuses = <int, ClStatus>{};
-  if (clNumbers.isEmpty) return statuses;
-
-  final query = clNumbers.map((n) => 'change:$n').join('+OR+');
-  final result = Process.runSync('gob-curl', [
-    'https://$gerritHost/changes/?q=$query',
-  ], workingDirectory: repoPath);
-
-  if (result.exitCode != 0) return statuses;
-
-  final rawJson = (result.stdout as String).trim();
-  final cleanedJson = rawJson.replaceFirst(")]}'", '').trim();
-
-  try {
-    final list = jsonDecode(cleanedJson) as List<dynamic>;
-    for (final item in list) {
-      if (item case {
-        '_number': final int number,
-        'status': final String status,
-      }) {
-        statuses[number] = ClStatus.parse(status);
-      }
-    }
-  } catch (_) {
-    // Fallback
-  }
-
-  return statuses;
-}
-
-AlignmentResult _calculateAlignment(
-  String repoPath,
-  String branchName,
-  CommitDetails local,
-  RemoteCL remote,
-) {
-  if (local.sha == remote.currentRevision) {
-    return (
-      state: AlignmentState.inSync,
-      display: green.wrap(
-        '✅ IN SYNC (Commit perfectly matches Gerrit latest)',
-      )!,
-    );
-  }
-
-  // Check if remote commit exists locally after batch fetch
-  final remoteTreeResult = Process.runSync('git', [
-    'rev-parse',
-    '--verify',
-    '--quiet',
-    '${remote.currentRevision}^{tree}',
-  ], workingDirectory: repoPath);
-
-  if (remoteTreeResult.exitCode != 0) {
-    return (
-      state: AlignmentState.diverged,
-      display: yellow.wrap(
-        '⚠️ DIVERGED (Commit differs; shadow fetch failed)',
-      )!,
-    );
-  }
-
-  // Read local tree hash
-  final localTreeResult = Process.runSync('git', [
-    'rev-parse',
-    '$branchName^{tree}',
-  ], workingDirectory: repoPath);
-
-  if (remoteTreeResult.exitCode == 0 && localTreeResult.exitCode == 0) {
-    final remoteTree = (remoteTreeResult.stdout as String).trim();
-    final localTree = (localTreeResult.stdout as String).trim();
-
-    if (remoteTree == localTree) {
-      return (
-        state: AlignmentState.contentIdentical,
-        display: green.wrap(
-          '✅ CONTENT IDENTICAL (Commits differ, but file content matches '
-          'Gerrit)',
-        )!,
-      );
-    }
-  }
-
-  return (
-    state: AlignmentState.diverged,
-    display: yellow.wrap(
-      '⚠️ DIVERGED (Commits and file contents both differ from Gerrit)',
-    )!,
-  );
-}
-
-typedef CleanupSafety = ({bool isSafe, List<String> unmergedShas});
-
-CleanupSafety _checkCleanupSafety(
-  String repoPath,
-  String branchName,
-  String defaultBranch,
-) {
-  final result = Process.runSync('git', [
-    'cherry',
-    'origin/$defaultBranch',
-    branchName,
-  ], workingDirectory: repoPath);
-
-  if (result.exitCode != 0) {
-    return (isSafe: false, unmergedShas: <String>[]);
-  }
-
-  final output = (result.stdout as String).trim();
-  if (output.isEmpty) {
-    return (isSafe: true, unmergedShas: <String>[]);
-  }
-
-  final lines = output.split('\n');
-  final unmerged = <String>[];
-  for (final line in lines) {
-    if (line.startsWith('+ ')) {
-      unmerged.add(line.substring(2).trim());
-    }
-  }
-
-  return (isSafe: unmerged.isEmpty, unmergedShas: unmerged);
-}
-
-String _getDefaultBranch(String repoPath) => sniffDefaultBranchSync(repoPath);
-
-String? _getCurrentBranch(String repoPath) {
-  final result = Process.runSync('git', [
-    'rev-parse',
-    '--abbrev-ref',
-    'HEAD',
-  ], workingDirectory: repoPath);
-
-  if (result.exitCode == 0) {
-    final output = (result.stdout as String).trim();
-    if (output.isNotEmpty && output != 'HEAD') {
-      return output;
-    }
-  }
-  return null;
-}
-
-Map<String, String> _getWorktreeBranches(String repoPath) {
-  final result = Process.runSync('git', [
-    'worktree',
-    'list',
-    '--porcelain',
-  ], workingDirectory: repoPath);
-
-  if (result.exitCode != 0) return {};
-
-  final worktrees = <String, String>{};
-  final lines = (result.stdout as String).split('\n');
-  String? currentWorktree;
-
-  for (final line in lines) {
-    if (line.startsWith('worktree ')) {
-      currentWorktree = line.substring('worktree '.length).trim();
-    } else if (line.startsWith('branch refs/heads/')) {
-      final branch = line.substring('branch refs/heads/'.length).trim();
-      if (currentWorktree != null) {
-        worktrees[branch] = currentWorktree;
-      }
-    } else if (line.isEmpty) {
-      currentWorktree = null;
-    }
-  }
-
-  return worktrees;
 }
