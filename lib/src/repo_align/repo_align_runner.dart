@@ -278,7 +278,7 @@ class RepoAlignRunner {
   }
 
   void _fixDependabot(RepoAlignmentStatus r, {required bool dryRun}) {
-    if (r.hasDependabot || r.kind == RepoKind.agentSkills) return;
+    if (!r.requiresDependabot || r.hasDependabot) return;
     final dbFile = File(p.join(r.path, '.github', 'dependabot.yml'));
     print(
       '  🤖 ${dryRun ? 'Would create' : 'Creating'} .github/dependabot.yml',

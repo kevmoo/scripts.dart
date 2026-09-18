@@ -142,20 +142,31 @@ class RepoAlignmentStatus {
   }
 
   /// Whether this repository kind requires standard Dart CI workflows
-  /// (`complexity.yml`, `autosubmit.yml`, and `.github/dependabot.yml`).
+  /// (`complexity.yml` and `autosubmit.yml`).
   bool get requiresStandardCiWorkflows =>
       kind == RepoKind.publishedPackage ||
       kind == RepoKind.monorepoWorkspace ||
       kind == RepoKind.toolOrApp;
 
+  /// Whether this repository requires `.github/dependabot.yml`.
+  ///
+  /// Applies universally to standard CI repos, `agentSkills`, and any active
+  /// repository carrying `.github/workflows/`.
+  bool get requiresDependabot =>
+      requiresStandardCiWorkflows ||
+      kind == RepoKind.agentSkills ||
+      workflowFiles.isNotEmpty;
+
   void _checkCiIssues(List<String> result) {
+    if (requiresDependabot && !hasDependabot) {
+      result.add('Missing .github/dependabot.yml');
+    }
     if (!requiresStandardCiWorkflows) return;
     if (kind == RepoKind.publishedPackage && !hasLowerBound) {
       result.add('Missing lower_bound.yml');
     }
     if (!hasCogComp) result.add('Missing complexity.yml');
     if (!hasAutosubmit) result.add('Missing autosubmit.yml');
-    if (!hasDependabot) result.add('Missing .github/dependabot.yml');
   }
 
   /// Markdown standardization applies to *every* repo kind, including
