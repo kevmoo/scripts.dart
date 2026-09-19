@@ -278,11 +278,13 @@ class RepoAlignRunner {
   }
 
   void _fixDependabot(RepoAlignmentStatus r, {required bool dryRun}) {
-    if (!r.requiresDependabot || r.hasDependabot) return;
+    if (!r.requiresDependabot) return;
+    if (r.hasDependabot && r.hasCanonicalDependabot) return;
     final dbFile = File(p.join(r.path, '.github', 'dependabot.yml'));
-    print(
-      '  🤖 ${dryRun ? 'Would create' : 'Creating'} .github/dependabot.yml',
-    );
+    final verb = r.hasDependabot
+        ? (dryRun ? 'Would update' : 'Updating')
+        : (dryRun ? 'Would create' : 'Creating');
+    print('  🤖 $verb .github/dependabot.yml');
     if (!dryRun) {
       dbFile.parent.createSync(recursive: true);
       dbFile.writeAsStringSync(canonicalDependabotConfig);
@@ -290,13 +292,11 @@ class RepoAlignRunner {
   }
 
   void _fixGitHubSettings(RepoAlignmentStatus r, {required bool dryRun}) {
-    // Markdown gating runs for every kind. agentSkills repos are exempt from
-    // the Dart-oriented settings below, but they do have branch rulesets and
-    // they are the most markdown-heavy repos in the fleet.
+    // Markdown gating, auto-merge, and the autosubmit label run for every
+    // active repo kind (including agentSkills).
     _fixMarkdownRequiredCheck(r, dryRun: dryRun);
-
-    if (r.kind == RepoKind.agentSkills) return;
     _fixAutoMerge(r, dryRun: dryRun);
+    _fixAutosubmitLabel(r, dryRun: dryRun);
   }
 
   void _fixAutoMerge(RepoAlignmentStatus r, {required bool dryRun}) {
@@ -311,6 +311,28 @@ class RepoAlignRunner {
         'edit',
         'kevmoo/${r.name}',
         '--enable-auto-merge',
+      ]);
+    }
+  }
+
+  void _fixAutosubmitLabel(RepoAlignmentStatus r, {required bool dryRun}) {
+    if ((!r.hasAutosubmit && !r.hasDependabot) || r.hasAutosubmitLabel) return;
+    print(
+      '  🏷️  ${dryRun ? 'Would create' : 'Creating'} "autosubmit" label on '
+      'GitHub (kevmoo/${r.name})',
+    );
+    if (!dryRun) {
+      Process.runSync('gh', [
+        'label',
+        'create',
+        'autosubmit',
+        '--repo',
+        'kevmoo/${r.name}',
+        '--color',
+        '0E8A16',
+        '--description',
+        'Automatically merge PR when CI passes',
+        '--force',
       ]);
     }
   }

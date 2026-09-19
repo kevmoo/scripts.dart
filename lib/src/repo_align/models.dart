@@ -40,6 +40,9 @@ class RepoAlignmentStatus {
   final bool hasCogComp;
   final bool hasAutosubmit;
   final bool hasDependabot;
+  final bool hasCanonicalDependabot;
+  final bool hasDeprecatedAnalyticaRef;
+  final bool hasNarrowWorkflowsPathFilter;
   final bool hasPublish;
   final bool hasHealth;
   final bool hasPostSummaries;
@@ -52,6 +55,7 @@ class RepoAlignmentStatus {
 
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
+  final bool hasAutosubmitLabel;
   final bool hasRulesetOrProtection;
 
   /// Every required context, unioned across all rulesets.
@@ -88,6 +92,9 @@ class RepoAlignmentStatus {
     required this.hasCogComp,
     required this.hasAutosubmit,
     required this.hasDependabot,
+    this.hasCanonicalDependabot = true,
+    this.hasDeprecatedAnalyticaRef = false,
+    this.hasNarrowWorkflowsPathFilter = false,
     required this.hasPublish,
     this.hasHealth = false,
     this.hasPostSummaries = false,
@@ -96,6 +103,7 @@ class RepoAlignmentStatus {
     this.hasMarkdownWorkflow = false,
     this.hasPrettierIgnore = false,
     required this.autoMergeAllowed,
+    this.hasAutosubmitLabel = true,
     required this.hasRulesetOrProtection,
     required this.requiredChecks,
     this.defaultBranchRulesetId,
@@ -158,15 +166,36 @@ class RepoAlignmentStatus {
       workflowFiles.isNotEmpty;
 
   void _checkCiIssues(List<String> result) {
-    if (requiresDependabot && !hasDependabot) {
-      result.add('Missing .github/dependabot.yml');
-    }
+    _checkDependabotAndWorkflowHygiene(result);
     if (!requiresStandardCiWorkflows) return;
     if (kind == RepoKind.publishedPackage && !hasLowerBound) {
       result.add('Missing lower_bound.yml');
     }
     if (!hasCogComp) result.add('Missing complexity.yml');
     if (!hasAutosubmit) result.add('Missing autosubmit.yml');
+  }
+
+  void _checkDependabotAndWorkflowHygiene(List<String> result) {
+    if (requiresDependabot && !hasDependabot) {
+      result.add('Missing .github/dependabot.yml');
+    } else if (hasDependabot && !hasCanonicalDependabot) {
+      result.add(
+        'Non-canonical .github/dependabot.yml '
+        '(missing grouped github-actions or autosubmit label)',
+      );
+    }
+    if (hasDeprecatedAnalyticaRef) {
+      result.add(
+        'Deprecated root action uses: kevmoo/analytica.dart@... '
+        '(use packages/cognitive_complexity or packages/lower_bound)',
+      );
+    }
+    if (hasNarrowWorkflowsPathFilter) {
+      result.add(
+        'Narrow .github/workflows/** path filter in workflow '
+        '(use .github/** so dependabot PRs trigger checks)',
+      );
+    }
   }
 
   /// Markdown standardization applies to *every* repo kind, including
@@ -193,11 +222,15 @@ class RepoAlignmentStatus {
   }
 
   void _checkGitHubIssues(List<String> result) {
-    if (kind == RepoKind.agentSkills) return;
-
     if (!autoMergeAllowed) {
       result.add('Auto-merge not enabled (allow_auto_merge = false)');
     }
+
+    if ((hasAutosubmit || hasDependabot) && !hasAutosubmitLabel) {
+      result.add('Missing "autosubmit" label on GitHub repository');
+    }
+
+    if (kind == RepoKind.agentSkills) return;
 
     if (!hasRulesetOrProtection) {
       result.add('No branch protection or ruleset on $defaultBranch');
