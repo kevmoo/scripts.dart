@@ -113,7 +113,10 @@ class RepoAlignScanner {
       hasLowerBound: workflows.hasLowerBound,
       hasCogComp: workflows.hasCogComp,
       hasAutosubmit: workflows.hasAutosubmit,
-      hasDependabot: dependabot,
+      hasDependabot: dependabot.hasDependabot,
+      hasCanonicalDependabot: dependabot.hasCanonicalDependabot,
+      hasDeprecatedAnalyticaRef: workflows.hasDeprecatedAnalyticaRef,
+      hasNarrowWorkflowsPathFilter: workflows.hasNarrowWorkflowsPathFilter,
       hasPublish: workflows.hasPublish,
       hasHealth: workflows.hasHealth,
       hasPostSummaries: workflows.hasPostSummaries,
@@ -122,6 +125,7 @@ class RepoAlignScanner {
       hasMarkdownWorkflow: markdown.hasMarkdownWorkflow,
       hasPrettierIgnore: markdown.hasPrettierIgnore,
       autoMergeAllowed: ghInfo.autoMergeAllowed,
+      hasAutosubmitLabel: ghInfo.hasAutosubmitLabel,
       hasRulesetOrProtection: ghInfo.hasRulesetOrProtection,
       requiredChecks: ghInfo.requiredChecks,
       defaultBranchRulesetId: ghInfo.defaultBranchRulesetId,
@@ -276,6 +280,8 @@ class RepoAlignScanner {
         hasPublish: false,
         hasHealth: false,
         hasPostSummaries: false,
+        hasDeprecatedAnalyticaRef: false,
+        hasNarrowWorkflowsPathFilter: false,
         expectedCiCheckPrefixes: <String>[],
       );
     }
@@ -296,6 +302,12 @@ class RepoAlignScanner {
       hasPublish: inspected.any((w) => w.hasPublish),
       hasHealth: inspected.any((w) => w.hasHealth),
       hasPostSummaries: inspected.any((w) => w.hasPostSummaries),
+      hasDeprecatedAnalyticaRef: inspected.any(
+        (w) => w.hasDeprecatedAnalyticaRef,
+      ),
+      hasNarrowWorkflowsPathFilter: inspected.any(
+        (w) => w.hasNarrowWorkflowsPathFilter,
+      ),
       expectedCiCheckPrefixes: inspected
           .expand((w) => w.expectedCiCheckPrefixes)
           .toList(),
@@ -311,6 +323,8 @@ class RepoAlignScanner {
     bool hasPublish,
     bool hasHealth,
     bool hasPostSummaries,
+    bool hasDeprecatedAnalyticaRef,
+    bool hasNarrowWorkflowsPathFilter,
     List<String> expectedCiCheckPrefixes,
   })?
   _inspectWorkflowFile(File wf) {
@@ -348,6 +362,12 @@ class RepoAlignScanner {
         content.contains(
           'dart-lang/ecosystem/.github/workflows/post_summaries.yaml',
         );
+    final hasDeprecatedAnalyticaRef = RegExp(r'uses:\s*kevmoo/analytica\.dart@')
+        .hasMatch(content);
+    final hasNarrowWorkflowsPathFilter =
+        content.contains('.github/workflows/**') &&
+        !content.contains("'.github/**'") &&
+        !content.contains('".github/**"');
 
     final isCiWorkflow =
         hasCi &&
@@ -369,6 +389,8 @@ class RepoAlignScanner {
       hasPublish: hasPublish,
       hasHealth: hasHealth,
       hasPostSummaries: hasPostSummaries,
+      hasDeprecatedAnalyticaRef: hasDeprecatedAnalyticaRef,
+      hasNarrowWorkflowsPathFilter: hasNarrowWorkflowsPathFilter,
       expectedCiCheckPrefixes: expectedCiCheckPrefixes,
     );
   }
@@ -406,10 +428,21 @@ class RepoAlignScanner {
     return [jobKey.toString()];
   }
 
-  bool _scanDependabot(Directory dir) {
+  ({bool hasDependabot, bool hasCanonicalDependabot}) _scanDependabot(
+    Directory dir,
+  ) {
     final d1 = File(p.join(dir.path, '.github', 'dependabot.yml'));
     final d2 = File(p.join(dir.path, '.github', 'dependabot.yaml'));
-    return d1.existsSync() || d2.existsSync();
+    final file = d1.existsSync() ? d1 : (d2.existsSync() ? d2 : null);
+    if (file == null) {
+      return (hasDependabot: false, hasCanonicalDependabot: false);
+    }
+    final content = file.readAsStringSync();
+    final hasCanonical =
+        content.contains('github-actions') &&
+        content.contains('groups:') &&
+        content.contains('autosubmit');
+    return (hasDependabot: true, hasCanonicalDependabot: hasCanonical);
   }
 
   _GitHubInfo _defaultGitHubInfo() => (
@@ -418,6 +451,7 @@ class RepoAlignScanner {
     isPrivate: false,
     defaultBranch: 'main',
     autoMergeAllowed: false,
+    hasAutosubmitLabel: true,
     hasRulesetOrProtection: false,
     requiredChecks: <String>[],
     defaultBranchRulesetId: null,
@@ -430,6 +464,7 @@ class RepoAlignScanner {
     var isPrivate = false;
     var defaultBranch = 'main';
     var autoMergeAllowed = false;
+    var hasAutosubmitLabel = false;
     var hasRulesetOrProtection = false;
     final requiredChecks = <String>[];
     var defaultBranchRequiredChecks = <String>[];
@@ -446,6 +481,12 @@ class RepoAlignScanner {
         defaultBranch = repoJson['default_branch']?.toString() ?? 'main';
         autoMergeAllowed = repoJson['allow_auto_merge'] == true;
       }
+
+      final labelRes = Process.runSync('gh', [
+        'api',
+        'repos/kevmoo/$name/labels/autosubmit',
+      ]);
+      hasAutosubmitLabel = labelRes.exitCode == 0;
 
       final rulesets = _scanRulesets(name, defaultBranch);
       hasRulesetOrProtection = rulesets.found;
@@ -473,6 +514,7 @@ class RepoAlignScanner {
       isPrivate: isPrivate,
       defaultBranch: defaultBranch,
       autoMergeAllowed: autoMergeAllowed,
+      hasAutosubmitLabel: hasAutosubmitLabel,
       hasRulesetOrProtection: hasRulesetOrProtection,
       requiredChecks: requiredChecks,
       defaultBranchRulesetId: defaultBranchRulesetId,
@@ -604,6 +646,8 @@ typedef _WorkflowsInfo = ({
   bool hasPublish,
   bool hasHealth,
   bool hasPostSummaries,
+  bool hasDeprecatedAnalyticaRef,
+  bool hasNarrowWorkflowsPathFilter,
   List<String> expectedCiCheckPrefixes,
 });
 
@@ -650,6 +694,7 @@ typedef _GitHubInfo = ({
   bool isPrivate,
   String defaultBranch,
   bool autoMergeAllowed,
+  bool hasAutosubmitLabel,
   bool hasRulesetOrProtection,
   List<String> requiredChecks,
   String? defaultBranchRulesetId,

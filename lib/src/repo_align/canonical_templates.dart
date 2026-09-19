@@ -51,7 +51,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout Codebase
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Dart SDK
         uses: dart-lang/setup-dart@v1
@@ -79,7 +79,7 @@ jobs:
       contents: read
     steps:
       - name: Checkout Codebase
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           fetch-depth: 0
 
@@ -109,7 +109,7 @@ jobs:
       contents: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Enable Auto-Merge
         run: gh pr merge --auto --squash "\$PR_URL"
         env:

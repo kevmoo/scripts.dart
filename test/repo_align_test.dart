@@ -262,17 +262,84 @@ void main() {
         (it) => it.contains('markdown.yml present but not a required check'),
       );
     });
+
+    test('flags non-canonical dependabot, deprecated analytica ref, narrow '
+        'path filter, and missing autosubmit label', () {
+      final status = _markdownFixture(
+        kind: RepoKind.agentSkills,
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        requiredChecks: ['markdown'],
+      );
+      final drifted = RepoAlignmentStatus(
+        name: status.name,
+        path: status.path,
+        kind: RepoKind.agentSkills,
+        isArchived: false,
+        isFork: false,
+        isPrivate: false,
+        defaultBranch: 'main',
+        hasPubspec: true,
+        sdkConstraint: '^3.0.0',
+        packageNames: ['skills_repo'],
+        hasAnalysisOptions: true,
+        analysisInclude:
+            'package:dart_flutter_team_lints/analysis_options.yaml',
+        strictCasts: true,
+        strictInference: true,
+        strictRawTypes: true,
+        customLints: [],
+        workflowFiles: ['validate_skills.yaml', 'markdown.yml'],
+        hasCi: true,
+        hasLowerBound: false,
+        hasCogComp: false,
+        hasAutosubmit: true,
+        hasDependabot: true,
+        hasCanonicalDependabot: false,
+        hasDeprecatedAnalyticaRef: true,
+        hasNarrowWorkflowsPathFilter: true,
+        hasPublish: false,
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        autoMergeAllowed: false,
+        hasAutosubmitLabel: false,
+        hasRulesetOrProtection: true,
+        requiredChecks: ['validate', 'markdown'],
+        defaultBranchRulesetId: '123',
+        defaultBranchRequiredChecks: ['validate', 'markdown'],
+      );
+
+      check(drifted.issues).contains(
+        'Non-canonical .github/dependabot.yml '
+        '(missing grouped github-actions or autosubmit label)',
+      );
+      check(drifted.issues).contains(
+        'Deprecated root action uses: kevmoo/analytica.dart@... '
+        '(use packages/cognitive_complexity or packages/lower_bound)',
+      );
+      check(drifted.issues).contains(
+        'Narrow .github/workflows/** path filter in workflow '
+        '(use .github/** so dependabot PRs trigger checks)',
+      );
+      check(drifted.issues)
+          .contains('Auto-merge not enabled (allow_auto_merge = false)');
+      check(drifted.issues)
+          .contains('Missing "autosubmit" label on GitHub repository');
+    });
   });
 
   group('Canonical Templates', () {
     test('contains expected workflow actions and flags', () {
       check(canonicalLowerBoundWorkflow)
           .contains('kevmoo/analytica.dart/packages/lower_bound@main');
+      check(canonicalLowerBoundWorkflow).contains('actions/checkout@v7');
       check(canonicalComplexityWorkflow)
           .contains('kevmoo/analytica.dart/packages/cognitive_complexity@main');
+      check(canonicalComplexityWorkflow).contains('actions/checkout@v7');
       check(canonicalComplexityWorkflow).contains('fail-threshold: 15');
       check(canonicalComplexityWorkflow).contains('fail-on-increase: true');
       check(canonicalAutosubmitWorkflow).contains('pull_request_target');
+      check(canonicalAutosubmitWorkflow).contains('actions/checkout@v7');
       check(canonicalDependabotConfig)
           .contains('package-ecosystem: github-actions');
       check(canonicalDependabotConfig).contains('groups:');
