@@ -64,31 +64,17 @@ Future<List<Map<String, dynamic>>> paginateGraphQLSearch({
   String? cursor;
 
   while (nodes.length < limit) {
-    final pageSize = math.min(maxPageSize, limit - nodes.length);
-    final args = _buildGraphQLArgs(
+    final args = _buildNextPageArgs(
       graphqlQuery: graphqlQuery,
       searchQuery: searchQuery,
-      pageSize: pageSize,
+      limit: limit,
+      currentCount: nodes.length,
+      maxPageSize: maxPageSize,
       cursor: cursor,
     );
-
     final result = await runner('gh', args);
-    final decoded = _decodeAndValidateGraphQL(
-      result,
-      exceptionBuilder: exceptionBuilder,
-    );
-    final pageNodes = extractGraphQLSearchNodes(decoded)
-        .whereType<Map<String, dynamic>>()
-        .toList();
-    nodes.addAll(pageNodes);
-
-    final pageInfo = extractGraphQLSearchPageInfo(decoded);
-    if (!pageInfo.hasNextPage ||
-        pageInfo.endCursor == null ||
-        pageNodes.isEmpty) {
-      break;
-    }
-    cursor = pageInfo.endCursor;
+    cursor = _processGraphQLPage(result, nodes, exceptionBuilder);
+    if (cursor == null) break;
   }
 
   return nodes;
@@ -108,34 +94,57 @@ List<Map<String, dynamic>> paginateGraphQLSearchSync({
   String? cursor;
 
   while (nodes.length < limit) {
-    final pageSize = math.min(maxPageSize, limit - nodes.length);
-    final args = _buildGraphQLArgs(
+    final args = _buildNextPageArgs(
       graphqlQuery: graphqlQuery,
       searchQuery: searchQuery,
-      pageSize: pageSize,
+      limit: limit,
+      currentCount: nodes.length,
+      maxPageSize: maxPageSize,
       cursor: cursor,
     );
-
     final result = runner('gh', args);
-    final decoded = _decodeAndValidateGraphQL(
-      result,
-      exceptionBuilder: exceptionBuilder,
-    );
-    final pageNodes = extractGraphQLSearchNodes(decoded)
-        .whereType<Map<String, dynamic>>()
-        .toList();
-    nodes.addAll(pageNodes);
-
-    final pageInfo = extractGraphQLSearchPageInfo(decoded);
-    if (!pageInfo.hasNextPage ||
-        pageInfo.endCursor == null ||
-        pageNodes.isEmpty) {
-      break;
-    }
-    cursor = pageInfo.endCursor;
+    cursor = _processGraphQLPage(result, nodes, exceptionBuilder);
+    if (cursor == null) break;
   }
 
   return nodes;
+}
+
+List<String> _buildNextPageArgs({
+  required String graphqlQuery,
+  required String searchQuery,
+  required int limit,
+  required int currentCount,
+  required int maxPageSize,
+  required String? cursor,
+}) => _buildGraphQLArgs(
+  graphqlQuery: graphqlQuery,
+  searchQuery: searchQuery,
+  pageSize: math.min(maxPageSize, limit - currentCount),
+  cursor: cursor,
+);
+
+String? _processGraphQLPage(
+  ProcessResult result,
+  List<Map<String, dynamic>> nodes,
+  Exception Function(String message, {int exitCode}) exceptionBuilder,
+) {
+  final decoded = _decodeAndValidateGraphQL(
+    result,
+    exceptionBuilder: exceptionBuilder,
+  );
+  final pageNodes = extractGraphQLSearchNodes(decoded)
+      .whereType<Map<String, dynamic>>()
+      .toList();
+  nodes.addAll(pageNodes);
+
+  final pageInfo = extractGraphQLSearchPageInfo(decoded);
+  if (!pageInfo.hasNextPage ||
+      pageInfo.endCursor == null ||
+      pageNodes.isEmpty) {
+    return null;
+  }
+  return pageInfo.endCursor;
 }
 
 List<String> _buildGraphQLArgs({

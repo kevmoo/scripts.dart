@@ -181,78 +181,74 @@ extension GitDirExtensions on GitDir {
   /// 2. Or, a three-way merge of [branchName] into [targetBranch] results in a
   ///    tree identical to [targetBranch] (i.e. squash merge).
   Future<bool> isMergedInto(String branchName, String targetBranch) async {
-    // 1. Fast ancestor check
     final ancestorResult = await runCommand([
       'merge-base',
       '--is-ancestor',
       branchName,
       targetBranch,
     ], throwOnError: false);
-    if (ancestorResult.exitCode == 0) {
+    if (ancestorResult.exitCode == 0) return true;
+
+    if (await _matchesTargetCommitTree(branchName, targetBranch)) {
       return true;
     }
 
-    // 2. Tree history match check (fast squash-merge check when no other
-    //    changes)
+    return _matchesTrialMergeTree(branchName, targetBranch);
+  }
+
+  Future<bool> _matchesTargetCommitTree(
+    String branchName,
+    String targetBranch,
+  ) async {
     try {
       final branchTreeResult = await runCommand([
         'rev-parse',
         '$branchName^{tree}',
       ], throwOnError: false);
-      if (branchTreeResult.exitCode == 0) {
-        final branchTree = (branchTreeResult.stdout as String).trim();
+      if (branchTreeResult.exitCode != 0) return false;
+      final branchTree = (branchTreeResult.stdout as String).trim();
 
-        // Get tree hashes of the last 1000 commits in targetBranch's history.
-        final targetTreesResult = await runCommand([
-          'log',
-          targetBranch,
-          '--format=%T',
-          '-n',
-          '1000',
-        ], throwOnError: false);
+      final targetTreesResult = await runCommand([
+        'log',
+        targetBranch,
+        '--format=%T',
+        '-n',
+        '1000',
+      ], throwOnError: false);
+      if (targetTreesResult.exitCode != 0) return false;
 
-        if (targetTreesResult.exitCode == 0) {
-          final targetTrees = (targetTreesResult.stdout as String).split('\n');
-          if (targetTrees.contains(branchTree)) {
-            return true;
-          }
-        }
-      }
+      return (targetTreesResult.stdout as String)
+          .split('\n')
+          .contains(branchTree);
     } catch (_) {
-      // Fallback to next check
+      return false;
     }
+  }
 
-    // 3. Trial merge check (using git merge-tree)
-    // Merges branchName into targetBranch in-memory.
-    // If the merge is clean (exit code 0) and the resulting tree is identical
-    // to targetBranch's tree, then branchName introduces no new changes.
+  Future<bool> _matchesTrialMergeTree(
+    String branchName,
+    String targetBranch,
+  ) async {
     try {
       final targetTreeResult = await runCommand([
         'rev-parse',
         '$targetBranch^{tree}',
       ], throwOnError: false);
-      if (targetTreeResult.exitCode == 0) {
-        final targetTree = (targetTreeResult.stdout as String).trim();
+      if (targetTreeResult.exitCode != 0) return false;
+      final targetTree = (targetTreeResult.stdout as String).trim();
 
-        final mergeTreeResult = await runCommand([
-          'merge-tree',
-          '--write-tree',
-          targetBranch,
-          branchName,
-        ], throwOnError: false);
+      final mergeTreeResult = await runCommand([
+        'merge-tree',
+        '--write-tree',
+        targetBranch,
+        branchName,
+      ], throwOnError: false);
+      if (mergeTreeResult.exitCode != 0) return false;
 
-        if (mergeTreeResult.exitCode == 0) {
-          final mergeTree = (mergeTreeResult.stdout as String).trim();
-          if (mergeTree == targetTree) {
-            return true;
-          }
-        }
-      }
+      return (mergeTreeResult.stdout as String).trim() == targetTree;
     } catch (_) {
-      // Fallback to returning false
+      return false;
     }
-
-    return false;
   }
 
   /// Checks if the `gh` CLI is available and authenticated.
@@ -371,32 +367,13 @@ extension GitDirExtensions on GitDir {
         '--json',
         'headRefName,state,url,number,baseRefName,headRefOid,mergeable',
       ]);
-      if (result.exitCode == 0) {
-        final list = jsonDecode(result.stdout as String) as List<dynamic>;
-        for (final item in list) {
-          if (item is Map<String, dynamic>) {
-            final head = item['headRefName'] as String?;
-            final state = item['state'] as String?;
-            final url = item['url'] as String?;
-            final number = item['number'] as int?;
-            final baseBranch = item['baseRefName'] as String?;
-            final headRefOid = item['headRefOid'] as String?;
-            final mergeable = item['mergeable'] as String?;
-            if (head != null &&
-                state != null &&
-                url != null &&
-                number != null &&
-                baseBranch != null) {
-              prs[head] = (
-                state: state,
-                url: url,
-                number: number,
-                baseBranch: baseBranch,
-                headRefOid: headRefOid,
-                mergeable: mergeable,
-              );
-            }
-          }
+      if (result.exitCode != 0) return prs;
+
+      final list = jsonDecode(result.stdout as String) as List<dynamic>;
+      for (final item in list) {
+        final parsed = _parsePrInfoEntry(item);
+        if (parsed != null) {
+          prs[parsed.$1] = parsed.$2;
         }
       }
     } catch (_) {
@@ -404,6 +381,30 @@ extension GitDirExtensions on GitDir {
     }
     return prs;
   }
+
+  static (String, PrInfo)? _parsePrInfoEntry(Object? item) => switch (item) {
+    {
+      'headRefName': final String head,
+      'state': final String state,
+      'url': final String url,
+      'number': final int number,
+      'baseRefName': final String baseBranch,
+      'headRefOid': final Object? headRefOid,
+      'mergeable': final Object? mergeable,
+    } =>
+      (
+        head,
+        (
+          state: state,
+          url: url,
+          number: number,
+          baseBranch: baseBranch,
+          headRefOid: headRefOid is String ? headRefOid : null,
+          mergeable: mergeable is String ? mergeable : null,
+        ),
+      ),
+    _ => null,
+  };
 
   /// Checks if the working tree is dirty (has modified or staged tracked
   /// files).

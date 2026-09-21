@@ -367,28 +367,23 @@ bool _isFlutterTreeStatusOnlyFailure(Map<String, dynamic>? statusRollup) {
 
 enum _FlutterContextStatus { ok, treeStatusFailure, realFailure }
 
-_FlutterContextStatus _evaluateFlutterContext(Map<String, dynamic> ctx) {
-  final typename = ctx['__typename'] as String?;
-  if (typename == 'StatusContext') {
-    final state = ctx['state'] as String? ?? '';
-    if (state == CiStatus.failure || state == 'ERROR') {
-      final contextName = ctx['context'] as String? ?? '';
-      return contextName == 'tree-status'
-          ? _FlutterContextStatus.treeStatusFailure
-          : _FlutterContextStatus.realFailure;
-    }
-    return _FlutterContextStatus.ok;
-  }
-  if (typename == 'CheckRun') {
-    final conclusion = ctx['conclusion'] as String? ?? '';
-    if (conclusion == CiStatus.failure ||
-        conclusion == 'TIMED_OUT' ||
-        conclusion == 'CANCELLED') {
-      return _FlutterContextStatus.realFailure;
-    }
-  }
-  return _FlutterContextStatus.ok;
-}
+_FlutterContextStatus _evaluateFlutterContext(Map<String, dynamic> ctx) =>
+    switch (ctx['__typename']) {
+      'StatusContext' => switch (ctx['state']) {
+        CiStatus.failure || 'ERROR' =>
+          ctx['context'] == 'tree-status'
+              ? _FlutterContextStatus.treeStatusFailure
+              : _FlutterContextStatus.realFailure,
+        _ => _FlutterContextStatus.ok,
+      },
+      'CheckRun' => switch (ctx['conclusion']) {
+        CiStatus.failure ||
+        'TIMED_OUT' ||
+        'CANCELLED' => _FlutterContextStatus.realFailure,
+        _ => _FlutterContextStatus.ok,
+      },
+      _ => _FlutterContextStatus.ok,
+    };
 
 /// Function signature for running an external enricher command with stdin JSON
 /// payload.
@@ -457,23 +452,25 @@ Future<Map<String, String>> fetchEnrichedContext({
     return const {};
   }
 
+  return _parseEnrichedContextJson(rawOutput);
+}
+
+Map<String, String> _parseEnrichedContextJson(String rawOutput) {
   try {
     final decoded = jsonDecode(rawOutput);
-    if (decoded is Map) {
-      final result = <String, String>{};
-      for (final entry in decoded.entries) {
-        final key = entry.key.toString().trim();
-        final value = entry.value?.toString().trim();
-        if (key.isNotEmpty && value != null && value.isNotEmpty) {
-          result[key] = value;
-        }
+    if (decoded is! Map) return const {};
+    final result = <String, String>{};
+    for (final entry in decoded.entries) {
+      final key = entry.key.toString().trim();
+      final value = entry.value?.toString().trim();
+      if (key.isNotEmpty && value != null && value.isNotEmpty) {
+        result[key] = value;
       }
-      return result;
     }
+    return result;
   } catch (_) {
-    // Non-fatal JSON parse failure
+    return const {};
   }
-  return const {};
 }
 
 String? _lookupContext(GhPr pr, Map<String, String>? contextMap) {
