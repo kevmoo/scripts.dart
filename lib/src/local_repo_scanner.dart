@@ -342,6 +342,55 @@ List<LocalWorktreeEntry> _parseWorktrees(
   return worktrees;
 }
 
+bool _folderBranchMatches(String folderBranch, String branchName) {
+  if (folderBranch == branchName) return true;
+  if (folderBranch == branchName.replaceAll('/', '-')) return true;
+  if (folderBranch == branchName.replaceAll('/', '_')) return true;
+  if (branchName.contains('/') && folderBranch == branchName.split('/').last) {
+    return true;
+  }
+  return false;
+}
+
+/// Extension on [LocalWorktreeEntry] for branch matching.
+extension LocalWorktreeEntryExtension on LocalWorktreeEntry {
+  /// Extracts the branch suffix encoded in a `_<repoShortName>-<branch>` or
+  /// `_<repoShortName>_<branch>` worktree folder name, or `null` if the folder
+  /// does not follow that naming convention.
+  String? expectedBranchFromFolder(String repoShortName) {
+    if (repoShortName.isEmpty) return null;
+    final folder = p.basename(path);
+    for (final prefix in ['_$repoShortName-', '_${repoShortName}_']) {
+      if (folder.startsWith(prefix) && folder.length > prefix.length) {
+        return folder.substring(prefix.length);
+      }
+    }
+    return null;
+  }
+
+  /// Returns `true` if this worktree is currently checked out on [branchName]
+  /// and (when [repoShortName] is provided) its folder name does not encode a
+  /// different branch.
+  bool isCheckedOutOnBranch(
+    String branchName, {
+    String? repoShortName,
+    String? expectedSha,
+  }) {
+    if (repoShortName != null && repoShortName.isNotEmpty) {
+      final folderBranch = expectedBranchFromFolder(repoShortName);
+      if (folderBranch != null &&
+          !_folderBranchMatches(folderBranch, branchName)) {
+        return false;
+      }
+    }
+    if (branch.isEmpty || branch == 'DETACHED') {
+      return expectedSha == null ||
+          (expectedSha.isNotEmpty && sha == expectedSha);
+    }
+    return branch == branchName || branch == 'refs/heads/$branchName';
+  }
+}
+
 /// Discovers an attached worktree matching the PR branch or folder naming
 /// scheme.
 LocalWorktreeEntry? findMatchingWorktree(
@@ -356,9 +405,13 @@ LocalWorktreeEntry? findMatchingWorktree(
     if (wt.branch == branchName || wt.branch == 'refs/heads/$branchName') {
       return wt;
     }
-    final folder = p.basename(wt.path);
-    if (folder == '_$repoShortName-$branchName' ||
-        folder == '_${repoShortName}_$branchName') {
+  }
+
+  for (final wt in localRepo.worktrees) {
+    if (wt.path == localRepo.repoPath) continue;
+    final folderBranch = wt.expectedBranchFromFolder(repoShortName);
+    if (folderBranch != null &&
+        _folderBranchMatches(folderBranch, branchName)) {
       return wt;
     }
   }
@@ -380,7 +433,11 @@ LocalWorktreeEntry? findMatchingWorktreeForPr(
 ) {
   for (final repo in repos) {
     final wtMatch = findMatchingWorktreeForPr(repo, pr);
-    if (wtMatch != null) {
+    if (wtMatch != null &&
+        wtMatch.isCheckedOutOnBranch(
+          pr.headRefName,
+          repoShortName: pr.repoShortName,
+        )) {
       return (repoPath: wtMatch.path, sha: wtMatch.sha, isWorktree: true);
     }
 

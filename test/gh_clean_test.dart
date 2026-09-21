@@ -1566,4 +1566,338 @@ void main() {
       },
     );
   });
+
+  group('worktree branch-mismatch & dry-run safety guards', () {
+    test(
+      'planCleanup and executeCleanup refuse to prune worktree switched to a '
+      'different branch',
+      () {
+        const pr = LandedPr(
+          number: 192953,
+          title: 'Phase 3: precache_manifest.json',
+          url: 'https://github.com/flutter/flutter/pull/192953',
+          repository: 'flutter/flutter',
+          repoUrl: 'https://github.com/flutter/flutter',
+          headRefName: 'web-content-hash-phase-3',
+          headRefOid: 'b2c1a67',
+          baseRefName: 'master',
+        );
+
+        final localRepo = (
+          repoName: 'flutter/flutter',
+          repoNames: ['flutter/flutter'],
+          repoPath: '/path/to/flutter',
+          currentBranch: 'master',
+          branches: [
+            (
+              name: 'web-content-hash-phase-3',
+              sha: 'b2c1a67',
+              upstream: null,
+              upstreamTrack: null,
+            ),
+            (
+              name: 'web-content-hash-phase-2-5',
+              sha: '9999999',
+              upstream: null,
+              upstreamTrack: null,
+            ),
+            (
+              name: 'master',
+              sha: '000',
+              upstream: 'origin/master',
+              upstreamTrack: '',
+            ),
+          ],
+          worktrees: [
+            (
+              path: '/path/to/_flutter-web-content-hash-phase-3',
+              branch: 'web-content-hash-phase-2-5',
+              sha: '9999999',
+            ),
+          ],
+        );
+
+        final planned = planCleanup(
+          pr,
+          localRepo,
+          processRunner: (exe, args, {workingDirectory}) =>
+              ProcessResult(0, 0, '', ''),
+        );
+        check(planned).contains(
+          'Skip worktree at /path/to/_flutter-web-content-hash-phase-3 '
+          '(checked out on `web-content-hash-phase-2-5`, '
+          'expected `web-content-hash-phase-3`)',
+        );
+        check(planned)
+            .contains('Delete local branch `web-content-hash-phase-3`');
+
+        final calls = <String>[];
+        final executed = executeCleanup(
+          pr,
+          localRepo,
+          processRunner: (exe, args, {workingDirectory}) {
+            calls.add('$exe ${args.join(" ")}');
+            return ProcessResult(0, 0, '', '');
+          },
+        );
+
+        check(calls).not((it) => it.any((c) => c.contains('worktree remove')));
+        final wtAction = executed.firstWhere(
+          (a) => a.description.contains('worktree'),
+        );
+        check(wtAction.success).isFalse();
+        check(wtAction.error).isNotNull().contains(
+          'Worktree branch mismatch '
+          '(checked out on `web-content-hash-phase-2-5`, '
+          'expected `web-content-hash-phase-3`).',
+        );
+      },
+    );
+
+    test('skips pruning worktree AND skips deleting branch when folder belongs '
+        'to another branch (reverse mismatch)', () {
+      const pr = LandedPr(
+        number: 75,
+        title: 'Experiment: Use BytesBuilder',
+        url: 'https://github.com/kevmoo/codable.dart/pull/75',
+        repository: 'kevmoo/codable.dart',
+        repoUrl: 'https://github.com/kevmoo/codable.dart',
+        headRefName: 'bytes-builder-copy',
+        headRefOid: 'abc1234',
+        baseRefName: 'main',
+      );
+      const localRepo = (
+        repoName: 'kevmoo/codable.dart',
+        repoNames: ['kevmoo/codable.dart'],
+        repoPath: '/path/to/codable.dart',
+        currentBranch: 'main',
+        branches: [
+          (
+            name: 'bytes-builder-copy',
+            sha: 'abc1234',
+            upstream: null,
+            upstreamTrack: null,
+          ),
+          (
+            name: 'main',
+            sha: 'abc1234',
+            upstream: 'origin/main',
+            upstreamTrack: '',
+          ),
+        ],
+        worktrees: [
+          (
+            path: '/path/to/_codable.dart-rope-chunks',
+            branch: 'bytes-builder-copy',
+            sha: 'abc1234',
+          ),
+        ],
+      );
+
+      final planned = planCleanup(
+        pr,
+        localRepo,
+        processRunner: (exe, args, {workingDirectory}) =>
+            ProcessResult(0, 0, '', ''),
+      );
+      check(planned).contains(
+        'Skip worktree at /path/to/_codable.dart-rope-chunks '
+        '(folder matches `rope-chunks`, checked out on `bytes-builder-copy`)',
+      );
+      check(planned).contains(
+        'Skip local branch `bytes-builder-copy` '
+        '(checked out in worktree at /path/to/_codable.dart-rope-chunks)',
+      );
+      check(planned)
+          .not((it) => it.contains('Delete local branch `bytes-builder-copy`'));
+
+      final calls = <String>[];
+      final executed = executeCleanup(
+        pr,
+        localRepo,
+        processRunner: (exe, args, {workingDirectory}) {
+          calls.add('$exe ${args.join(" ")}');
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+      check(calls)
+        ..not((it) => it.any((c) => c.contains('worktree remove')))
+        ..not((it) => it.any((c) => c.contains('branch -D')));
+      final branchAction = executed.firstWhere(
+        (a) => a.description.contains('Delete local branch'),
+      );
+      check(branchAction.success).isFalse();
+      check(branchAction.error).isNotNull().contains(
+        'checked out in worktree at /path/to/_codable.dart-rope-chunks',
+      );
+    });
+
+    test(
+      'planCleanup appends git stash note and caches per repoPath',
+      () async {
+        await d.dir('stash-repo').create();
+        final repoPath = p.join(d.sandbox, 'stash-repo');
+        const pr = LandedPr(
+          number: 79,
+          title: 'Process isolation',
+          url: 'https://github.com/kevmoo/codable.dart/pull/79',
+          repository: 'kevmoo/codable.dart',
+          repoUrl: 'https://github.com/kevmoo/codable.dart',
+          headRefName: 'agent/kngtn-process-isolation',
+          headRefOid: 'abc1234',
+          baseRefName: 'main',
+        );
+        final localRepo = (
+          repoName: 'kevmoo/codable.dart',
+          repoNames: ['kevmoo/codable.dart'],
+          repoPath: repoPath,
+          currentBranch: 'main',
+          branches: [
+            (
+              name: 'agent/kngtn-process-isolation',
+              sha: 'abc1234',
+              upstream: null,
+              upstreamTrack: null,
+            ),
+            (
+              name: 'main',
+              sha: 'abc1234',
+              upstream: 'origin/main',
+              upstreamTrack: '',
+            ),
+          ],
+          worktrees: <LocalWorktreeEntry>[],
+        );
+
+        var stashCalls = 0;
+        final cache = <String, int>{};
+        ProcessResult runner(
+          String exe,
+          List<String> args, {
+          String? workingDirectory,
+        }) {
+          if (args.contains('stash') && args.contains('list')) {
+            stashCalls++;
+            return ProcessResult(
+              0,
+              0,
+              'stash@{0}: WIP on main\nstash@{1}: WIP on feat\n',
+              '',
+            );
+          }
+          return ProcessResult(0, 0, '', '');
+        }
+
+        final planned1 = planCleanup(
+          pr,
+          localRepo,
+          processRunner: runner,
+          stashCountCache: cache,
+        );
+        final planned2 = planCleanup(
+          pr,
+          localRepo,
+          processRunner: runner,
+          stashCountCache: cache,
+        );
+        check(planned1).contains('Note: repository has 2 git stash(es)');
+        check(planned2).contains('Note: repository has 2 git stash(es)');
+        check(stashCalls).equals(1);
+      },
+    );
+  });
+
+  group('findClosedUnmergedPrs', () {
+    test('identifies closed-unmerged PRs and formats Markdown/JSON report', () async {
+      await d.dir('codable.dart', [d.dir('.git')]).create();
+      final repoPath = p.join(d.sandbox, 'codable.dart');
+      final localRepo = (
+        repoName: 'kevmoo/codable.dart',
+        repoNames: ['kevmoo/codable.dart'],
+        repoPath: repoPath,
+        currentBranch: 'main',
+        branches: [
+          (
+            name: 'rope-chunks',
+            sha: '9dd884beab',
+            upstream: null,
+            upstreamTrack: null,
+          ),
+          (
+            name: 'main',
+            sha: '000',
+            upstream: 'origin/main',
+            upstreamTrack: '',
+          ),
+        ],
+        worktrees: [
+          (
+            path: '/path/to/_codable.dart-rope-chunks',
+            branch: 'rope-chunks',
+            sha: '9dd884beab',
+          ),
+        ],
+      );
+
+      final closedPrs = await findClosedUnmergedPrs(
+        [localRepo],
+        const {},
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            return ProcessResult(
+              0,
+              0,
+              jsonEncode({
+                'data': {
+                  'q0': {
+                    'nameWithOwner': 'kevmoo/codable.dart',
+                    'openPrs': {'nodes': <Object>[]},
+                    'mergedPrs': {
+                      'nodes': [
+                        {'number': 10},
+                      ],
+                    },
+                    'closedPrs': {
+                      'nodes': [
+                        {
+                          'number': 74,
+                          'title': 'perf: rope chunks',
+                          'url':
+                              'https://github.com/kevmoo/codable.dart/pull/74',
+                          'headRefOid': '9dd884beab',
+                        },
+                      ],
+                    },
+                  },
+                },
+              }),
+              '',
+            );
+          }
+          if (exe == 'git' && args.contains('rev-list')) {
+            return ProcessResult(0, 0, '2\n', '');
+          }
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+
+      check(closedPrs.length).equals(1);
+      final c = closedPrs.first;
+      check(c.number).equals(74);
+      check(c.branch).equals('rope-chunks');
+      check(c.worktreePath).equals('/path/to/_codable.dart-rope-chunks');
+      check(c.shaMatchesPrHead).isTrue();
+      check(c.commitsAhead).equals(2);
+
+      final md = formatMarkdownReport(
+        const [],
+        applied: false,
+        closedUnmergedPrs: closedPrs,
+      );
+      check(md)
+        ..contains('## Closed (Unmerged) Pull Requests')
+        ..contains('[#74](https://github.com/kevmoo/codable.dart/pull/74)')
+        ..contains('Local SHA matches closed PR HEAD (`9dd884b`');
+    });
+  });
 }

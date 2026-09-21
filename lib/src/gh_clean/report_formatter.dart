@@ -10,6 +10,7 @@ void outputGhCleanReport(
   List<PrCleanResult> results,
   GhCleanOptions options, {
   List<UnlinkedWorktree> unlinkedWorktrees = const [],
+  List<ClosedUnmergedPr> closedUnmergedPrs = const [],
 }) {
   if (options.json) {
     print(
@@ -18,6 +19,7 @@ void outputGhCleanReport(
           results,
           applied: options.apply,
           unlinkedWorktrees: unlinkedWorktrees,
+          closedUnmergedPrs: closedUnmergedPrs,
         ),
       ),
     );
@@ -27,6 +29,7 @@ void outputGhCleanReport(
         results,
         applied: options.apply,
         unlinkedWorktrees: unlinkedWorktrees,
+        closedUnmergedPrs: closedUnmergedPrs,
       ),
     );
   } else {
@@ -34,6 +37,7 @@ void outputGhCleanReport(
       results,
       applied: options.apply,
       unlinkedWorktrees: unlinkedWorktrees,
+      closedUnmergedPrs: closedUnmergedPrs,
     );
   }
 }
@@ -49,6 +53,7 @@ String formatMarkdownReport(
   List<PrCleanResult> results, {
   required bool applied,
   List<UnlinkedWorktree> unlinkedWorktrees = const [],
+  List<ClosedUnmergedPr> closedUnmergedPrs = const [],
 }) {
   final buffer = StringBuffer()
     ..writeln('# Landed Pull Requests Cleanup Report')
@@ -76,34 +81,89 @@ String formatMarkdownReport(
     buffer.writeln('<!-- mdformat on -->');
   }
 
-  if (unlinkedWorktrees.isNotEmpty) {
-    buffer
-      ..writeln()
-      ..writeln('## Worktrees with No Associated PR')
-      ..writeln()
-      ..writeln('<!-- mdformat off -->')
-      ..writeln(
-        '| Repository | Worktree | Branch | Commits Ahead | Last Commit |',
-      )
-      ..writeln('| :--- | :--- | :--- | :---: | :--- |');
+  _appendClosedUnmergedMarkdownSection(buffer, closedUnmergedPrs);
+  _appendUnlinkedWorktreesMarkdownSection(buffer, unlinkedWorktrees);
+  return buffer.toString();
+}
 
-    for (final u in unlinkedWorktrees) {
-      final repoLink =
-          '[**${u.repository}**](https://github.com/${u.repository})';
-      final wtLink =
-          '[`${p.basename(u.worktreePath)}`](file://${u.worktreePath})';
-      final branchStr = '`${u.branch}`';
-      final aheadStr = u.commitsAhead != null ? '${u.commitsAhead}' : '?';
-      final dateStr = u.lastCommitDate ?? '?';
-      buffer.writeln(
-        '| $repoLink | $wtLink | $branchStr | $aheadStr | $dateStr |',
-      );
-    }
+void _appendClosedUnmergedMarkdownSection(
+  StringBuffer buffer,
+  List<ClosedUnmergedPr> closedUnmergedPrs,
+) {
+  if (closedUnmergedPrs.isEmpty) return;
 
-    buffer.writeln('<!-- mdformat on -->');
+  buffer
+    ..writeln()
+    ..writeln('## Closed (Unmerged) Pull Requests')
+    ..writeln()
+    ..writeln('<!-- mdformat off -->')
+    ..writeln(
+      '| Repository | Closed PR | Branch / Worktree | Verification Status |',
+    )
+    ..writeln('| :--- | :--- | :--- | :--- |');
+
+  for (final c in closedUnmergedPrs) {
+    final repoLink =
+        '[**${c.repository}**](https://github.com/${c.repository})';
+    final prLink = '[#${c.number}](${c.url})';
+    final wtPart = c.worktreePath != null
+        ? ' ([`${p.basename(c.worktreePath!)}`](file://${c.worktreePath}))'
+        : '';
+    final branchStr = '`${c.branch}`$wtPart';
+    final statusStr = _formatClosedUnmergedStatus(c);
+    buffer.writeln('| $repoLink | $prLink | $branchStr | $statusStr |');
   }
 
-  return buffer.toString();
+  buffer.writeln('<!-- mdformat on -->');
+}
+
+void _appendUnlinkedWorktreesMarkdownSection(
+  StringBuffer buffer,
+  List<UnlinkedWorktree> unlinkedWorktrees,
+) {
+  if (unlinkedWorktrees.isEmpty) return;
+
+  buffer
+    ..writeln()
+    ..writeln('## Worktrees with No Associated PR')
+    ..writeln()
+    ..writeln('<!-- mdformat off -->')
+    ..writeln(
+      '| Repository | Worktree | Branch | Commits Ahead | Last Commit |',
+    )
+    ..writeln('| :--- | :--- | :--- | :---: | :--- |');
+
+  for (final u in unlinkedWorktrees) {
+    final repoLink =
+        '[**${u.repository}**](https://github.com/${u.repository})';
+    final wtLink =
+        '[`${p.basename(u.worktreePath)}`](file://${u.worktreePath})';
+    final branchStr = '`${u.branch}`';
+    final aheadStr = u.commitsAhead != null ? '${u.commitsAhead}' : '?';
+    final dateStr = u.lastCommitDate ?? '?';
+    buffer.writeln(
+      '| $repoLink | $wtLink | $branchStr | $aheadStr | $dateStr |',
+    );
+  }
+
+  buffer.writeln('<!-- mdformat on -->');
+}
+
+String _formatClosedUnmergedStatus(ClosedUnmergedPr c) {
+  if (c.commitsAhead == 0) {
+    return '✅ 0 commits ahead of trunk (superseded)';
+  }
+  if (c.shaMatchesPrHead) {
+    final shortSha = c.headRefOid.length > 7
+        ? c.headRefOid.substring(0, 7)
+        : c.headRefOid;
+    return '✅ Local SHA matches closed PR HEAD '
+        '(`$shortSha` — archived on GitHub)';
+  }
+  final aheadLabel = c.commitsAhead != null
+      ? '${c.commitsAhead} commit(s) ahead of trunk; '
+      : '';
+  return '⚠️ ${aheadLabel}Local SHA differs from closed PR HEAD';
 }
 
 List<_ReportRow> _buildSortedReportRows(
@@ -170,7 +230,9 @@ bool _hasLocalBranchOrWorktreeAction(PrCleanResult r) =>
     r.plannedActions.any(
       (a) =>
           a.startsWith('Prune worktree') ||
+          a.startsWith('Skip worktree') ||
           a.startsWith('Delete local branch') ||
+          a.startsWith('Skip local branch') ||
           a.startsWith('Delete remote branch'),
     ) ||
     r.executedActions.any(
@@ -238,6 +300,7 @@ void printTerminalReport(
   List<PrCleanResult> results, {
   required bool applied,
   List<UnlinkedWorktree> unlinkedWorktrees = const [],
+  List<ClosedUnmergedPr> closedUnmergedPrs = const [],
 }) {
   final modeStr = applied
       ? green.wrap('🚀 Applied Cleanup')!
@@ -247,9 +310,27 @@ void printTerminalReport(
   _printPrCleanResults(
     results,
     applied: applied,
-    hasTrailingSection: unlinkedWorktrees.isNotEmpty,
+    hasTrailingSection:
+        closedUnmergedPrs.isNotEmpty || unlinkedWorktrees.isNotEmpty,
   );
+  _printClosedUnmergedPrs(closedUnmergedPrs);
   _printUnlinkedWorktrees(unlinkedWorktrees);
+}
+
+void _printClosedUnmergedPrs(List<ClosedUnmergedPr> closedUnmergedPrs) {
+  if (closedUnmergedPrs.isEmpty) return;
+
+  print('${styleBold.wrap("Closed (Unmerged) Pull Requests:")}\n');
+  for (final c in closedUnmergedPrs) {
+    print('  ${styleBold.wrap("${c.repository} #${c.number}")}: ${c.title}');
+    print('    URL:    ${c.url}');
+    print('    Branch: ${c.branch}');
+    if (c.worktreePath != null) {
+      print('    Worktree: ${c.worktreePath}');
+    }
+    print('    Status: ${_formatClosedUnmergedStatus(c)}');
+    print('');
+  }
 }
 
 void _printPrCleanResults(
@@ -339,6 +420,7 @@ Map<String, dynamic> formatJsonReport(
   List<PrCleanResult> results, {
   required bool applied,
   List<UnlinkedWorktree> unlinkedWorktrees = const [],
+  List<ClosedUnmergedPr> closedUnmergedPrs = const [],
 }) => {
   'applied': applied,
   'total': results.length,
@@ -377,6 +459,21 @@ Map<String, dynamic> formatJsonReport(
         },
       )
       .toList(),
+  'closedUnmergedPrs': [
+    for (final c in closedUnmergedPrs)
+      {
+        'repository': c.repository,
+        'number': c.number,
+        'title': c.title,
+        'url': c.url,
+        'branch': c.branch,
+        'headRefOid': c.headRefOid,
+        'localSha': c.localSha,
+        'worktreePath': c.worktreePath,
+        'commitsAhead': c.commitsAhead,
+        'shaMatchesPrHead': c.shaMatchesPrHead,
+      },
+  ],
   'unlinkedWorktrees': [
     for (final u in unlinkedWorktrees)
       {
