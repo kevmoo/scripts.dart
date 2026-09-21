@@ -629,37 +629,59 @@ Future<void> _inspectActiveRemoteBranches(
   var closedHeadingPrinted = false;
   var conflictHeadingPrinted = false;
   for (final branch in activeRemoteBranches) {
-    final prInfo = recentPrs[branch];
-    if (prInfo != null &&
-        prInfo.state == 'OPEN' &&
-        prInfo.mergeable == 'CONFLICTING') {
-      if (!conflictHeadingPrinted) {
-        print('');
-        print(
-          styleDim.wrap(
-                'Checking active remote branches for merge conflicts...',
-              ) ??
-              'Checking active remote branches for merge conflicts...',
-        );
-        conflictHeadingPrinted = true;
-      }
-      _printConflictingBranchNotice(branch, prInfo);
-      continue;
-    }
-
-    if (!await _hasClosedRemoteBranch(gitDir, branch, recentPrs)) continue;
-
-    if (!closedHeadingPrinted) {
-      print('');
-      print(
-        styleDim.wrap('Checking active remote branches for closed PRs...') ??
-            'Checking active remote branches for closed PRs...',
-      );
-      closedHeadingPrinted = true;
-    }
-
-    _printClosedRemoteBranchNotice(branch, recentPrs[branch]!);
+    final printed = await _inspectSingleRemoteBranch(
+      gitDir,
+      branch,
+      recentPrs,
+      closedHeadingPrinted: closedHeadingPrinted,
+      conflictHeadingPrinted: conflictHeadingPrinted,
+    );
+    closedHeadingPrinted = printed.closedHeadingPrinted;
+    conflictHeadingPrinted = printed.conflictHeadingPrinted;
   }
+}
+
+Future<({bool closedHeadingPrinted, bool conflictHeadingPrinted})>
+_inspectSingleRemoteBranch(
+  GitDir gitDir,
+  String branch,
+  Map<String, PrInfo> recentPrs, {
+  required bool closedHeadingPrinted,
+  required bool conflictHeadingPrinted,
+}) async {
+  final prInfo = recentPrs[branch];
+  if (prInfo != null &&
+      prInfo.state == 'OPEN' &&
+      prInfo.mergeable == 'CONFLICTING') {
+    if (!conflictHeadingPrinted) {
+      print('');
+      const heading = 'Checking active remote branches for merge conflicts...';
+      print(styleDim.wrap(heading) ?? heading);
+    }
+    _printConflictingBranchNotice(branch, prInfo);
+    return (
+      closedHeadingPrinted: closedHeadingPrinted,
+      conflictHeadingPrinted: true,
+    );
+  }
+
+  if (!await _hasClosedRemoteBranch(gitDir, branch, recentPrs)) {
+    return (
+      closedHeadingPrinted: closedHeadingPrinted,
+      conflictHeadingPrinted: conflictHeadingPrinted,
+    );
+  }
+
+  if (!closedHeadingPrinted) {
+    print('');
+    const heading = 'Checking active remote branches for closed PRs...';
+    print(styleDim.wrap(heading) ?? heading);
+  }
+  _printClosedRemoteBranchNotice(branch, recentPrs[branch]!);
+  return (
+    closedHeadingPrinted: true,
+    conflictHeadingPrinted: conflictHeadingPrinted,
+  );
 }
 
 Future<bool> _hasClosedRemoteBranch(

@@ -582,7 +582,8 @@ void main() {
       check(prints.join('\n'))
         ..contains('Checking active remote branches for merge conflicts...')
         ..contains(
-          'PR #326 for branch "feature-conflicting" has merge conflicts with "main"',
+          'PR #326 for branch "feature-conflicting" has merge conflicts '
+          'with "main"',
         )
         ..contains('git fetch origin main && git merge origin/main');
     },
