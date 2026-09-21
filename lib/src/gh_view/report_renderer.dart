@@ -442,6 +442,17 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
     ..writeln('    Branch:  ${pr.headRefName} ➔ ${pr.baseRefName}')
     ..writeln('    Touched: $touched');
 
+  if (pr.mergeable == MergeableState.conflicting) {
+    final conflictLine =
+        red.wrap(
+          '⚠️ Blocked by merge conflicts with origin/${pr.baseRefName} '
+          '(run: git fetch origin ${pr.baseRefName} && git merge origin/${pr.baseRefName})',
+        ) ??
+        '⚠️ Blocked by merge conflicts with origin/${pr.baseRefName} '
+            '(run: git fetch origin ${pr.baseRefName} && git merge origin/${pr.baseRefName})';
+    buffer.writeln('    Merge:   $conflictLine');
+  }
+
   if (pr.context != null && pr.context!.trim().isNotEmpty) {
     buffer.writeln('    Context: ${pr.context!.trim()}');
   }
@@ -466,7 +477,10 @@ String _formatReviewBadgeTerminal(GhPr pr) {
   }
 
   if (pr.reviewDecision == ReviewDecision.approved) {
-    return green.wrap('Approved') ?? 'Approved';
+    final label = pr.mergeable == MergeableState.conflicting
+        ? 'Approved (Conflicting)'
+        : 'Approved';
+    return green.wrap(label) ?? label;
   }
   if (pr.reviewDecision == ReviewDecision.changesRequested) {
     if (pr.targetReviewers.isNotEmpty) {

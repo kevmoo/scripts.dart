@@ -626,17 +626,36 @@ Future<void> _inspectActiveRemoteBranches(
   }
   if (recentPrs == null) return;
 
-  var headingPrinted = false;
+  var closedHeadingPrinted = false;
+  var conflictHeadingPrinted = false;
   for (final branch in activeRemoteBranches) {
+    final prInfo = recentPrs[branch];
+    if (prInfo != null &&
+        prInfo.state == 'OPEN' &&
+        prInfo.mergeable == 'CONFLICTING') {
+      if (!conflictHeadingPrinted) {
+        print('');
+        print(
+          styleDim.wrap(
+                'Checking active remote branches for merge conflicts...',
+              ) ??
+              'Checking active remote branches for merge conflicts...',
+        );
+        conflictHeadingPrinted = true;
+      }
+      _printConflictingBranchNotice(branch, prInfo);
+      continue;
+    }
+
     if (!await _hasClosedRemoteBranch(gitDir, branch, recentPrs)) continue;
 
-    if (!headingPrinted) {
+    if (!closedHeadingPrinted) {
       print('');
       print(
         styleDim.wrap('Checking active remote branches for closed PRs...') ??
             'Checking active remote branches for closed PRs...',
       );
-      headingPrinted = true;
+      closedHeadingPrinted = true;
     }
 
     _printClosedRemoteBranchNotice(branch, recentPrs[branch]!);
@@ -652,6 +671,20 @@ Future<bool> _hasClosedRemoteBranch(
   if (prInfo == null) return false;
   if (prInfo.state != 'MERGED' && prInfo.state != 'CLOSED') return false;
   return gitDir.hasRemoteBranch(branch);
+}
+
+void _printConflictingBranchNotice(String branch, PrInfo prInfo) {
+  final url = prInfo.url ?? '';
+  final prLabel = prInfo.number != null ? '#${prInfo.number}' : '';
+  final branchLabel = styleBold.wrap(branch) ?? branch;
+  final baseLabel = prInfo.baseBranch.isNotEmpty ? prInfo.baseBranch : 'main';
+  final warnBadge = red.wrap('⚠️ MERGE CONFLICT') ?? '⚠️ MERGE CONFLICT';
+  print(
+    '$warnBadge: PR $prLabel for branch "$branchLabel" has merge conflicts '
+    'with "$baseLabel".\n'
+    '  URL:     $url\n'
+    '  Resolve: git fetch origin $baseLabel && git merge origin/$baseLabel',
+  );
 }
 
 void _printClosedRemoteBranchNotice(String branch, PrInfo prInfo) {

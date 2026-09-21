@@ -11,6 +11,7 @@ typedef PrInfo = ({
   String? headRefOid,
   String? url,
   int? number,
+  String? mergeable,
 });
 
 bool mockGhAvailableForTesting = false;
@@ -311,7 +312,7 @@ extension GitDirExtensions on GitDir {
         'view',
         target,
         '--json',
-        'state,baseRefName,headRefOid,url,number',
+        'state,baseRefName,headRefOid,url,number,mergeable',
       ]);
       if (result.exitCode == 0) {
         final data =
@@ -322,6 +323,7 @@ extension GitDirExtensions on GitDir {
           headRefOid: data['headRefOid'] as String?,
           url: data['url'] as String?,
           number: data['number'] as int?,
+          mergeable: data['mergeable'] as String?,
         );
       }
     } catch (_) {
@@ -367,7 +369,7 @@ extension GitDirExtensions on GitDir {
         '--limit',
         limit.toString(),
         '--json',
-        'headRefName,state,url,number,baseRefName,headRefOid',
+        'headRefName,state,url,number,baseRefName,headRefOid,mergeable',
       ]);
       if (result.exitCode == 0) {
         final list = jsonDecode(result.stdout as String) as List<dynamic>;
@@ -379,6 +381,7 @@ extension GitDirExtensions on GitDir {
             final number = item['number'] as int?;
             final baseBranch = item['baseRefName'] as String?;
             final headRefOid = item['headRefOid'] as String?;
+            final mergeable = item['mergeable'] as String?;
             if (head != null &&
                 state != null &&
                 url != null &&
@@ -390,6 +393,7 @@ extension GitDirExtensions on GitDir {
                 number: number,
                 baseBranch: baseBranch,
                 headRefOid: headRefOid,
+                mergeable: mergeable,
               );
             }
           }

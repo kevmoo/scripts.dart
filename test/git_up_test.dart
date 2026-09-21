@@ -519,6 +519,7 @@ void main() {
         number: 123,
         baseBranch: 'main',
         headRefOid: null,
+        mergeable: null,
       ),
     };
     addTearDown(() {
@@ -544,6 +545,50 @@ void main() {
   });
 
   test(
+    'gitUp with check: true warns if active branch PR has merge conflicts',
+    () async {
+      mockGhAvailableForTesting = true;
+      mockGhUnavailableForTesting = false;
+      mockRecentPrsForTesting = {
+        'feature-conflicting': (
+          state: 'OPEN',
+          url: 'https://github.com/kevmoo/scripts/pull/326',
+          number: 326,
+          baseBranch: 'main',
+          headRefOid: null,
+          mergeable: 'CONFLICTING',
+        ),
+      };
+      addTearDown(() {
+        mockGhAvailableForTesting = false;
+        mockRecentPrsForTesting = null;
+      });
+
+      await localGitDir.runCommand(['checkout', '-b', 'feature-conflicting']);
+      await localGitDir.runCommand([
+        'push',
+        '-u',
+        'origin',
+        'feature-conflicting',
+      ]);
+      await localGitDir.runCommand(['checkout', 'main']);
+
+      final prints = await capturePrints(
+        () => wrappedForTesting(
+          () => gitUp(workingDirectory: localPath, check: true),
+        ),
+      );
+
+      check(prints.join('\n'))
+        ..contains('Checking active remote branches for merge conflicts...')
+        ..contains(
+          'PR #326 for branch "feature-conflicting" has merge conflicts with "main"',
+        )
+        ..contains('git fetch origin main && git merge origin/main');
+    },
+  );
+
+  test(
     'gitUp with check: true does NOT warn if remote branch is deleted/pruned',
     () async {
       mockGhAvailableForTesting = true;
@@ -555,6 +600,7 @@ void main() {
           number: 123,
           baseBranch: 'main',
           headRefOid: null,
+          mergeable: null,
         ),
       };
       addTearDown(() {
@@ -606,6 +652,7 @@ void main() {
         number: 123,
         baseBranch: 'main',
         headRefOid: null,
+        mergeable: null,
       ),
     };
     addTearDown(() {
@@ -654,6 +701,7 @@ void main() {
           number: 124,
           baseBranch: 'feature-base',
           headRefOid: null,
+          mergeable: null,
         ),
       };
       addTearDown(() {
@@ -744,6 +792,7 @@ void main() {
           number: 125,
           baseBranch: '', // Empty base branch!
           headRefOid: null,
+          mergeable: null,
         ),
       };
       addTearDown(() {
@@ -813,6 +862,7 @@ void main() {
         number: 126,
         baseBranch: 'main',
         headRefOid: null,
+        mergeable: null,
       ),
     };
     addTearDown(() {
