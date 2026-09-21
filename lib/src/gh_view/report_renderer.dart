@@ -267,26 +267,21 @@ String _resolveReviewRequiredActionMarkdown(
   return '⏳ **Awaiting review**';
 }
 
-String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) {
-  if (pr.reviewDecision == ReviewDecision.approved) return '🟢 Approved';
-  if (pr.reviewDecision == ReviewDecision.changesRequested) {
-    if (pr.targetReviewers.isNotEmpty) {
-      return '🟡 Re-review Requested (@${pr.targetReviewers.join(', @')})';
-    }
-    if (areThreadsResolved) return '🔴 Changes Requested (Resolved)';
-    if (pr.unresolvedReviewThreads > 0) {
-      return '🔴 Changes Requested (${pr.unresolvedReviewThreads} open)';
-    }
-    return '🔴 Changes Requested';
-  }
-  if (pr.reviewDecision == ReviewDecision.reviewRequired) {
-    if (pr.targetReviewers.isNotEmpty) {
-      return '🟡 Review Required (@${pr.targetReviewers.join(', @')})';
-    }
-    return '🟡 Review Required';
-  }
-  return '⚪ None';
-}
+String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) =>
+    switch (pr.reviewDecision) {
+      ReviewDecision.approved => '🟢 Approved',
+      ReviewDecision.changesRequested when pr.targetReviewers.isNotEmpty =>
+        '🟡 Re-review Requested (@${pr.targetReviewers.join(', @')})',
+      ReviewDecision.changesRequested when areThreadsResolved =>
+        '🔴 Changes Requested (Resolved)',
+      ReviewDecision.changesRequested when pr.unresolvedReviewThreads > 0 =>
+        '🔴 Changes Requested (${pr.unresolvedReviewThreads} open)',
+      ReviewDecision.changesRequested => '🔴 Changes Requested',
+      ReviewDecision.reviewRequired when pr.targetReviewers.isNotEmpty =>
+        '🟡 Review Required (@${pr.targetReviewers.join(', @')})',
+      ReviewDecision.reviewRequired => '🟡 Review Required',
+      _ => '⚪ None',
+    };
 
 String _formatCiBadgeMarkdown(CiStatus ciStatus) => switch (ciStatus) {
   CiStatus.success => '🟢 Passing',
@@ -458,30 +453,25 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
 
 String _formatReviewBadgeTerminal(GhPr pr) {
   String formatRequested(String label) {
-    if (pr.targetReviewers.isNotEmpty) {
-      final text = '$label (@${pr.targetReviewers.join(', @')})';
-      return yellow.wrap(text) ?? text;
-    }
-    return yellow.wrap(label) ?? label;
+    final text = pr.targetReviewers.isNotEmpty
+        ? '$label (@${pr.targetReviewers.join(', @')})'
+        : label;
+    return yellow.wrap(text) ?? text;
   }
 
-  if (pr.reviewDecision == ReviewDecision.approved) {
-    return green.wrap('Approved') ?? 'Approved';
-  }
-  if (pr.reviewDecision == ReviewDecision.changesRequested) {
-    if (pr.targetReviewers.isNotEmpty) {
-      return formatRequested('Re-review Requested');
-    }
-    if (pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0) {
-      const text = 'Changes Requested (Resolved: Re-review Needed)';
-      return yellow.wrap(text) ?? text;
-    }
-    return red.wrap('Changes Requested') ?? 'Changes Requested';
-  }
-  if (pr.reviewDecision == ReviewDecision.reviewRequired) {
-    return formatRequested('Review Required');
-  }
-  return 'No Reviewers';
+  return switch (pr.reviewDecision) {
+    ReviewDecision.approved => green.wrap('Approved') ?? 'Approved',
+    ReviewDecision.changesRequested when pr.targetReviewers.isNotEmpty =>
+      formatRequested('Re-review Requested'),
+    ReviewDecision.changesRequested
+        when pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0 =>
+      yellow.wrap('Changes Requested (Resolved: Re-review Needed)') ??
+          'Changes Requested (Resolved: Re-review Needed)',
+    ReviewDecision.changesRequested =>
+      red.wrap('Changes Requested') ?? 'Changes Requested',
+    ReviewDecision.reviewRequired => formatRequested('Review Required'),
+    _ => 'No Reviewers',
+  };
 }
 
 String _formatCiBadgeTerminal(GhPr pr) => switch (pr.ciStatus) {
