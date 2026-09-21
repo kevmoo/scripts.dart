@@ -699,6 +699,11 @@ Future<List<ClosedUnmergedPr>> findClosedUnmergedPrs(
   );
   if (candidates.isEmpty) return const [];
 
+  onProgress?.call(
+    'Checking ${candidates.length} local candidate branch(es) for closed '
+    '(unmerged) PRs...',
+  );
+
   final results = <ClosedUnmergedPr>[];
   final seenKeys = <String>{};
   const batchSize = 30;
@@ -725,7 +730,15 @@ void _extractClosedUnmergedFromBatch(
 ) {
   final queryStr = _buildBatchClosedUnmergedQuery(batch);
   final res = runner('gh', ['api', 'graphql', '-f', 'query=$queryStr']);
-  if (res.exitCode != 0) return;
+  if (res.exitCode != 0) {
+    final err = (res.stderr as String).trim();
+    if (err.isNotEmpty) {
+      stderr.writeln(
+        'Warning: Failed to query closed (unmerged) PRs batch: $err',
+      );
+    }
+    return;
+  }
 
   final data = _tryParseGraphQLData(res.stdout);
   if (data == null) return;
@@ -760,7 +773,8 @@ String _buildBatchClosedUnmergedQuery(List<_CandidateBranch> batch) {
       '    mergedPrs: pullRequests(\n'
       '      headRefName: $encBranch,\n'
       '      states: [MERGED],\n'
-      '      first: 1\n'
+      '      first: 1,\n'
+      '      orderBy: {field: CREATED_AT, direction: DESC}\n'
       '    ) {\n'
       '      nodes { number }\n'
       '    }\n'
@@ -784,6 +798,27 @@ String _buildBatchClosedUnmergedQuery(List<_CandidateBranch> batch) {
   return buffer.toString();
 }
 
+bool _isSuppressedByNewerMergedPr(
+  Map<String, dynamic> qVal,
+  int closedPrNumber,
+  String headRefOid,
+  String localSha,
+) {
+  final mergedNodes =
+      ((qVal['mergedPrs'] as Map<String, dynamic>?)?['nodes'] as List?) ??
+      const [];
+  if (mergedNodes.isEmpty) return false;
+  final latestMerged = mergedNodes.first;
+  final mergedNumber = latestMerged is Map<String, dynamic>
+      ? latestMerged['number'] as int?
+      : null;
+  if (mergedNumber == null) return true;
+  if (mergedNumber > closedPrNumber) {
+    return headRefOid.isEmpty || localSha != headRefOid;
+  }
+  return false;
+}
+
 ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
   Map<String, dynamic> data,
   int index,
@@ -797,11 +832,6 @@ ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
       ((qVal['openPrs'] as Map<String, dynamic>?)?['nodes'] as List?) ??
       const [];
   if (openNodes.isNotEmpty) return null;
-
-  final mergedNodes =
-      ((qVal['mergedPrs'] as Map<String, dynamic>?)?['nodes'] as List?) ??
-      const [];
-  if (mergedNodes.isNotEmpty) return null;
 
   final closedNodes =
       ((qVal['closedPrs'] as Map<String, dynamic>?)?['nodes'] as List?) ??
@@ -821,19 +851,29 @@ ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
   final branch = candidate.branch;
   final repoShortName = repo.repoName.split('/').last;
   final matchingWt = findMatchingWorktree(repo, branch, repoShortName);
-  final worktreePath =
-      matchingWt != null && matchingWt.isCheckedOutOnBranch(branch)
-      ? matchingWt.path
-      : null;
+  final isWtOnBranch =
+      matchingWt != null &&
+      matchingWt.isCheckedOutOnBranch(
+        branch,
+        repoShortName: repoShortName,
+        expectedSha: headRefOid,
+      );
+  final worktreePath = isWtOnBranch ? matchingWt.path : null;
 
   final localBranch = repo.branches.where((b) => b.name == branch).firstOrNull;
-  final localSha = localBranch?.sha ?? matchingWt?.sha ?? '';
+  final localSha = localBranch?.sha ?? (isWtOnBranch ? matchingWt.sha : '');
+  if (localSha.isEmpty && worktreePath == null) return null;
+
+  if (_isSuppressedByNewerMergedPr(qVal, number, headRefOid, localSha)) {
+    return null;
+  }
+
   final trunk = resolveTrunkBranch(repo);
   final commitsAhead = _countCommitsAhead(
     worktreePath ?? repo.repoPath,
     trunk,
     runner,
-    headRef: branch,
+    headRef: localSha.isNotEmpty ? localSha : branch,
   );
 
   return (

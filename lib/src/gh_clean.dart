@@ -252,6 +252,7 @@ List<String> planCleanup(
   bool skipWorktrees = false,
   bool skipRemoteBranches = false,
   SyncProcessRunner? processRunner,
+  Map<String, int>? stashCountCache,
 }) {
   final actions = <String>[];
 
@@ -268,8 +269,9 @@ List<String> planCleanup(
   final trunkBranch = _resolveTrunkBranchForPr(pr, localRepo);
   final repoShortName = pr.repository.split('/').last;
 
+  String? wtAction;
   if (!skipWorktrees) {
-    final wtAction = _planWorktreeAction(
+    wtAction = _planWorktreeAction(
       pr,
       localRepo,
       headBranch: headBranch,
@@ -289,6 +291,7 @@ List<String> planCleanup(
     localRepo,
     headBranch: headBranch,
     trunkBranch: trunkBranch,
+    worktreePruned: wtAction != null && wtAction.startsWith('Prune worktree'),
     runner: runner,
   );
   if (branchAction != null) actions.add(branchAction);
@@ -297,8 +300,43 @@ List<String> planCleanup(
     actions.add('Sync `$trunkBranch` to `origin/$trunkBranch`');
   }
 
-  _appendStashNoteIfMutating(actions, localRepo.repoPath, runner);
+  _appendStashNoteIfMutating(
+    actions,
+    localRepo.repoPath,
+    runner,
+    stashCountCache: stashCountCache,
+  );
   return actions;
+}
+
+String _formatWorktreeBranchMismatchReason(
+  LocalWorktreeEntry matchingWt,
+  String headBranch,
+  String repoShortName,
+) {
+  final folderBranch = matchingWt.expectedBranchFromFolder(repoShortName);
+  final isOnHeadBranch =
+      matchingWt.branch == headBranch ||
+      matchingWt.branch == 'refs/heads/$headBranch';
+  if (isOnHeadBranch && folderBranch != null && folderBranch != headBranch) {
+    return 'folder matches `$folderBranch`, checked out on `$headBranch`';
+  }
+  return 'checked out on `${matchingWt.branch}`, expected `$headBranch`';
+}
+
+LocalWorktreeEntry? _findBlockingWorktreeForBranch(
+  LocalRepoInfo localRepo,
+  String headBranch, {
+  required bool worktreePruned,
+}) {
+  if (worktreePruned || headBranch.isEmpty) return null;
+  for (final wt in localRepo.worktrees) {
+    if (wt.path == localRepo.repoPath) continue;
+    if (wt.branch == headBranch || wt.branch == 'refs/heads/$headBranch') {
+      return wt;
+    }
+  }
+  return null;
 }
 
 String? _planWorktreeAction(
@@ -312,13 +350,23 @@ String? _planWorktreeAction(
   final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
   if (matchingWt == null) return null;
 
-  if (!matchingWt.isCheckedOutOnBranch(headBranch)) {
-    return 'Skip worktree at ${matchingWt.path} '
-        '(checked out on `${matchingWt.branch}`, expected `$headBranch`)';
+  if (!matchingWt.isCheckedOutOnBranch(
+    headBranch,
+    repoShortName: repoShortName,
+    expectedSha: pr.headRefOid,
+  )) {
+    final reason = _formatWorktreeBranchMismatchReason(
+      matchingWt,
+      headBranch,
+      repoShortName,
+    );
+    return 'Skip worktree at ${matchingWt.path} ($reason)';
   }
   if (_isDirDirty(matchingWt.path, runner)) {
     return 'Skip worktree at ${matchingWt.path} (has uncommitted changes)';
   }
+  final isDetached =
+      matchingWt.branch.isEmpty || matchingWt.branch == 'DETACHED';
   final wtSafetyError = _planRefSafetyError(
     localRepo.repoPath,
     headBranch: headBranch,
@@ -327,6 +375,7 @@ String? _planWorktreeAction(
     headRefOid: pr.headRefOid,
     prNumber: pr.number,
     runner: runner,
+    targetRefOverride: isDetached ? matchingWt.sha : null,
   );
   if (wtSafetyError != null) {
     return 'Skip worktree at ${matchingWt.path} ($wtSafetyError)';
@@ -339,6 +388,7 @@ String? _planBranchAction(
   LocalRepoInfo localRepo, {
   required String headBranch,
   required String trunkBranch,
+  required bool worktreePruned,
   required SyncProcessRunner runner,
 }) {
   if (headBranch.isEmpty ||
@@ -350,6 +400,16 @@ String? _planBranchAction(
       .where((b) => b.name == headBranch)
       .firstOrNull;
   if (localBranch == null) return null;
+
+  final blockingWt = _findBlockingWorktreeForBranch(
+    localRepo,
+    headBranch,
+    worktreePruned: worktreePruned,
+  );
+  if (blockingWt != null) {
+    return 'Skip local branch `$headBranch` '
+        '(checked out in worktree at ${blockingWt.path})';
+  }
 
   final branchSafetyError = _planRefSafetyError(
     localRepo.repoPath,
@@ -369,8 +429,9 @@ String? _planBranchAction(
 void _appendStashNoteIfMutating(
   List<String> actions,
   String repoPath,
-  SyncProcessRunner runner,
-) {
+  SyncProcessRunner runner, {
+  Map<String, int>? stashCountCache,
+}) {
   final hasLocalMutation = actions.any(
     (a) =>
         a.startsWith('Prune worktree') ||
@@ -378,7 +439,12 @@ void _appendStashNoteIfMutating(
         a.startsWith('Switch branch'),
   );
   if (!hasLocalMutation) return;
-  final stashCount = _countGitStashes(repoPath, runner);
+  final stashCount = stashCountCache != null
+      ? stashCountCache.putIfAbsent(
+          repoPath,
+          () => _countGitStashes(repoPath, runner),
+        )
+      : _countGitStashes(repoPath, runner);
   if (stashCount > 0) {
     actions.add('Note: repository has $stashCount git stash(es)');
   }
@@ -392,6 +458,7 @@ String? _planRefSafetyError(
   required String headRefOid,
   required int? prNumber,
   required SyncProcessRunner runner,
+  String? targetRefOverride,
 }) {
   if (headRefOid.isNotEmpty && localSha == headRefOid) {
     return null;
@@ -406,6 +473,7 @@ String? _planRefSafetyError(
     headRefOid: headRefOid,
     prNumber: prNumber,
     runner: runner,
+    localSha: targetRefOverride,
   );
 }
 
@@ -469,20 +537,18 @@ void _executeLocalRepoCleanup(
   final trunkBranch = _resolveTrunkBranchForPr(pr, localRepo);
   final repoShortName = pr.repository.split('/').last;
 
+  CleanAction? wtAction;
   if (!skipWorktrees) {
-    _recordAction(
-      actions,
-      _executeWorktreePrune(
-        localRepo,
-        headBranch,
-        trunkBranch,
-        repoShortName,
-        pr.headRefOid,
-        runner,
-        prNumber: pr.number,
-      ),
-      onProgress,
+    wtAction = _executeWorktreePrune(
+      localRepo,
+      headBranch,
+      trunkBranch,
+      repoShortName,
+      pr.headRefOid,
+      runner,
+      prNumber: pr.number,
     );
+    _recordAction(actions, wtAction, onProgress);
   }
 
   _recordAction(
@@ -508,6 +574,7 @@ void _executeLocalRepoCleanup(
       pr.headRefOid,
       runner,
       prNumber: pr.number,
+      worktreePruned: wtAction != null && wtAction.success,
     ),
     onProgress,
   );
@@ -562,13 +629,20 @@ CleanAction? _executeWorktreePrune(
   final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
   if (matchingWt == null) return null;
 
-  if (!matchingWt.isCheckedOutOnBranch(headBranch)) {
+  if (!matchingWt.isCheckedOutOnBranch(
+    headBranch,
+    repoShortName: repoShortName,
+    expectedSha: headRefOid,
+  )) {
+    final reason = _formatWorktreeBranchMismatchReason(
+      matchingWt,
+      headBranch,
+      repoShortName,
+    );
     return (
       description: 'Pruning worktree at ${matchingWt.path}',
       success: false,
-      error:
-          'Worktree is checked out on `${matchingWt.branch}` '
-          '(expected `$headBranch`).',
+      error: 'Worktree branch mismatch ($reason).',
     );
   }
 
@@ -583,6 +657,8 @@ CleanAction? _executeWorktreePrune(
   if (headRefOid == null ||
       headRefOid.isEmpty ||
       matchingWt.sha != headRefOid) {
+    final isDetached =
+        matchingWt.branch.isEmpty || matchingWt.branch == 'DETACHED';
     final safetyError = _verifyBranchSafeToDelete(
       localRepo.repoPath,
       headBranch: headBranch,
@@ -590,6 +666,7 @@ CleanAction? _executeWorktreePrune(
       headRefOid: headRefOid,
       prNumber: prNumber,
       runner: runner,
+      localSha: isDetached ? matchingWt.sha : null,
     );
     if (safetyError != null) {
       return (
@@ -650,12 +727,31 @@ CleanAction? _executeBranchDeletion(
   String? headRefOid,
   SyncProcessRunner runner, {
   int? prNumber,
+  bool worktreePruned = false,
 }) {
   if (headBranch.isEmpty ||
       headBranch == trunkBranch ||
-      isProtectedBranch(headBranch) ||
-      !localRepo.branches.any((b) => b.name == headBranch)) {
+      isProtectedBranch(headBranch)) {
     return null;
+  }
+  final localBranch = localRepo.branches
+      .where((b) => b.name == headBranch)
+      .firstOrNull;
+  if (localBranch == null) return null;
+
+  final blockingWt = _findBlockingWorktreeForBranch(
+    localRepo,
+    headBranch,
+    worktreePruned: worktreePruned,
+  );
+  if (blockingWt != null) {
+    return (
+      description: 'Delete local branch `$headBranch`',
+      success: false,
+      error:
+          'Branch `$headBranch` is checked out in worktree at '
+          '${blockingWt.path}.',
+    );
   }
 
   final safetyError = _verifyBranchSafeToDelete(
@@ -694,8 +790,8 @@ CleanAction? _executeBranchDeletion(
         );
 }
 
-/// Returns an error string if [headBranch] has unmerged commits not in
-/// [trunkBranch] or past [headRefOid], or `null` if safe to delete.
+/// Returns an error string if [headBranch] (or [localSha]) has unmerged commits
+/// not in [trunkBranch] or past [headRefOid], or `null` if safe to delete.
 String? _verifyBranchSafeToDelete(
   String repoPath, {
   required String headBranch,
@@ -703,7 +799,11 @@ String? _verifyBranchSafeToDelete(
   required String? headRefOid,
   required int? prNumber,
   required SyncProcessRunner runner,
+  String? localSha,
 }) {
+  final targetRef = (localSha != null && localSha.isNotEmpty)
+      ? localSha
+      : headBranch;
   // Check if all commits on the branch are already contained in trunk.
   // For squash-merged PRs where the local branch was advanced onto the squash
   // commit, headRefOid..headBranch is non-empty even though all work has landed
@@ -714,7 +814,7 @@ String? _verifyBranchSafeToDelete(
       repoPath,
       'rev-list',
       '--count',
-      '$ref..$headBranch',
+      '$ref..$targetRef',
     ]);
     if (countRes.exitCode == 0 && (countRes.stdout as String).trim() == '0') {
       return null;
@@ -730,7 +830,7 @@ String? _verifyBranchSafeToDelete(
     '-C',
     repoPath,
     'log',
-    '$headRefOid..$headBranch',
+    '$headRefOid..$targetRef',
     '--oneline',
   ]);
   if (logRes.exitCode != 0) {
@@ -877,6 +977,7 @@ Future<void> runGhClean({
       return a.number.compareTo(b.number);
     });
 
+  final stashCountCache = <String, int>{};
   final results = [
     for (final pr in allLandedPrs)
       _processPr(
@@ -885,6 +986,7 @@ Future<void> runGhClean({
         options: options,
         runner: runner,
         onProgress: onProgress,
+        stashCountCache: stashCountCache,
       ),
   ];
 
@@ -943,7 +1045,11 @@ Set<String> _collectMatchedWorktreePaths(List<PrCleanResult> results) => {
   for (final r in results)
     if (r.localRepo != null)
       if (findMatchingWorktreeForPr(r.localRepo!, r.pr) case final wt?
-          when wt.isCheckedOutOnBranch(r.pr.headRefName))
+          when wt.isCheckedOutOnBranch(
+            r.pr.headRefName,
+            repoShortName: r.pr.repoShortName,
+            expectedSha: r.pr.headRefOid,
+          ))
         wt.path,
 };
 
@@ -968,6 +1074,7 @@ PrCleanResult _processPr(
   required GhCleanOptions options,
   required SyncProcessRunner runner,
   void Function(String message)? onProgress,
+  Map<String, int>? stashCountCache,
 }) {
   final planned = planCleanup(
     pr,
@@ -976,6 +1083,7 @@ PrCleanResult _processPr(
     skipWorktrees: options.skipWorktrees,
     skipRemoteBranches: options.skipRemoteBranches,
     processRunner: runner,
+    stashCountCache: stashCountCache,
   );
 
   var executed = <CleanAction>[];

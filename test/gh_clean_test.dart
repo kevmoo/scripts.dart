@@ -1647,33 +1647,33 @@ void main() {
         );
         check(wtAction.success).isFalse();
         check(wtAction.error).isNotNull().contains(
-          'Worktree is checked out on `web-content-hash-phase-2-5` '
-          '(expected `web-content-hash-phase-3`).',
+          'Worktree branch mismatch '
+          '(checked out on `web-content-hash-phase-2-5`, '
+          'expected `web-content-hash-phase-3`).',
         );
       },
     );
 
-    test('planCleanup appends git stash note when stashes exist', () async {
-      await d.dir('stash-repo').create();
-      final repoPath = p.join(d.sandbox, 'stash-repo');
+    test('skips pruning worktree AND skips deleting branch when folder belongs '
+        'to another branch (reverse mismatch)', () {
       const pr = LandedPr(
-        number: 79,
-        title: 'Process isolation',
-        url: 'https://github.com/kevmoo/codable.dart/pull/79',
+        number: 75,
+        title: 'Experiment: Use BytesBuilder',
+        url: 'https://github.com/kevmoo/codable.dart/pull/75',
         repository: 'kevmoo/codable.dart',
         repoUrl: 'https://github.com/kevmoo/codable.dart',
-        headRefName: 'agent/kngtn-process-isolation',
+        headRefName: 'bytes-builder-copy',
         headRefOid: 'abc1234',
         baseRefName: 'main',
       );
-      final localRepo = (
+      const localRepo = (
         repoName: 'kevmoo/codable.dart',
         repoNames: ['kevmoo/codable.dart'],
-        repoPath: repoPath,
+        repoPath: '/path/to/codable.dart',
         currentBranch: 'main',
         branches: [
           (
-            name: 'agent/kngtn-process-isolation',
+            name: 'bytes-builder-copy',
             sha: 'abc1234',
             upstream: null,
             upstreamTrack: null,
@@ -1685,14 +1685,99 @@ void main() {
             upstreamTrack: '',
           ),
         ],
-        worktrees: <LocalWorktreeEntry>[],
+        worktrees: [
+          (
+            path: '/path/to/_codable.dart-rope-chunks',
+            branch: 'bytes-builder-copy',
+            sha: 'abc1234',
+          ),
+        ],
       );
 
       final planned = planCleanup(
         pr,
         localRepo,
+        processRunner: (exe, args, {workingDirectory}) =>
+            ProcessResult(0, 0, '', ''),
+      );
+      check(planned).contains(
+        'Skip worktree at /path/to/_codable.dart-rope-chunks '
+        '(folder matches `rope-chunks`, checked out on `bytes-builder-copy`)',
+      );
+      check(planned).contains(
+        'Skip local branch `bytes-builder-copy` '
+        '(checked out in worktree at /path/to/_codable.dart-rope-chunks)',
+      );
+      check(planned)
+          .not((it) => it.contains('Delete local branch `bytes-builder-copy`'));
+
+      final calls = <String>[];
+      final executed = executeCleanup(
+        pr,
+        localRepo,
         processRunner: (exe, args, {workingDirectory}) {
+          calls.add('$exe ${args.join(" ")}');
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+      check(calls)
+        ..not((it) => it.any((c) => c.contains('worktree remove')))
+        ..not((it) => it.any((c) => c.contains('branch -D')));
+      final branchAction = executed.firstWhere(
+        (a) => a.description.contains('Delete local branch'),
+      );
+      check(branchAction.success).isFalse();
+      check(branchAction.error).isNotNull().contains(
+        'checked out in worktree at /path/to/_codable.dart-rope-chunks',
+      );
+    });
+
+    test(
+      'planCleanup appends git stash note and caches per repoPath',
+      () async {
+        await d.dir('stash-repo').create();
+        final repoPath = p.join(d.sandbox, 'stash-repo');
+        const pr = LandedPr(
+          number: 79,
+          title: 'Process isolation',
+          url: 'https://github.com/kevmoo/codable.dart/pull/79',
+          repository: 'kevmoo/codable.dart',
+          repoUrl: 'https://github.com/kevmoo/codable.dart',
+          headRefName: 'agent/kngtn-process-isolation',
+          headRefOid: 'abc1234',
+          baseRefName: 'main',
+        );
+        final localRepo = (
+          repoName: 'kevmoo/codable.dart',
+          repoNames: ['kevmoo/codable.dart'],
+          repoPath: repoPath,
+          currentBranch: 'main',
+          branches: [
+            (
+              name: 'agent/kngtn-process-isolation',
+              sha: 'abc1234',
+              upstream: null,
+              upstreamTrack: null,
+            ),
+            (
+              name: 'main',
+              sha: 'abc1234',
+              upstream: 'origin/main',
+              upstreamTrack: '',
+            ),
+          ],
+          worktrees: <LocalWorktreeEntry>[],
+        );
+
+        var stashCalls = 0;
+        final cache = <String, int>{};
+        ProcessResult runner(
+          String exe,
+          List<String> args, {
+          String? workingDirectory,
+        }) {
           if (args.contains('stash') && args.contains('list')) {
+            stashCalls++;
             return ProcessResult(
               0,
               0,
@@ -1701,10 +1786,25 @@ void main() {
             );
           }
           return ProcessResult(0, 0, '', '');
-        },
-      );
-      check(planned).contains('Note: repository has 2 git stash(es)');
-    });
+        }
+
+        final planned1 = planCleanup(
+          pr,
+          localRepo,
+          processRunner: runner,
+          stashCountCache: cache,
+        );
+        final planned2 = planCleanup(
+          pr,
+          localRepo,
+          processRunner: runner,
+          stashCountCache: cache,
+        );
+        check(planned1).contains('Note: repository has 2 git stash(es)');
+        check(planned2).contains('Note: repository has 2 git stash(es)');
+        check(stashCalls).equals(1);
+      },
+    );
   });
 
   group('findClosedUnmergedPrs', () {
@@ -1752,7 +1852,11 @@ void main() {
                   'q0': {
                     'nameWithOwner': 'kevmoo/codable.dart',
                     'openPrs': {'nodes': <Object>[]},
-                    'mergedPrs': {'nodes': <Object>[]},
+                    'mergedPrs': {
+                      'nodes': [
+                        {'number': 10},
+                      ],
+                    },
                     'closedPrs': {
                       'nodes': [
                         {
