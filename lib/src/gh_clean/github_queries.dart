@@ -608,6 +608,10 @@ UnlinkedWorktree _populateUnlinkedWorktreeDetails(
   final trunk = resolveTrunkBranch(repo);
   final commitsAhead = _countCommitsAhead(wt.path, trunk, runner);
   final lastCommit = _getLastCommitInfo(wt.path, runner);
+  final worktreeAge = _computeWorktreeAge(wt.path);
+  final formattedDate = lastCommit.date != null && worktreeAge != null
+      ? '${lastCommit.date} ($worktreeAge)'
+      : lastCommit.date ?? worktreeAge;
 
   return (
     repository: repo.repoName,
@@ -615,22 +619,40 @@ UnlinkedWorktree _populateUnlinkedWorktreeDetails(
     branch: wt.branch.isEmpty ? '(detached)' : wt.branch,
     sha: wt.sha,
     commitsAhead: commitsAhead,
-    lastCommitDate: lastCommit.date,
+    lastCommitDate: formattedDate,
     lastCommitSubject: lastCommit.subject,
   );
+}
+
+String? _computeWorktreeAge(String worktreePath, {DateTime? now}) {
+  try {
+    final gitStat = FileStat.statSync('$worktreePath/.git');
+    final modified = gitStat.type != FileSystemEntityType.notFound
+        ? gitStat.modified
+        : Directory(worktreePath).statSync().modified;
+    final refNow = now ?? DateTime.now();
+    final diff = refNow.difference(modified);
+    if (diff.isNegative) return '🟢 just now';
+    if (diff.inMinutes < 60) return '🟢 ${diff.inMinutes}m ago';
+    if (diff.inHours < 24) return '🟢 ${diff.inHours}h ago';
+    return null;
+  } catch (_) {
+    return null;
+  }
 }
 
 int? _countCommitsAhead(
   String worktreePath,
   String trunkBranch,
-  SyncProcessRunner runner,
-) {
+  SyncProcessRunner runner, {
+  String headRef = 'HEAD',
+}) {
   final refs = ['origin/$trunkBranch', 'upstream/$trunkBranch', trunkBranch];
   for (final ref in refs) {
     final revResult = runner('git', [
       'rev-list',
       '--count',
-      '$ref..HEAD',
+      '$ref..$headRef',
     ], workingDirectory: worktreePath);
     if (revResult.exitCode == 0) {
       final parsed = int.tryParse((revResult.stdout as String).trim());
@@ -657,4 +679,173 @@ int? _countCommitsAhead(
   final date = parts[0].trim();
   final subject = parts.length > 1 ? parts.sublist(1).join('|').trim() : null;
   return (date: date, subject: subject);
+}
+
+/// Discovers local branches and worktrees across [localRepos] whose GitHub PR
+/// was closed without merging (`state == 'CLOSED'` and no open PR exists for
+/// that branch).
+Future<List<ClosedUnmergedPr>> findClosedUnmergedPrs(
+  List<LocalRepoInfo> localRepos,
+  Set<String> alreadyMatchedBranches, {
+  String? repoFilter,
+  SyncProcessRunner? processRunner,
+  void Function(String message)? onProgress,
+}) async {
+  final runner = processRunner ?? defaultSyncProcessRunner;
+  final candidates = _collectCandidateBranches(
+    localRepos,
+    alreadyMatchedBranches,
+    repoFilter: repoFilter,
+  );
+  if (candidates.isEmpty) return const [];
+
+  final results = <ClosedUnmergedPr>[];
+  final seenKeys = <String>{};
+  const batchSize = 30;
+
+  for (var i = 0; i < candidates.length; i += batchSize) {
+    final batch = candidates.skip(i).take(batchSize).toList();
+    _extractClosedUnmergedFromBatch(batch, seenKeys, results, runner);
+  }
+
+  return results..sort((a, b) {
+    final repoCmp = a.repository.toLowerCase().compareTo(
+      b.repository.toLowerCase(),
+    );
+    if (repoCmp != 0) return repoCmp;
+    return a.number.compareTo(b.number);
+  });
+}
+
+void _extractClosedUnmergedFromBatch(
+  List<_CandidateBranch> batch,
+  Set<String> seenKeys,
+  List<ClosedUnmergedPr> results,
+  SyncProcessRunner runner,
+) {
+  final queryStr = _buildBatchClosedUnmergedQuery(batch);
+  final res = runner('gh', ['api', 'graphql', '-f', 'query=$queryStr']);
+  if (res.exitCode != 0) return;
+
+  final data = _tryParseGraphQLData(res.stdout);
+  if (data == null) return;
+
+  for (var b = 0; b < batch.length; b++) {
+    final item = _parseClosedUnmergedBatchItem(data, b, batch[b], runner);
+    if (item == null) continue;
+    final key = '${item.repository}#${item.branch}'.toLowerCase();
+    if (seenKeys.add(key)) {
+      results.add(item);
+    }
+  }
+}
+
+String _buildBatchClosedUnmergedQuery(List<_CandidateBranch> batch) {
+  final buffer = StringBuffer('query {\n');
+  for (var b = 0; b < batch.length; b++) {
+    final item = batch[b];
+    final encOwner = jsonEncode(item.owner);
+    final encName = jsonEncode(item.name);
+    final encBranch = jsonEncode(item.branch);
+    buffer.writeln(
+      '  q$b: repository(owner: $encOwner, name: $encName) {\n'
+      '    nameWithOwner\n'
+      '    openPrs: pullRequests(\n'
+      '      headRefName: $encBranch,\n'
+      '      states: [OPEN],\n'
+      '      first: 1\n'
+      '    ) {\n'
+      '      nodes { number }\n'
+      '    }\n'
+      '    mergedPrs: pullRequests(\n'
+      '      headRefName: $encBranch,\n'
+      '      states: [MERGED],\n'
+      '      first: 1\n'
+      '    ) {\n'
+      '      nodes { number }\n'
+      '    }\n'
+      '    closedPrs: pullRequests(\n'
+      '      headRefName: $encBranch,\n'
+      '      states: [CLOSED],\n'
+      '      first: 1,\n'
+      '      orderBy: {field: CREATED_AT, direction: DESC}\n'
+      '    ) {\n'
+      '      nodes {\n'
+      '        number\n'
+      '        title\n'
+      '        url\n'
+      '        headRefOid\n'
+      '      }\n'
+      '    }\n'
+      '  }',
+    );
+  }
+  buffer.writeln('}');
+  return buffer.toString();
+}
+
+ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
+  Map<String, dynamic> data,
+  int index,
+  _CandidateBranch candidate,
+  SyncProcessRunner runner,
+) {
+  final qVal = data['q$index'];
+  if (qVal is! Map<String, dynamic>) return null;
+
+  final openNodes =
+      ((qVal['openPrs'] as Map<String, dynamic>?)?['nodes'] as List?) ??
+      const [];
+  if (openNodes.isNotEmpty) return null;
+
+  final mergedNodes =
+      ((qVal['mergedPrs'] as Map<String, dynamic>?)?['nodes'] as List?) ??
+      const [];
+  if (mergedNodes.isNotEmpty) return null;
+
+  final closedNodes =
+      ((qVal['closedPrs'] as Map<String, dynamic>?)?['nodes'] as List?) ??
+      const [];
+  if (closedNodes.isEmpty) return null;
+
+  final node = closedNodes.first;
+  if (node is! Map<String, dynamic>) return null;
+
+  final number = node['number'] as int?;
+  final title = node['title'] as String?;
+  final url = node['url'] as String?;
+  final headRefOid = (node['headRefOid'] as String?) ?? '';
+  if (number == null || title == null || url == null) return null;
+
+  final repo = candidate.repo;
+  final branch = candidate.branch;
+  final repoShortName = repo.repoName.split('/').last;
+  final matchingWt = findMatchingWorktree(repo, branch, repoShortName);
+  final worktreePath =
+      matchingWt != null && matchingWt.isCheckedOutOnBranch(branch)
+      ? matchingWt.path
+      : null;
+
+  final localBranch = repo.branches.where((b) => b.name == branch).firstOrNull;
+  final localSha = localBranch?.sha ?? matchingWt?.sha ?? '';
+  final trunk = resolveTrunkBranch(repo);
+  final commitsAhead = _countCommitsAhead(
+    worktreePath ?? repo.repoPath,
+    trunk,
+    runner,
+    headRef: branch,
+  );
+
+  return (
+    repository: (qVal['nameWithOwner'] as String?) ?? repo.repoName,
+    number: number,
+    title: title,
+    url: url,
+    branch: branch,
+    headRefOid: headRefOid,
+    localSha: localSha,
+    worktreePath: worktreePath,
+    commitsAhead: commitsAhead,
+    shaMatchesPrHead: headRefOid.isNotEmpty && localSha == headRefOid,
+  );
 }

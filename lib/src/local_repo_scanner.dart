@@ -342,6 +342,17 @@ List<LocalWorktreeEntry> _parseWorktrees(
   return worktrees;
 }
 
+/// Extension on [LocalWorktreeEntry] for branch matching.
+extension LocalWorktreeEntryExtension on LocalWorktreeEntry {
+  /// Returns `true` if this worktree is currently checked out on [branchName]
+  /// (or detached). Returns `false` when the worktree switched to a different
+  /// branch even if its directory name still reflects [branchName].
+  bool isCheckedOutOnBranch(String branchName) {
+    if (branch.isEmpty || branch == 'DETACHED') return true;
+    return branch == branchName || branch == 'refs/heads/$branchName';
+  }
+}
+
 /// Discovers an attached worktree matching the PR branch or folder naming
 /// scheme.
 LocalWorktreeEntry? findMatchingWorktree(
