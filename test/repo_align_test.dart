@@ -7,6 +7,7 @@ import 'package:kevmoo_scripts/src/repo_align/repo_align_runner.dart';
 import 'package:kevmoo_scripts/src/repo_align/repo_align_scanner.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+import 'package:test_descriptor/test_descriptor.dart' as d;
 
 void main() {
   group('RepoAlignmentStatus', () {
@@ -625,6 +626,30 @@ workspace:
         ),
       ).isFalse();
     });
+  });
+
+  group('RepoAlignScanner targetDir and worktree support', () {
+    test(
+      'scans a sibling worktree directory and normalizes canonical repo name',
+      () async {
+        await d.dir('_stats-repo-align', [
+          d.file(
+            'pubspec.yaml',
+            'name: stats\nversion: 1.0.0\nenvironment:\n  sdk: ^3.0.0\n',
+          ),
+        ]).create();
+
+        final worktreePath = '${d.sandbox}/_stats-repo-align';
+        final scanner = RepoAlignScanner(
+          baseDirPath: d.sandbox,
+          queryGitHubApi: false,
+        );
+        final results = scanner.scanAll(targetDir: worktreePath);
+        check(results).length.equals(1);
+        check(results.first.name).equals('stats');
+        check(results.first.path).equals(worktreePath);
+      },
+    );
   });
 }
 

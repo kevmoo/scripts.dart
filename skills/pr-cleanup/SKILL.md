@@ -1,19 +1,34 @@
 ---
 name: pr-cleanup
 description: >-
-  Orchestrates multi-repo GitHub PR, Gerrit CL, local Git worktree, and branch
-  cleanup sweeps alongside active open-PR next-step triage using `kscripts`.
-  Use when asked to run a PR cleanup sweep, prune merged worktrees/branches,
-  analyze current open PRs and next steps, or reconcile local checkouts in
-  `~/github` against GitHub/Gerrit and active Jetski sessions.
+  Orchestrates multi-repo GitHub pull request, Gerrit CL, local Git worktree,
+  and branch cleanup sweeps alongside active open-PR next-step triage. Use when
+  asked to run a PR cleanup sweep, prune merged worktrees or branches, review
+  open PRs and next steps across repositories, or reconcile local checkouts in
+  ~/github against GitHub, Gerrit, and active Jetski sessions. Don't use for
+  triaging inline review comments or CI failures on a single PR (use
+  github-pr-triage or pr-loop), creating new worktrees (use new-worktree), or
+  Google3 Piper CL triage (use cl-triage).
+compatibility: "Requires kscripts (kevmoo_scripts via dart install) and local checkouts in ~/github"
+metadata:
+  author: kevmoo
+  target_environment: personal
 ---
 
 # PR & Worktree Cleanup Sweep (`pr-cleanup`)
 
-Use the `kscripts` AOT CLI (`kevmoo_scripts`, installed via `dart install`) to
-audit and clean up merged/closed GitHub Pull Requests, Dart SDK Gerrit CLs,
-sibling Git worktrees (`~/github/_<repo>-<branch>`), and local/remote feature
-branches while protecting in-flight agent sessions.
+> [!NOTE] This skill targets the personal repository layout (`~/github` and
+> `~/github/kevmoo/*`) and invokes the unified `kscripts` AOT CLI.
+
+## Quick Start & Prerequisites
+
+Ensure `kscripts` is installed and up to date on `PATH`. If `kscripts` is
+missing or local `~/github/kevmoo/scripts.dart` source was modified, rebuild the
+native AOT binary before starting:
+
+```bash
+dart install ~/github/kevmoo/scripts.dart --overwrite
+```
 
 ## 1. Read-Only Pre-Flight Sweep (Always Start Read-Only)
 
@@ -35,6 +50,8 @@ parallel to build a unified view of `~/github`:
    ```bash
    kscripts gerrit-view -p ~/github/dart-sdk
    ```
+   _(Automatically resolves `~/github/dart-sdk/core/main/sdk` on bare-clone
+   layouts and fetches Gerrit refs from `upstream` / `dart-googlesource`)._
 4. **Open Assigned GitHub Issues** _(optional — run when asked for broader
    backlog/next-steps triage)_:
    ```bash
@@ -52,21 +69,26 @@ Before proposing to delete any worktree, local branch, or unpushed commit:
      git -C <worktree_path> status -s
      git -C <worktree_path> log -n 2 --oneline
      ```
-   - **Squash-Merge Ancestry Check**: If `gh-clean` reports
-     `Error: Branch has unpushed commits past PR HEAD (<sha>)` on a merged PR
-     branch, check whether the branch is actually an ancestor of `origin/main`:
+   - **Squash-Merge Ancestry Check**: If a merged PR branch still reports
+     unpushed commits past PR HEAD, fetch `origin/main` first and check whether
+     the branch is an ancestor of `origin/main`:
      ```bash
+     git -C <repo_path> fetch origin main --quiet
      git -C <repo_path> rev-list --count origin/main..<branch>
      ```
      If the count is `0`, the branch was reset onto the squash-merge commit and
      is safe to delete via `git -C <repo_path> branch -D <branch>`.
-2. **Cross-Reference Active Jetski Conversations & PM-OS Tasks**:
-   - Check `~/.gemini/jetski/annotations/*.pbtxt` and search session transcripts
-     (`~/.gemini/jetski/brain/*/.system_generated/logs/transcript.jsonl`) for
-     the worktree folder name (`_<repo>-<branch>`) or PR number.
-   - If the worktree belongs to an **active (`🟢` / `🧪`)** sister session or an
+2. **Cross-Reference Active Jetski Conversations & PM-OS Tasks (Bounded
+   Lookup)**:
+   - First check `~/.gemini/jetski/annotations/*.pbtxt` (or run
+     `pm-status pickup`) to identify active (`🟢` / `🧪`) or waiting (`⏳` /
+     `🔔`) sessions. Do **not** run unbounded greps across all
+     `~/.gemini/jetski/brain/*/transcript.jsonl` files; only inspect
+     `transcript.jsonl` for specific active/waiting conversation IDs when
+     `.pbtxt` titles do not already identify the worktree.
+   - If a worktree belongs to an **active (`🟢` / `🧪`)** sister session or an
      open PR/CL, classify it in **Bucket A (`🚫 DO NOT TOUCH`)**.
-   - If the worktree belongs to a **waiting (`⏳` / `🔔`)** session whose PR/CL
+   - If a worktree belongs to a **waiting (`⏳` / `🔔`)** session whose PR/CL
      has already **merged**, include closing that session (`pm-convo --done`)
      and any associated PM-OS task (`pm-work complete "#XXXX"`) in **Bucket B**.
 
@@ -102,10 +124,16 @@ Gate execution via `ask_question` with explicit bucket choices:
 
 Once approved:
 
-1. Run `kscripts gh-clean --repo <owner/repo> --apply` for each approved
-   repository (or `kscripts gh-clean -l 50 --apply` for a full Bucket B sweep).
-2. For approved Bucket C dirty worktrees, run
-   `git -C <parent_repo> worktree remove --force <worktree_path>` and
-   `git -C <parent_repo> branch -D <branch>`.
-3. Mark completed sister conversations `☑️ --done` (`pm-convo`) and close landed
-   PM-OS tasks (`pm-work complete "#XXXX"`).
+1. **Execute Bucket B Pruning**:
+   - If **any** merged-PR worktree was held back in **Bucket A** (because an
+     active sister session is still using it), run
+     `kscripts gh-clean -R <owner/repo> --apply` for each approved Bucket B
+     repository individually so the Bucket A worktree is not touched.
+   - Only run unscoped `kscripts gh-clean -l 50 --apply` when **zero** merged-PR
+     worktrees were reclassified into Bucket A.
+2. **Execute Bucket C Pruning** _(only if Bucket C was explicitly approved)_:
+   - Run `git -C <parent_repo> worktree remove --force <worktree_path>` and
+     `git -C <parent_repo> branch -D <branch>`.
+3. **Close Landed Sessions & Tasks**:
+   - Mark completed waiting conversations `☑️ --done` (`pm-convo`) and close
+     landed PM-OS tasks (`pm-work complete "#XXXX"`).

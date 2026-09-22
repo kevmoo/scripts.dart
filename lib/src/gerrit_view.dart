@@ -205,17 +205,21 @@ String _resolveRepoInfo(String? gerritRepo) {
   final repoPath = gerritRepo == null
       ? Directory.current.absolute.path
       : Directory(gerritRepo).absolute.path;
-  final checkResult = Process.runSync('git', [
-    'rev-parse',
-    '--show-toplevel',
-  ], workingDirectory: repoPath);
-  if (checkResult.exitCode != 0) {
-    throw GerritViewException(
-      'Directory "$repoPath" is not a Git repository (or git is missing).',
-      exitCode: ExitCode.config.code,
-    );
+  final candidates = <String>[repoPath, '$repoPath/core/main/sdk'];
+  for (final candidate in candidates) {
+    if (!Directory(candidate).existsSync()) continue;
+    final checkResult = Process.runSync('git', [
+      'rev-parse',
+      '--show-toplevel',
+    ], workingDirectory: candidate);
+    if (checkResult.exitCode == 0) {
+      return (checkResult.stdout as String).trim();
+    }
   }
-  return (checkResult.stdout as String).trim();
+  throw GerritViewException(
+    'Directory "$repoPath" is not a Git repository (or git is missing).',
+    exitCode: ExitCode.config.code,
+  );
 }
 
 String? _getGitConfig(String key, String repoPath) {
@@ -228,6 +232,19 @@ String? _getGitConfig(String key, String repoPath) {
     return (result.stdout as String).trim();
   }
   return null;
+}
+
+String _resolveGerritRemoteName(String actualRepoRoot) {
+  for (final remote in const ['upstream', 'dart-googlesource', 'origin']) {
+    final url = _getGitConfig('remote.$remote.url', actualRepoRoot);
+    if (url != null &&
+        (url.contains('googlesource.com') ||
+            url.startsWith('sso://') ||
+            url.contains('review.chrome'))) {
+      return remote;
+    }
+  }
+  return 'origin';
 }
 
 String? _parseGerritHostFromConfig(String actualRepoRoot) {
@@ -248,10 +265,22 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
 }
 
 (String, String?)? _parseRemoteOrigin(String actualRepoRoot) {
-  final remoteUrl = _getGitConfig('remote.origin.url', actualRepoRoot);
-  if (remoteUrl == null ||
-      (!remoteUrl.contains('googlesource.com') &&
-          !remoteUrl.contains('review.chrome'))) {
+  final remoteName = _resolveGerritRemoteName(actualRepoRoot);
+  final remoteUrl = _getGitConfig('remote.$remoteName.url', actualRepoRoot);
+  if (remoteUrl == null) return null;
+  if (remoteUrl.startsWith('sso://')) {
+    final parts = remoteUrl.substring('sso://'.length).split('/');
+    if (parts.length >= 2) {
+      final host = '${parts.first}-review.googlesource.com';
+      final lastSeg = parts.last;
+      final gProject = lastSeg.endsWith('.git')
+          ? lastSeg.substring(0, lastSeg.length - 4)
+          : lastSeg;
+      return (host, gProject);
+    }
+  }
+  if (!remoteUrl.contains('googlesource.com') &&
+      !remoteUrl.contains('review.chrome')) {
     return null;
   }
   final uri = Uri.tryParse(remoteUrl);
@@ -589,10 +618,13 @@ Future<void> runGerritView({String? gerritRepo}) async {
   }
 
   if (fetchRefs.isNotEmpty) {
-    print(styleDim.wrap('Fetching remote changes from Gerrit...')!);
+    final gerritRemote = _resolveGerritRemoteName(actualRepoRoot);
+    print(
+      styleDim.wrap('Fetching remote changes from Gerrit ($gerritRemote)...')!,
+    );
     final fetchResult = await Process.start(
       'git',
-      ['fetch', 'origin', ...fetchRefs],
+      ['fetch', gerritRemote, ...fetchRefs],
       workingDirectory: actualRepoRoot,
       mode: ProcessStartMode.inheritStdio,
     );
