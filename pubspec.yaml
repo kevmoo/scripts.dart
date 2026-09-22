@@ -35,6 +35,7 @@ executables:
   gh-view: gh_view
   git-org-clean: git_org_clean
   git-up: git_up
+  kscripts:
   lint-cleanup: lint_cleanup
   puppy:
   repo-align: repo_align

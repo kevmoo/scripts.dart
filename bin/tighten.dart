@@ -1,36 +1,3 @@
-import 'package:args/command_runner.dart';
-import 'package:io/io.dart';
-import 'package:kevmoo_scripts/src/testable_print.dart';
-import 'package:kevmoo_scripts/src/tighten.dart';
+import 'package:kevmoo_scripts/src/kscripts_runner.dart';
 
-void main(List<String> args) async {
-  final TightenOptions options;
-  try {
-    options = parseTightenOptions(args);
-  } on UsageException catch (e) {
-    setError(
-      message: '${e.message}\n\n${e.usage}',
-      exitCode: ExitCode.usage.code,
-    );
-    return;
-  }
-
-  if (options.help) {
-    print('Tighten workspace dependencies.');
-    print('');
-    print(tightenUsage);
-    return;
-  }
-
-  try {
-    await tighten(isWorkspace: options.workspace);
-  } on TightenException catch (e) {
-    setError(message: e.message, exitCode: ExitCode.config.code);
-  } catch (e, stack) {
-    setError(
-      message: 'An unexpected error occurred: $e',
-      exitCode: ExitCode.software.code,
-      stack: stack,
-    );
-  }
-}
+Future<void> main(List<String> args) => runTightenCli(args);
