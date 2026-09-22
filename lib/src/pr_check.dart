@@ -9,6 +9,7 @@ import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 
 import 'process_utils.dart';
+import 'shared/gh_args.dart';
 import 'testable_print.dart';
 
 /// A single local CI parity violation detected before opening/updating a PR.
@@ -71,25 +72,13 @@ Future<void> runPrCheckCli(
   SyncProcessRunner processRunner = defaultSyncProcessRunner,
 }) async {
   final parser = _buildPrCheckArgParser();
-  final ArgResults results;
-  try {
-    results = parser.parse(args);
-  } on FormatException catch (e) {
-    setError(
-      message: '${e.message}\n\nUsage: pr-check [options]\n${parser.usage}',
-      exitCode: ExitCode.usage.code,
-    );
-    return;
-  }
-
-  if (results['help'] as bool) {
-    print('Validate local CI parity before running gh pr create.');
-    print('');
-    print('Usage: pr-check [options]');
-    print('');
-    print(parser.usage);
-    return;
-  }
+  final results = parseCliArgs(
+    parser,
+    args,
+    commandName: 'pr-check',
+    description: 'Validate local CI parity before running gh pr create.',
+  );
+  if (results == null) return;
 
   final targetDir = Directory(
     p.normalize(p.absolute(results['dir'] as String)),
@@ -110,8 +99,10 @@ Future<void> runPrCheckCli(
   );
 
   if (!report.passed) {
-    _printViolations(report);
-    exitCode = ExitCode.software.code;
+    setError(
+      message: _formatViolations(report),
+      exitCode: ExitCode.software.code,
+    );
     return;
   }
 
@@ -123,19 +114,21 @@ Future<void> runPrCheckCli(
   );
 }
 
-void _printViolations(PrCheckReport report) {
-  stderr.writeln(
-    ansi.red.wrap(
-      '❌ [pr-check] ${report.violations.length} local CI validation '
-      'check(s) failed (diff vs ${report.baseRef}):',
-    ),
-  );
+String _formatViolations(PrCheckReport report) {
+  final buf = StringBuffer()
+    ..writeln(
+      ansi.red.wrap(
+        '❌ [pr-check] ${report.violations.length} local CI validation '
+        'check(s) failed (diff vs ${report.baseRef}):',
+      ),
+    );
   for (final v in report.violations) {
-    stderr
+    buf
       ..writeln()
       ..writeln(ansi.styleBold.wrap('  • [${v.check}] ${v.message}'))
       ..writeln('    💡 Fix: ${v.remediation}');
   }
+  return buf.toString().trimRight();
 }
 
 /// Runs all deterministic pre-PR checks on [directory].
@@ -148,7 +141,7 @@ PrCheckReport runPrCheck({
   final repoRoot = _resolveGitTopLevel(directory, processRunner) ?? directory;
   final violations = <PrCheckViolation>[];
 
-  final dirtyViolation = _checkCleanTrackedTree(repoRoot, processRunner);
+  final dirtyViolation = _checkCleanWorkingTree(repoRoot, processRunner);
   if (dirtyViolation != null) {
     violations.add(dirtyViolation);
   }
@@ -169,9 +162,10 @@ PrCheckReport runPrCheck({
   violations.addAll(
     _checkFirehosePackages(
       repoRoot: repoRoot,
+      baseRef: baseRef,
       changedFiles: changedFiles.toSet(),
-      workflowsText: workflowsText,
       requireWip: requireWip,
+      runSync: processRunner,
     ),
   );
 
@@ -235,23 +229,23 @@ Directory? _resolveGitTopLevel(Directory dir, SyncProcessRunner runSync) {
   return out.isEmpty ? null : Directory(out);
 }
 
-PrCheckViolation? _checkCleanTrackedTree(
+PrCheckViolation? _checkCleanWorkingTree(
   Directory repoRoot,
   SyncProcessRunner runSync,
 ) {
   final res = runSync('git', [
     'status',
     '--porcelain',
-    '--untracked-files=no',
   ], workingDirectory: repoRoot.path);
   if (res.exitCode != 0) return null;
   final dirty = (res.stdout as String).trim();
   if (dirty.isEmpty) return null;
   return PrCheckViolation(
     check: 'git-status',
-    message: 'Uncommitted changes in tracked files:\n$dirty',
+    message: 'Uncommitted or untracked files in working tree:\n$dirty',
     remediation:
-        'Stage, commit, and push all tracked changes before PR creation.',
+        'Stage, commit (or gitignore), and push all changes before '
+        'PR creation.',
   );
 }
 
@@ -328,9 +322,10 @@ bool _isDartSdkRepo(Directory repoRoot) =>
 /// `Package`, and `Changelog`).
 List<PrCheckViolation> _checkFirehosePackages({
   required Directory repoRoot,
+  required String baseRef,
   required Set<String> changedFiles,
-  required String workflowsText,
   required bool requireWip,
+  required SyncProcessRunner runSync,
 }) {
   final packages = runZoned(
     () => firehose.Repository(repoRoot).locatePackages(),
@@ -340,27 +335,67 @@ List<PrCheckViolation> _checkFirehosePackages({
   for (final pkg in packages) {
     final v = _validateSingleFirehosePackage(
       repoRoot: repoRoot,
+      baseRef: baseRef,
       pkg: pkg,
       changedFiles: changedFiles,
       requireWip: requireWip,
+      runSync: runSync,
     );
     violations.addAll(v);
   }
   return violations;
 }
 
+List<String> _packageRelativeChanges(String prefix, Set<String> changedFiles) {
+  final result = <String>[];
+  for (final f in changedFiles) {
+    if (prefix.isEmpty) {
+      if (!f.startsWith('.github/')) result.add(f);
+    } else if (f.startsWith(prefix)) {
+      result.add(f.substring(prefix.length));
+    }
+  }
+  return result;
+}
+
+bool _isCodeOrPackageFile(String relToPkg) =>
+    relToPkg == 'pubspec.yaml' ||
+    relToPkg.startsWith('lib/') ||
+    relToPkg.startsWith('bin/') ||
+    relToPkg.startsWith('test/') ||
+    relToPkg.startsWith('tool/') ||
+    relToPkg.startsWith('hook/') ||
+    relToPkg.startsWith('web/');
+
+String? _readBasePubspecVersion(
+  Directory repoRoot,
+  String baseRef,
+  String pubspecRel,
+  SyncProcessRunner runSync,
+) {
+  final res = runSync('git', [
+    'show',
+    '$baseRef:$pubspecRel',
+  ], workingDirectory: repoRoot.path);
+  if (res.exitCode != 0) return null;
+  final out = res.stdout as String;
+  if (out.isEmpty) return null;
+  final match = RegExp(r'^version:\s*(\S+)', multiLine: true).firstMatch(out);
+  return match?.group(1);
+}
+
 List<PrCheckViolation> _validateSingleFirehosePackage({
   required Directory repoRoot,
+  required String baseRef,
   required firehose.Package pkg,
   required Set<String> changedFiles,
   required bool requireWip,
+  required SyncProcessRunner runSync,
 }) {
   final relDir = p.relative(pkg.directory.path, from: repoRoot.path);
   final prefix = relDir == '.' ? '' : '$relDir/';
-  final touchedInPkg = changedFiles.any(
-    (f) => prefix.isEmpty || f.startsWith(prefix),
-  );
-  if (!touchedInPkg) return const [];
+  final pkgChangedFiles = _packageRelativeChanges(prefix, changedFiles);
+  if (pkgChangedFiles.isEmpty) return const [];
 
   final violations = <PrCheckViolation>[];
   final ver = pkg.version;
@@ -400,7 +435,17 @@ List<PrCheckViolation> _validateSingleFirehosePackage({
   }
 
   final pubspecRel = prefix.isEmpty ? 'pubspec.yaml' : '${prefix}pubspec.yaml';
-  if (requireWip && !ver.isPreRelease && !changedFiles.contains(pubspecRel)) {
+  final touchesPackageSurface = pkgChangedFiles.any(_isCodeOrPackageFile);
+  final baseVer = _readBasePubspecVersion(
+    repoRoot,
+    baseRef,
+    pubspecRel,
+    runSync,
+  );
+  if (requireWip &&
+      touchesPackageSurface &&
+      !ver.isPreRelease &&
+      (baseVer == null || baseVer == verStr)) {
     final nextWip = '${ver.major}.${ver.minor}.${ver.patch + 1}-wip';
     violations.add(
       PrCheckViolation(
@@ -446,11 +491,6 @@ PrCheckViolation? _checkDartAnalyzeFatalInfos(
   String dartBin,
   SyncProcessRunner runSync,
 ) {
-  final pkgConfig = File(
-    p.join(repoRoot.path, '.dart_tool', 'package_config.json'),
-  );
-  if (!pkgConfig.existsSync()) return null;
-
   final res = runSync(dartBin, [
     'analyze',
     '--fatal-infos',
@@ -463,7 +503,9 @@ PrCheckViolation? _checkDartAnalyzeFatalInfos(
     message:
         'dart analyze --fatal-infos failed (bare `dart analyze` ignores '
         'info-level lints that fail CI):\n$out',
-    remediation: 'Fix the analyzer diagnostics above (e.g. dart fix --apply).',
+    remediation:
+        'Run "dart pub get" (if uninitialized) and fix the analyzer '
+        'diagnostics above (e.g. dart fix --apply).',
   );
 }
 

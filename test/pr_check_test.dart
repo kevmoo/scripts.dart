@@ -151,4 +151,124 @@ void main() {}
           .contains('browser-test-on-vm');
     },
   );
+
+  test('passes cleanly when published package is at -wip version '
+      'and all checks succeed', () {
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: sample_pkg
+version: 1.2.1-wip
+environment:
+  sdk: ^3.5.0
+''');
+    File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## 1.2.1-wip
+
+- Fix bug.
+''');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'foo.dart')).writeAsStringSync('void main() {}\n');
+
+    final report = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart', 'pubspec.yaml', 'CHANGELOG.md'],
+      ),
+    );
+
+    check(report.passed).isTrue();
+    check(report.violations).isEmpty();
+  });
+
+  test(
+    'detects missing -wip bump even when pubspec.yaml itself is modified',
+    () {
+      File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: sample_pkg
+version: 1.2.0
+environment:
+  sdk: ^3.5.0
+''');
+      File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## 1.2.0
+
+- Initial release.
+''');
+
+      final report = runPrCheck(
+        directory: tempDir,
+        processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+          exe,
+          args,
+          workingDirectory: workingDirectory,
+          changedFiles: ['pubspec.yaml'],
+        ),
+      );
+
+      check(report.passed).isFalse();
+      check(report.violations.map((v) => v.check)).contains('pubspec-wip-bump');
+    },
+  );
+
+  test('does not require -wip bump for .github/ or README.md-only changes', () {
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: sample_pkg
+version: 1.2.0
+environment:
+  sdk: ^3.5.0
+''');
+    File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## 1.2.0
+
+- Initial release.
+''');
+    File(p.join(tempDir.path, 'README.md')).writeAsStringSync('# Docs\n');
+
+    final report = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['README.md'],
+      ),
+    );
+
+    check(report.passed).isTrue();
+  });
+
+  test('reports dart-format, dart-analyze-fatal-infos, '
+      'and prettier-markdown failures', () {
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: sample_pkg
+publish_to: none
+environment:
+  sdk: ^3.5.0
+''');
+    File(p.join(tempDir.path, '.prettierrc.json')).writeAsStringSync('{}\n');
+    File(p.join(tempDir.path, 'README.md')).writeAsStringSync('# Hi\n');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'foo.dart')).writeAsStringSync('void main() {}\n');
+
+    final report = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart', 'README.md'],
+        formatExit: 1,
+        analyzeExit: 3,
+        prettierExit: 1,
+      ),
+    );
+
+    check(report.passed).isFalse();
+    final checks = report.violations.map((v) => v.check).toList();
+    check(checks).contains('dart-format');
+    check(checks).contains('dart-analyze-fatal-infos');
+    check(checks).contains('prettier-markdown');
+  });
 }

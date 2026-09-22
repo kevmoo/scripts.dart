@@ -238,6 +238,23 @@ lint-cleanup [arguments]
 -h, --help            Prints out usage and exits
 ```
 
+### `pr-check`
+
+Validate local CI parity before running `gh pr create`.
+
+**Usage:**
+
+```shell
+pr-check [options]
+
+-d, --dir                 Repository or worktree directory to validate.
+                          (defaults to ".")
+-b, --base                Base git ref to diff against (defaults to origin/HEAD or main).
+    --[no-]require-wip    Require touched publishable packages at a released version to bump to a -wip version.
+                          (defaults to on)
+-h, --help                Print this usage information.
+```
+
 ### `puppy`
 
 Run a command in all package directories.
