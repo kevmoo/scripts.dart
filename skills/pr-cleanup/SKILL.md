@@ -80,17 +80,18 @@ Before proposing to delete any worktree, local branch, or unpushed commit:
      is safe to delete via `git -C <repo_path> branch -D <branch>`.
 2. **Cross-Reference Active Jetski Conversations & PM-OS Tasks (Bounded
    Lookup)**:
-   - First check `~/.gemini/jetski/annotations/*.pbtxt` (or run
+   - Use the `grep_search` tool on `~/.gemini/jetski/annotations` (or run
      `pm-status pickup`) to identify active (`🟢` / `🧪`) or waiting (`⏳` /
-     `🔔`) sessions. Do **not** run unbounded greps across all
+     `🔔`) sessions. Do **not** run shell `grep` or unbounded scans across all
      `~/.gemini/jetski/brain/*/transcript.jsonl` files; only inspect
      `transcript.jsonl` for specific active/waiting conversation IDs when
      `.pbtxt` titles do not already identify the worktree.
    - If a worktree belongs to an **active (`🟢` / `🧪`)** sister session or an
      open PR/CL, classify it in **Bucket A (`🚫 DO NOT TOUCH`)**.
    - If a worktree belongs to a **waiting (`⏳` / `🔔`)** session whose PR/CL
-     has already **merged**, include closing that session (`pm-convo --done`)
-     and any associated PM-OS task (`pm-work complete "#XXXX"`) in **Bucket B**.
+     has already **merged**, include pruning its VCS state in **Bucket B** and
+     queue an `agentapi send-message` wake-up to that sister session so it can
+     verify follow-ups, docs, and PM-OS tasks before marking itself `--done`.
 
 ## 3. Three-Bucket Classification & Report
 
@@ -107,8 +108,8 @@ sweeps) divided into 3 buckets:
   - Clean worktrees (`git worktree remove`), merged local feature branches
     (`git branch -D`), dangling remote head branches on writable repos, and
     trunk fast-forwards (`--ff-only`).
-  - List any waiting Jetski conversations or PM-OS tasks whose PRs have landed
-    and are ready to be marked `☑️ --done`.
+  - List any waiting Jetski conversations whose PRs have landed so they can be
+    messaged via `agentapi send-message` after VCS cleanup.
 - **Bucket C — `⚠️ Requires Explicit Confirmation` (Closed-Unmerged PRs, Dirty
   Worktrees, Unpushed Experiments)**:
   - Detail the exact modified/untracked files (`git status -s`) or unmerged
@@ -134,6 +135,11 @@ Once approved:
 2. **Execute Bucket C Pruning** _(only if Bucket C was explicitly approved)_:
    - Run `git -C <parent_repo> worktree remove --force <worktree_path>` and
      `git -C <parent_repo> branch -D <branch>`.
-3. **Close Landed Sessions & Tasks**:
-   - Mark completed waiting conversations `☑️ --done` (`pm-convo`) and close
-     landed PM-OS tasks (`pm-work complete "#XXXX"`).
+3. **Message Waiting Sister Sessions (`agentapi send-message`)**:
+   - Do **not** directly mark a waiting sister session `--done` from the
+     `pr-cleanup` orchestrator. Instead, send a message
+     (`agentapi send-message --title="PR Landed & Cleaned Up" <conversation_id> "..."`)
+     informing the sister session that its PR landed and its local/remote
+     worktree and branch were pruned, and instructing that session to
+     double-check any needed follow-up, documentation/memory updates, or PM-OS
+     tasks (`pm-work complete`) and then mark itself `--done`.

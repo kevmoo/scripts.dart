@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:checks/checks.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/kscripts_runner.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 Future<({int exitCode, List<String> lines})> _captureCli(
@@ -86,5 +88,141 @@ void main() {
         ..contains('Unknown subcommand "not-a-subcommand".')
         ..contains('Run "kscripts --help" to see available subcommands.');
     });
+
+    test('resolveEffectiveKScriptsArgs handles multicall env and argv[0]', () {
+      check(
+        resolveEffectiveKScriptsArgs(
+          ['--help'],
+          invokedAsEnv: 'gh-clean',
+          executablePath: '/usr/local/bin/kscripts',
+        ),
+      ).deepEquals(['gh-clean', '--help']);
+
+      check(
+        resolveEffectiveKScriptsArgs([
+          '--markdown',
+        ], executablePath: '/usr/local/bin/gh-view'),
+      ).deepEquals(['gh-view', '--markdown']);
+
+      check(
+        resolveEffectiveKScriptsArgs(
+          ['gh-view', '--help'],
+          invokedAsEnv: 'kscripts',
+          executablePath: '/usr/local/bin/kscripts',
+        ),
+      ).deepEquals(['gh-view', '--help']);
+    });
+
+    test(
+      'checkKScriptsStaleness supports KSCRIPTS_REPO_DIR and bundle fallback',
+      () {
+        final tempDir = Directory.systemTemp.createTempSync('kscripts_test_');
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+
+        final bundleBinDir = Directory(
+          p.join(tempDir.path, 'local', 'bundle', 'bin'),
+        )..createSync(recursive: true);
+        final exeFile = File(p.join(bundleBinDir.path, 'kscripts'))
+          ..writeAsStringSync('binary');
+
+        // 1. Neither KSCRIPTS_REPO_DIR nor pubspec.lock exists -> silent.
+        final unresolvedMessages = <String>[];
+        checkKScriptsStaleness(
+          repoDirEnv: '',
+          executableFile: exeFile,
+          onStderr: unresolvedMessages.add,
+        );
+        check(unresolvedMessages).isEmpty();
+
+        // 2. Repo exists with older main ref -> emits nothing.
+        final repoDir = Directory(p.join(tempDir.path, 'scripts.dart'));
+        final now = DateTime.now();
+        final mainRef =
+            File(p.join(repoDir.path, '.git', 'refs', 'heads', 'main'))
+              ..createSync(recursive: true)
+              ..writeAsStringSync('abc1234\n')
+              ..setLastModifiedSync(now.subtract(const Duration(minutes: 5)));
+        exeFile.setLastModifiedSync(now);
+
+        final freshMessages = <String>[];
+        checkKScriptsStaleness(
+          repoDirEnv: repoDir.path,
+          executableFile: exeFile,
+          onStderr: freshMessages.add,
+        );
+        check(freshMessages).isEmpty();
+
+        // 3. Repo main ref is newer than binary -> emits warning.
+        mainRef.setLastModifiedSync(now.add(const Duration(minutes: 5)));
+        final staleMessages = <String>[];
+        checkKScriptsStaleness(
+          repoDirEnv: repoDir.path,
+          executableFile: exeFile,
+          onStderr: staleMessages.add,
+        );
+        check(staleMessages.single)
+          ..contains('kscripts binary is older than')
+          ..contains('upkeep update dart_install');
+
+        // 4. Fallback to ../../pubspec.lock when KSCRIPTS_REPO_DIR is unset.
+        File(p.join(tempDir.path, 'local', 'pubspec.lock'))
+            .writeAsStringSync('''
+packages:
+  kevmoo_scripts:
+    dependency: "direct main"
+    description:
+      path: "${repoDir.path}"
+      relative: false
+    source: path
+    version: "0.1.0"
+''');
+        final fallbackMessages = <String>[];
+        checkKScriptsStaleness(
+          repoDirEnv: '',
+          executableFile: exeFile,
+          onStderr: fallbackMessages.add,
+        );
+        check(fallbackMessages.single)
+            .contains('kscripts binary is older than ${repoDir.path}');
+
+        // 5. A `git` install records `path: "."` (a repo-internal subdir, not
+        // a checkout) and must not be resolved against the CWD.
+        File(p.join(tempDir.path, 'local', 'pubspec.lock'))
+            .writeAsStringSync('''
+packages:
+  kevmoo_scripts:
+    dependency: "direct main"
+    description:
+      path: "."
+      ref: HEAD
+      resolved-ref: "2e7c03eb4af9f66bb151cee2bb498f6a6c39731c"
+      url: "https://github.com/kevmoo/scripts.dart.git"
+    source: git
+    version: "0.0.0"
+''');
+        // Run from inside an unrelated repo whose `main` ref is newer than the
+        // binary: resolving `.` against the CWD would emit a bogus warning.
+        final cwdRepo = Directory(p.join(tempDir.path, 'unrelated'))
+          ..createSync();
+        File(p.join(cwdRepo.path, '.git', 'refs', 'heads', 'main'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('def5678\n')
+          ..setLastModifiedSync(now.add(const Duration(minutes: 5)));
+
+        final gitInstallMessages = <String>[];
+        final priorCwd = Directory.current;
+        Directory.current = cwdRepo;
+        try {
+          checkKScriptsStaleness(
+            repoDirEnv: '',
+            executableFile: exeFile,
+            onStderr: gitInstallMessages.add,
+          );
+        } finally {
+          Directory.current = priorCwd;
+        }
+        check(gitInstallMessages).isEmpty();
+      },
+    );
   });
 }

@@ -1,17 +1,26 @@
 import 'dart:io';
 
 import 'package:checks/checks.dart';
+import 'package:kevmoo_scripts/src/kscripts_runner.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:yaml/yaml.dart';
 
 void main() {
-  test('README table is up-to-date', () async {
+  test('README table and pubspec executables match kscripts', () async {
     final readmeFile = File('README.md');
     final pubspecFile = File('pubspec.yaml');
     final pubspecContent = pubspecFile.readAsStringSync();
     final pubspec = loadYaml(pubspecContent) as YamlMap;
     final executables = pubspec['executables'] as YamlMap;
+
+    // Enforce the single-AOT-binary invariant: only `kscripts` in pubspec.yaml.
+    check(
+      because:
+          'pubspec.yaml executables should only contain `kscripts` so '
+          '`dart install` compiles a single AOT binary',
+      executables.keys.cast<String>().toList(),
+    ).deepEquals(['kscripts']);
 
     final tableLines = readmeFile
         .readAsLinesSync()
@@ -20,16 +29,16 @@ void main() {
 
     check(tableLines, because: 'Should find table rows in README').isNotEmpty();
 
-    // Make sure every item in `executables` is in the table
-    final mappedExecutables = <String, String>{};
-    for (var entry in executables.entries) {
-      final key = entry.key as String;
-      final value = (entry.value as String?) ?? key;
-      mappedExecutables[key] = value;
-    }
+    // Every subcommand in kscriptSubcommands (plus `kscripts` itself) must be
+    // documented in the README table.
+    final mappedExecutables = <String, String>{
+      'kscripts': 'kscripts',
+      for (final cmd in kscriptSubcommands)
+        cmd.name: cmd.name.replaceAll('-', '_'),
+    };
 
     check(
-      because: 'Table should have one row for each executable',
+      because: 'Table should have one row for kscripts + each subcommand',
       tableLines,
     ).length.equals(mappedExecutables.length);
 

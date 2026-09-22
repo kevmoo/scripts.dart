@@ -5,6 +5,8 @@ import 'package:args/args.dart';
 import 'package:args/command_runner.dart';
 import 'package:io/ansi.dart';
 import 'package:io/io.dart';
+import 'package:path/path.dart' as p;
+import 'package:yaml/yaml.dart';
 
 import 'dart_clean.dart';
 import 'gerrit_view.dart';
@@ -162,8 +164,97 @@ String? suggestKScriptSubcommand(String input) {
   return null;
 }
 
+/// Resolves effective CLI arguments when `kscripts` is invoked via a multicall
+/// shim (`KSCRIPTS_AS=<subcommand>`) or symlink (`argv[0]` matching a
+/// subcommand name).
+List<String> resolveEffectiveKScriptsArgs(
+  List<String> args, {
+  String? invokedAsEnv,
+  String? executablePath,
+}) {
+  final candidate =
+      invokedAsEnv ??
+      Platform.environment['KSCRIPTS_AS'] ??
+      p.basenameWithoutExtension(executablePath ?? Platform.executable);
+  if (candidate != 'kscripts' && findKScriptSubcommand(candidate) != null) {
+    return [candidate, ...args];
+  }
+  return args;
+}
+
+/// Checks whether the compiled `kscripts` binary is older than the local
+/// `scripts.dart` checkout's `main` ref (using `KSCRIPTS_REPO_DIR` or the
+/// `dart install` bundle's `../../pubspec.lock` path).
+void checkKScriptsStaleness({
+  String? repoDirEnv,
+  File? executableFile,
+  void Function(String)? onStderr,
+}) {
+  final emit = onStderr ?? (String line) => stderr.writeln(line);
+  final exe = executableFile ?? File(Platform.resolvedExecutable);
+  final exeName = p.basenameWithoutExtension(exe.path);
+  // Skip when running under `dart test` or `dart run` VM executable.
+  if (exeName == 'dart' || exeName == 'dartaotruntime') return;
+
+  final explicitDir = repoDirEnv ?? Platform.environment['KSCRIPTS_REPO_DIR'];
+  final repoPath = (explicitDir != null && explicitDir.trim().isNotEmpty)
+      ? explicitDir.trim()
+      : _resolveRepoDirFromBundleLock(exe);
+
+  // No local checkout to compare against (e.g. a `git` or `hosted` install
+  // without `KSCRIPTS_REPO_DIR`); stay silent rather than nagging every run.
+  if (repoPath == null) return;
+
+  final mainRef = File(p.join(repoPath, '.git', 'refs', 'heads', 'main'));
+  if (!mainRef.existsSync() || !exe.existsSync()) return;
+
+  try {
+    final binModified = File(exe.resolveSymbolicLinksSync())
+        .statSync()
+        .modified;
+    final mainModified = mainRef.statSync().modified;
+    if (mainModified.isAfter(binModified)) {
+      emit(
+        '⚠️ Note: kscripts binary is older than $repoPath (main). '
+        'Run "upkeep update dart_install" to refresh.',
+      );
+    }
+  } catch (_) {}
+}
+
+String? _resolveRepoDirFromBundleLock(File exe) {
+  try {
+    final resolvedExe = File(exe.resolveSymbolicLinksSync());
+    // Layout: <app-bundles>/kevmoo_scripts/<source>/<version>/bundle/bin/kscripts
+    final lockFile = File(
+      p.normalize(p.join(resolvedExe.parent.path, '..', '..', 'pubspec.lock')),
+    );
+    if (!lockFile.existsSync()) return null;
+    final yaml = loadYaml(lockFile.readAsStringSync());
+    if (yaml is! YamlMap) return null;
+    final packages = yaml['packages'] as YamlMap?;
+    final entry = packages?['kevmoo_scripts'] as YamlMap?;
+    // Only a `path` install points at a live local checkout. A `git` install
+    // records a repo-internal subdirectory (e.g. `path: "."`), which would
+    // otherwise resolve against the current working directory.
+    if (entry?['source']?.toString() != 'path') return null;
+    final desc = entry?['description'] as YamlMap?;
+    final rawPath = desc?['path']?.toString();
+    if (rawPath == null || rawPath.isEmpty) return null;
+    // `relative: true` paths are relative to the lock file, never to the CWD.
+    final base = desc?['relative'] == true ? lockFile.parent.path : '';
+    final repoDir = p.normalize(p.join(base, rawPath));
+    return p.isAbsolute(repoDir) ? repoDir : null;
+  } catch (_) {
+    return null;
+  }
+}
+
 /// Entrypoint dispatcher for `kscripts`.
-Future<void> runKScriptsCli(List<String> args) async {
+Future<void> runKScriptsCli(List<String> rawArgs) async {
+  checkKScriptsStaleness();
+  final args = resolveEffectiveKScriptsArgs(rawArgs);
+
   if (args.isEmpty ||
       args.first == '--help' ||
       args.first == '-h' ||
