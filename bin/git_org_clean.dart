@@ -4,21 +4,6 @@
 // for details. All rights reserved. Use of this source code is governed by a
 // BSD-style license that can be found in the LICENSE file.
 
-import 'package:kevmoo_scripts/src/git_org_clean.dart';
-import 'package:kevmoo_scripts/src/shared/gh_args.dart';
+import 'package:kevmoo_scripts/src/kscripts_runner.dart';
 
-Future<void> main(List<String> args) async {
-  await runCliGuarded(() async {
-    final cleanArgs = parseCleanArgs(args);
-    if (cleanArgs.help) {
-      print('Analyze a GitHub organization for archive/delete candidates.');
-      print('');
-      print('Usage: git-org-clean [arguments]');
-      print('');
-      print('Options:');
-      print(cleanArgsUsage);
-      return;
-    }
-    await runGitOrgClean(cleanArgs);
-  });
-}
+Future<void> main(List<String> args) => runGitOrgCleanCli(args);
