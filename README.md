@@ -26,6 +26,7 @@ dart install 'kevmoo_scripts@{path: /path/to/scripts.dart}'
 | [`git-up`](#git-up)               | `bin/git_up.dart`        | Safely switch to and update the default branch.                        |
 | [`kscripts`](#kscripts)           | `bin/kscripts.dart`      | Unified CLI runner for kevmoo_scripts developer utilities.             |
 | [`lint-cleanup`](#lint-cleanup)   | `bin/lint_cleanup.dart`  | Clean up analysis_options.yaml files.                                  |
+| [`pr-check`](#pr-check)           | `bin/pr_check.dart`      | Validate local CI parity before running gh pr create.                  |
 | [`puppy`](#puppy)                 | `bin/puppy.dart`         | Run a command in all package directories.                              |
 | [`repo-align`](#repo-align)       | `bin/repo_align.dart`    | Personal GitHub Repositories Alignment & Audit Tool                    |
 | [`tighten`](#tighten)             | `bin/tighten.dart`       | Tighten workspace dependencies.                                        |
@@ -246,6 +247,23 @@ lint-cleanup [arguments]
                       on the referenced include file. Needed for mono repos.
 -r, --[no-]rewrite    Rewrites the analysis_options.yaml file to remove duplicative entries.
 -h, --help            Prints out usage and exits
+```
+
+### `pr-check`
+
+Validate local CI parity before running `gh pr create`.
+
+**Usage:**
+
+```shell
+pr-check [options]
+
+-d, --dir                 Repository or worktree directory to validate.
+                          (defaults to ".")
+-b, --base                Base git ref to diff against (defaults to origin/HEAD or main).
+    --[no-]require-wip    Require touched publishable packages at a released version to bump to a -wip version.
+                          (defaults to on)
+-h, --help                Print this usage information.
 ```
 
 ### `puppy`
