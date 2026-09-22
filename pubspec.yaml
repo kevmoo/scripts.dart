@@ -30,17 +30,5 @@ dev_dependencies:
   test_descriptor: ^2.0.2
 
 executables:
-  dart-clean: dart_clean
-  gerrit-view: gerrit_view
-  gh-clean: gh_clean
-  gh-issues: gh_issues
-  gh-view: gh_view
-  git-org-clean: git_org_clean
-  git-up: git_up
   kscripts:
-  lint-cleanup: lint_cleanup
-  pr-check: pr_check
-  puppy:
-  repo-align: repo_align
-  tighten:
 
