@@ -14,6 +14,7 @@ import 'gh_view.dart';
 import 'git_org_clean.dart';
 import 'git_up.dart';
 import 'lint_cleanup.dart';
+import 'pr_check.dart';
 import 'puppy.dart';
 import 'repo_align/repo_align_runner.dart';
 import 'shared/gh_args.dart';
@@ -78,6 +79,11 @@ const kscriptSubcommands = <KScriptSubcommand>[
     run: runLintCleanupCli,
   ),
   KScriptSubcommand(
+    name: 'pr-check',
+    description: 'Validate local CI parity before running gh pr create.',
+    run: runPrCheckCli,
+  ),
+  KScriptSubcommand(
     name: 'puppy',
     description: 'Run a command in all package directories.',
     run: runPuppyCli,
@@ -108,6 +114,9 @@ const commonKScriptMistakes = <String, String>{
   'lints': 'lint-cleanup',
   'org-clean': 'git-org-clean',
   'up': 'git-up',
+  'preflight': 'pr-check',
+  'gh-preflight': 'pr-check',
+  'check': 'pr-check',
 };
 
 /// Prints `kscripts` usage and available subcommands.
