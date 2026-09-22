@@ -53,7 +53,15 @@ class RepoAlignScanner {
     this.queryGitHubApi = true,
   });
 
-  List<RepoAlignmentStatus> scanAll({String? targetRepo}) {
+  List<RepoAlignmentStatus> scanAll({String? targetRepo, String? targetDir}) {
+    if (targetDir != null) {
+      final dir = Directory(targetDir);
+      if (!dir.existsSync()) {
+        throw FileSystemException('Target directory does not exist', targetDir);
+      }
+      return [scanSingleRepo(dir, repoNameOverride: targetRepo)];
+    }
+
     final baseDir = Directory(baseDirPath);
     if (!baseDir.existsSync()) {
       throw FileSystemException('Base directory does not exist', baseDirPath);
@@ -79,8 +87,44 @@ class RepoAlignScanner {
     return results;
   }
 
-  RepoAlignmentStatus scanSingleRepo(Directory dir) {
-    final name = p.basename(dir.path);
+  static String _resolveCanonicalRepoName(
+    Directory dir, {
+    String? repoNameOverride,
+  }) {
+    if (repoNameOverride != null && repoNameOverride.trim().isNotEmpty) {
+      return repoNameOverride.trim();
+    }
+    final rawName = p.basename(dir.path);
+    if (!rawName.startsWith('_')) return rawName;
+
+    final remoteRes = Process.runSync('git', [
+      '-C',
+      dir.path,
+      'remote',
+      'get-url',
+      'origin',
+    ]);
+    if (remoteRes.exitCode == 0) {
+      final remoteUrl = (remoteRes.stdout as String).trim();
+      final match = RegExp(r'[:/]([^/:]+?)(?:\.git)?$').firstMatch(remoteUrl);
+      if (match != null) return match.group(1)!;
+    }
+
+    final withoutUnderscore = rawName.substring(1);
+    final dashIdx = withoutUnderscore.indexOf('-');
+    return dashIdx > 0
+        ? withoutUnderscore.substring(0, dashIdx)
+        : withoutUnderscore;
+  }
+
+  RepoAlignmentStatus scanSingleRepo(
+    Directory dir, {
+    String? repoNameOverride,
+  }) {
+    final name = _resolveCanonicalRepoName(
+      dir,
+      repoNameOverride: repoNameOverride,
+    );
     final pubInfo = _scanPubspec(dir);
     final kind = _determineKind(name, pubInfo);
     final analysis = _scanAnalysisOptions(dir);

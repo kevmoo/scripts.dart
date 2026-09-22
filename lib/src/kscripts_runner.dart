@@ -104,6 +104,7 @@ const kscriptSubcommands = <KScriptSubcommand>[
 const commonKScriptMistakes = <String, String>{
   'clean': 'gh-clean',
   'pr-clean': 'gh-clean',
+  'pr-cleanup': 'gh-clean',
   'view': 'gh-view',
   'prs': 'gh-view',
   'pr-view': 'gh-view',
@@ -114,6 +115,10 @@ const commonKScriptMistakes = <String, String>{
   'lints': 'lint-cleanup',
   'org-clean': 'git-org-clean',
   'up': 'git-up',
+  'triage': 'gh-triage',
+  'pr-triage': 'gh-triage',
+  'orient': 'gh-orient',
+  'post': 'gh-orient',
   'preflight': 'pr-check',
   'gh-preflight': 'pr-check',
   'check': 'pr-check',
@@ -486,6 +491,13 @@ void runRepoAlignCli(List<String> args) {
       abbr: 'r',
       help: 'Target a specific repository by name (e.g. stats, pubviz)',
     )
+    ..addOption(
+      'dir',
+      abbr: 'd',
+      help:
+          'Target a specific checkout or sibling worktree directory for local '
+          'checks/fixes',
+    )
     ..addFlag(
       'json',
       help: 'Output check results in JSON format',
@@ -529,6 +541,7 @@ void runRepoAlignCli(List<String> args) {
 
   final commandName = parsed.command?.name ?? 'check';
   final targetRepo = parsed['repo'] as String?;
+  final targetDir = parsed['dir'] as String?;
   final jsonOutput = parsed['json'] as bool;
   final dryRun = parsed['dry-run'] as bool;
   final fixLints = parsed['lints'] as bool;
@@ -538,10 +551,15 @@ void runRepoAlignCli(List<String> args) {
   final runner = RepoAlignRunner();
 
   if (commandName == 'check') {
-    runner.runCheck(targetRepo: targetRepo, jsonOutput: jsonOutput);
+    runner.runCheck(
+      targetRepo: targetRepo,
+      targetDir: targetDir,
+      jsonOutput: jsonOutput,
+    );
   } else if (commandName == 'fix') {
     runner.runFix(
       targetRepo: targetRepo,
+      targetDir: targetDir,
       fixLints: fixLints,
       fixCi: fixCi,
       fixGitHub: fixGitHub,

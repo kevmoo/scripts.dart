@@ -838,6 +838,18 @@ String? _verifyBranchSafeToDelete(
         'verified.';
   }
   if ((logRes.stdout as String).trim().isNotEmpty) {
+    runner('git', ['-C', repoPath, 'fetch', 'origin', trunkBranch, '--quiet']);
+    final postFetchCount = runner('git', [
+      '-C',
+      repoPath,
+      'rev-list',
+      '--count',
+      'origin/$trunkBranch..$targetRef',
+    ]);
+    if (postFetchCount.exitCode == 0 &&
+        (postFetchCount.stdout as String).trim() == '0') {
+      return null;
+    }
     return 'Branch has unpushed commits past PR HEAD ($headRefOid).';
   }
   return null;

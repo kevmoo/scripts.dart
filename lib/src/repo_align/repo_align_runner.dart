@@ -14,8 +14,15 @@ class RepoAlignRunner {
 
   new({RepoAlignScanner? scanner}) : scanner = scanner ?? RepoAlignScanner();
 
-  void runCheck({String? targetRepo, bool jsonOutput = false}) {
-    final results = scanner.scanAll(targetRepo: targetRepo);
+  void runCheck({
+    String? targetRepo,
+    String? targetDir,
+    bool jsonOutput = false,
+  }) {
+    final results = scanner.scanAll(
+      targetRepo: targetRepo,
+      targetDir: targetDir,
+    );
 
     if (jsonOutput) {
       final jsonStr = const JsonEncoder.withIndent('  ')
@@ -27,7 +34,8 @@ class RepoAlignRunner {
     print('');
     print(styleBold.wrap('📊 kevmoo Repositories Alignment Audit Report'));
     print(
-      'Scanned ${results.length} repositories under ${scanner.baseDirPath}\n',
+      'Scanned ${results.length} repositories under '
+      '${targetDir ?? scanner.baseDirPath}\n',
     );
 
     final activeResults = results
@@ -124,6 +132,7 @@ class RepoAlignRunner {
 
   void runFix({
     String? targetRepo,
+    String? targetDir,
     bool fixLints = false,
     bool fixCi = false,
     bool fixGitHub = false,
@@ -139,7 +148,10 @@ class RepoAlignRunner {
       shouldFixGitHub = true;
     }
 
-    final results = scanner.scanAll(targetRepo: targetRepo);
+    final results = scanner.scanAll(
+      targetRepo: targetRepo,
+      targetDir: targetDir,
+    );
     final targets = results
         .where((r) => r.kind != RepoKind.legacyOrIgnored && !r.isArchived)
         .toList();
