@@ -201,13 +201,9 @@ void checkKScriptsStaleness({
       ? explicitDir.trim()
       : _resolveRepoDirFromBundleLock(exe);
 
-  if (repoPath == null) {
-    emit(
-      '💡 Tip: set KSCRIPTS_REPO_DIR=/path/to/scripts.dart to enable local '
-      'binary staleness checks.',
-    );
-    return;
-  }
+  // No local checkout to compare against (e.g. a `git` or `hosted` install
+  // without `KSCRIPTS_REPO_DIR`); stay silent rather than nagging every run.
+  if (repoPath == null) return;
 
   final mainRef = File(p.join(repoPath, '.git', 'refs', 'heads', 'main'));
   if (!mainRef.existsSync() || !exe.existsSync()) return;
@@ -229,7 +225,7 @@ void checkKScriptsStaleness({
 String? _resolveRepoDirFromBundleLock(File exe) {
   try {
     final resolvedExe = File(exe.resolveSymbolicLinksSync());
-    // Layout: <install_dir>/app-bundles/kevmoo_scripts/local/bundle/bin/kscripts
+    // Layout: <app-bundles>/kevmoo_scripts/<source>/<version>/bundle/bin/kscripts
     final lockFile = File(
       p.normalize(p.join(resolvedExe.parent.path, '..', '..', 'pubspec.lock')),
     );
@@ -238,10 +234,17 @@ String? _resolveRepoDirFromBundleLock(File exe) {
     if (yaml is! YamlMap) return null;
     final packages = yaml['packages'] as YamlMap?;
     final entry = packages?['kevmoo_scripts'] as YamlMap?;
+    // Only a `path` install points at a live local checkout. A `git` install
+    // records a repo-internal subdirectory (e.g. `path: "."`), which would
+    // otherwise resolve against the current working directory.
+    if (entry?['source']?.toString() != 'path') return null;
     final desc = entry?['description'] as YamlMap?;
     final rawPath = desc?['path']?.toString();
     if (rawPath == null || rawPath.isEmpty) return null;
-    return p.normalize(rawPath);
+    // `relative: true` paths are relative to the lock file, never to the CWD.
+    final base = desc?['relative'] == true ? lockFile.parent.path : '';
+    final repoDir = p.normalize(p.join(base, rawPath));
+    return p.isAbsolute(repoDir) ? repoDir : null;
   } catch (_) {
     return null;
   }

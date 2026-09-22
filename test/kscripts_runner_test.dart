@@ -125,14 +125,14 @@ void main() {
         final exeFile = File(p.join(bundleBinDir.path, 'kscripts'))
           ..writeAsStringSync('binary');
 
-        // 1. Neither KSCRIPTS_REPO_DIR nor pubspec.lock exists -> emits tip.
-        final tipMessages = <String>[];
+        // 1. Neither KSCRIPTS_REPO_DIR nor pubspec.lock exists -> silent.
+        final unresolvedMessages = <String>[];
         checkKScriptsStaleness(
           repoDirEnv: '',
           executableFile: exeFile,
-          onStderr: tipMessages.add,
+          onStderr: unresolvedMessages.add,
         );
-        check(tipMessages.single).contains('set KSCRIPTS_REPO_DIR');
+        check(unresolvedMessages).isEmpty();
 
         // 2. Repo exists with older main ref -> emits nothing.
         final repoDir = Directory(p.join(tempDir.path, 'scripts.dart'));
@@ -184,6 +184,44 @@ packages:
         );
         check(fallbackMessages.single)
             .contains('kscripts binary is older than ${repoDir.path}');
+
+        // 5. A `git` install records `path: "."` (a repo-internal subdir, not
+        // a checkout) and must not be resolved against the CWD.
+        File(p.join(tempDir.path, 'local', 'pubspec.lock'))
+            .writeAsStringSync('''
+packages:
+  kevmoo_scripts:
+    dependency: "direct main"
+    description:
+      path: "."
+      ref: HEAD
+      resolved-ref: "2e7c03eb4af9f66bb151cee2bb498f6a6c39731c"
+      url: "https://github.com/kevmoo/scripts.dart.git"
+    source: git
+    version: "0.0.0"
+''');
+        // Run from inside an unrelated repo whose `main` ref is newer than the
+        // binary: resolving `.` against the CWD would emit a bogus warning.
+        final cwdRepo = Directory(p.join(tempDir.path, 'unrelated'))
+          ..createSync();
+        File(p.join(cwdRepo.path, '.git', 'refs', 'heads', 'main'))
+          ..createSync(recursive: true)
+          ..writeAsStringSync('def5678\n')
+          ..setLastModifiedSync(now.add(const Duration(minutes: 5)));
+
+        final gitInstallMessages = <String>[];
+        final priorCwd = Directory.current;
+        Directory.current = cwdRepo;
+        try {
+          checkKScriptsStaleness(
+            repoDirEnv: '',
+            executableFile: exeFile,
+            onStderr: gitInstallMessages.add,
+          );
+        } finally {
+          Directory.current = priorCwd;
+        }
+        check(gitInstallMessages).isEmpty();
       },
     );
   });

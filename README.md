@@ -13,9 +13,24 @@ Or for local development:
 dart install 'kevmoo_scripts@{path: /path/to/scripts.dart}'
 ```
 
+This installs a single AOT binary, `kscripts`; everything else is a subcommand
+(`kscripts gh-view`, `kscripts git-up`, …).
+
+To keep a bare command name on your `PATH`, symlink it to `kscripts` or set
+`KSCRIPTS_AS` — both dispatch to the matching subcommand:
+
+```shell
+ln -s "$(command -v kscripts)" ~/.local/bin/gh-view   # gh-view --json
+KSCRIPTS_AS=git-up kscripts --check                   # same as: kscripts git-up --check
+```
+
+For a `path:` install, `kscripts` warns when the binary is older than the
+checkout's `main` ref. For a `git:` install, set `KSCRIPTS_REPO_DIR` to a local
+`scripts.dart` checkout to enable the same check.
+
 ## Summary
 
-| Executable                        | Script                   | Description                                                            |
+| Subcommand                        | Script                   | Description                                                            |
 | --------------------------------- | ------------------------ | ---------------------------------------------------------------------- |
 | [`dart-clean`](#dart-clean)       | `bin/dart_clean.dart`    | Find and kill orphaned Dart processes.                                 |
 | [`gerrit-view`](#gerrit-view)     | `bin/gerrit_view.dart`   | Complete overview of your active work on Gerrit.                       |
@@ -55,7 +70,7 @@ detection).
 **Usage:**
 
 ```shell
-dart-clean
+kscripts dart-clean
 
 -f, --[no-]force    Force kill without confirmation.
 -l, --[no-]list     Only list orphaned processes; do not kill.
@@ -72,7 +87,7 @@ Complete overview of your active work on Gerrit.
 **Usage:**
 
 ```shell
-gerrit-view [options]
+kscripts gerrit-view [options]
 
 -p, --path-to-gerrit-repo    Path to a local gerrit repo. Defaults to CWD.
 -h, --help                   Print this usage information.
@@ -88,7 +103,7 @@ installed and authenticated in your `PATH`.
 **Usage:**
 
 ```shell
-gh-clean [options]
+kscripts gh-clean [options]
 
 -u, --user               The GitHub user to inspect. (defaults to "@me")
 -R, --repo               Filter PRs to a specific repository (owner/repo).
@@ -114,7 +129,7 @@ installed and authenticated in your `PATH`.
 **Usage:**
 
 ```shell
-gh-issues [options]
+kscripts gh-issues [options]
 
 -u, --user               The GitHub user assigned to the issues.
                          (defaults to "@me")
@@ -141,7 +156,7 @@ installed and authenticated in your `PATH`.
 **Usage:**
 
 ```shell
-gh-view [options]
+kscripts gh-view [options]
 
 -u, --user           The GitHub user to inspect. (defaults to "@me")
 -R, --repo           Filter PRs to a specific repository (owner/repo).
@@ -165,7 +180,7 @@ installed and authenticated in your `PATH`.
 **Usage:**
 
 ```shell
-git-org-clean [arguments]
+kscripts git-org-clean [arguments]
 
 -o, --org     The target GitHub organization.
 -h, --help    Print this usage information.
@@ -178,7 +193,7 @@ Safely switch to and update the default branch of a Git repository.
 **Usage:**
 
 ```shell
-git-up [--verbose | -v] [--help | -h]
+kscripts git-up [--verbose | -v] [--help | -h]
 ```
 
 **Pre-Update Hook (`git-up.before`):**
@@ -241,7 +256,7 @@ Clean up `analysis_options.yaml` files.
 **Usage:**
 
 ```shell
-lint-cleanup [arguments]
+kscripts lint-cleanup [arguments]
 
 -p, --package-dir     The directory to a package within the repository that depends
                       on the referenced include file. Needed for mono repos.
@@ -256,7 +271,7 @@ Validate local CI parity before running `gh pr create`.
 **Usage:**
 
 ```shell
-pr-check [options]
+kscripts pr-check [options]
 
 -d, --dir                 Repository or worktree directory to validate.
                           (defaults to ".")
@@ -273,7 +288,7 @@ Run a command in all package directories.
 **Usage:**
 
 ```shell
-puppy [arguments] <command to invoke>
+kscripts puppy [arguments] <command to invoke>
 
 -d, --[no-]deep    Keep looking for "nested" pubspec files.
 -h, --help         Print this usage information.
@@ -289,7 +304,7 @@ installed and authenticated in your `PATH`.
 **Usage:**
 
 ```shell
-repo-align <check|fix> [options]
+kscripts repo-align <check|fix> [options]
 
 -r, --repo            Target a specific repository by name (e.g. stats, pubviz)
     --json            Output check results in JSON format
@@ -307,7 +322,7 @@ Tighten workspace dependencies.
 **Usage:**
 
 ```shell
-tighten
+kscripts tighten
 
 -w, --workspace    Tighten workspace dependencies
 -h, --help         Print this usage information.
