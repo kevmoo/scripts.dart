@@ -7,7 +7,9 @@ environment:
 dependencies:
   args: ^2.6.0
   build_cli_annotations: ^2.1.1
+  cli_util: ^0.6.0
   collection: ^1.19.0
+  firehose: ^0.13.0
   git: ^2.3.2
   io: ^1.0.4
   meta: ^1.18.1
@@ -37,6 +39,7 @@ executables:
   git-up: git_up
   kscripts:
   lint-cleanup: lint_cleanup
+  pr-check: pr_check
   puppy:
   repo-align: repo_align
   tighten:
