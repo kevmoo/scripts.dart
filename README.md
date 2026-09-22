@@ -30,6 +30,17 @@ dart install 'kevmoo_scripts@{path: /path/to/scripts.dart}'
 | [`repo-align`](#repo-align)       | `bin/repo_align.dart`    | Personal GitHub Repositories Alignment & Audit Tool                    |
 | [`tighten`](#tighten)             | `bin/tighten.dart`       | Tighten workspace dependencies.                                        |
 
+## Agent Skills (`skills/`)
+
+Co-located agent skills that orchestrate `kscripts` subcommands:
+
+- [`skills/pr-cleanup`](skills/pr-cleanup/SKILL.md): Multi-repo GitHub PR,
+  Gerrit CL, and local Git worktree/branch cleanup sweep (`kscripts gh-clean`,
+  `kscripts gh-view`, `kscripts gerrit-view`, `kscripts gh-issues`).
+- [`skills/repo-align`](skills/repo-align/SKILL.md): Personal GitHub repository
+  CI workflow, markdown, lint, and branch ruleset alignment
+  (`kscripts repo-align`, `kscripts lint-cleanup`, `kscripts tighten`).
+
 ## Scripts
 
 ### `dart-clean`
