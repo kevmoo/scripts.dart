@@ -25,8 +25,11 @@ KSCRIPTS_AS=git-up kscripts --check                   # same as: kscripts git-up
 ```
 
 For a `path:` install, `kscripts` warns when the binary is older than the
-checkout's `main` ref. For a `git:` install, set `KSCRIPTS_REPO_DIR` to a local
-`scripts.dart` checkout to enable the same check.
+checkout's `main` ref. For a `git:` install, use `upkeep check dart_install`,
+which compares the installed commit against the remote. Don't point
+`KSCRIPTS_REPO_DIR` at a checkout for a `git:` install: it compares file
+timestamps, not commits, so it warns after any fast-forward of the local
+checkout even when the binary is already at that commit.
 
 ## Summary
 
