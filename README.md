@@ -43,6 +43,7 @@ checkout's `main` ref. For a `git:` install, set `KSCRIPTS_REPO_DIR` to a local
 | [`lint-cleanup`](#lint-cleanup)   | `bin/lint_cleanup.dart`  | Clean up analysis_options.yaml files.                                  |
 | [`pr-check`](#pr-check)           | `bin/pr_check.dart`      | Validate local CI parity before running gh pr create.                  |
 | [`puppy`](#puppy)                 | `bin/puppy.dart`         | Run a command in all package directories.                              |
+| [`relay-whoami`](#relay-whoami)   | `bin/relay_whoami.dart`  | Cross-machine agent relay identity, envelope, and sync status checker. |
 | [`repo-align`](#repo-align)       | `bin/repo_align.dart`    | Personal GitHub Repositories Alignment & Audit Tool                    |
 | [`tighten`](#tighten)             | `bin/tighten.dart`       | Tighten workspace dependencies.                                        |
 
@@ -292,6 +293,16 @@ kscripts puppy [arguments] <command to invoke>
 
 -d, --[no-]deep    Keep looking for "nested" pubspec files.
 -h, --help         Print this usage information.
+```
+
+### `relay-whoami`
+
+Cross-machine agent relay identity, envelope, and sync status checker.
+
+**Usage:**
+
+```shell
+kscripts relay-whoami [--check | --header] [options]
 ```
 
 ### `repo-align`
