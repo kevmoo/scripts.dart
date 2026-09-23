@@ -18,6 +18,7 @@ import 'git_up.dart';
 import 'lint_cleanup.dart';
 import 'pr_check.dart';
 import 'puppy.dart';
+import 'relay_whoami.dart';
 import 'repo_align/repo_align_runner.dart';
 import 'shared/gh_args.dart';
 import 'testable_print.dart';
@@ -91,6 +92,13 @@ const kscriptSubcommands = <KScriptSubcommand>[
     run: runPuppyCli,
   ),
   KScriptSubcommand(
+    name: 'relay-whoami',
+    description:
+        'Cross-machine agent relay identity, envelope, and sync status '
+        'checker.',
+    run: runRelayWhoamiCli,
+  ),
+  KScriptSubcommand(
     name: 'repo-align',
     description: 'Personal GitHub Repositories Alignment & Audit Tool',
     run: runRepoAlignCli,
@@ -124,6 +132,8 @@ const commonKScriptMistakes = <String, String>{
   'preflight': 'pr-check',
   'gh-preflight': 'pr-check',
   'check': 'pr-check',
+  'relay': 'relay-whoami',
+  'whoami': 'relay-whoami',
 };
 
 /// Prints `kscripts` usage and available subcommands.
