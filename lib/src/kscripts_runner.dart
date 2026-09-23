@@ -12,11 +12,13 @@ import 'dart_clean.dart';
 import 'gerrit_view.dart';
 import 'gh_clean.dart';
 import 'gh_issues.dart';
+import 'gh_orient.dart';
 import 'gh_view.dart';
 import 'git_org_clean.dart';
 import 'git_up.dart';
 import 'lint_cleanup.dart';
 import 'pr_check.dart';
+import 'pr_triage.dart';
 import 'puppy.dart';
 import 'relay_whoami.dart';
 import 'repo_align/repo_align_runner.dart';
@@ -62,6 +64,11 @@ const kscriptSubcommands = <KScriptSubcommand>[
     run: runGhIssuesCli,
   ),
   KScriptSubcommand(
+    name: 'gh-orient',
+    description: ghOrientDescription,
+    run: runGhOrientCli,
+  ),
+  KScriptSubcommand(
     name: 'gh-view',
     description: 'Complete overview of your active pull requests on GitHub.',
     run: runGhViewCli,
@@ -85,6 +92,11 @@ const kscriptSubcommands = <KScriptSubcommand>[
     name: 'pr-check',
     description: 'Validate local CI parity before running gh pr create.',
     run: runPrCheckCli,
+  ),
+  KScriptSubcommand(
+    name: 'pr-triage',
+    description: prTriageDescription,
+    run: runPrTriageCli,
   ),
   KScriptSubcommand(
     name: 'puppy',
@@ -125,10 +137,13 @@ const commonKScriptMistakes = <String, String>{
   'lints': 'lint-cleanup',
   'org-clean': 'git-org-clean',
   'up': 'git-up',
-  'triage': 'gh-triage',
-  'pr-triage': 'gh-triage',
+  'triage': 'pr-triage',
+  'gh-triage': 'pr-triage',
+  'github-pr-triage': 'pr-triage',
   'orient': 'gh-orient',
   'post': 'gh-orient',
+  'gh-post': 'gh-orient',
+  'github-post': 'gh-orient',
   'preflight': 'pr-check',
   'gh-preflight': 'pr-check',
   'check': 'pr-check',

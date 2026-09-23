@@ -89,6 +89,17 @@ void main() {
       },
     );
 
+    test('every commonKScriptMistakes target is a registered subcommand', () {
+      for (final entry in commonKScriptMistakes.entries) {
+        check(
+          because:
+              'commonKScriptMistakes["${entry.key}"] -> "${entry.value}" '
+              'must be a registered subcommand in kscriptSubcommands',
+          findKScriptSubcommand(entry.value),
+        ).isNotNull();
+      }
+    });
+
     test('fails with usage code on completely unknown subcommands', () async {
       final result = await _captureCli(['not-a-subcommand']);
       check(result.exitCode).equals(ExitCode.usage.code);

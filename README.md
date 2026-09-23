@@ -43,12 +43,14 @@ checkout even when the binary is already at that commit.
 | [`gerrit-view`](#gerrit-view)     | `bin/gerrit_view.dart`   | Complete overview of your active work on Gerrit.                       |
 | [`gh-clean`](#gh-clean)           | `bin/gh_clean.dart`      | Clean up local branches and worktrees for merged GitHub pull requests. |
 | [`gh-issues`](#gh-issues)         | `bin/gh_issues.dart`     | Complete overview of your open assigned issues on GitHub.              |
+| [`gh-orient`](#gh-orient)         | `bin/gh_orient.dart`     | Orient with repository conventions for issues and pull requests.       |
 | [`gh-view`](#gh-view)             | `bin/gh_view.dart`       | Complete overview of your active pull requests on GitHub.              |
 | [`git-org-clean`](#git-org-clean) | `bin/git_org_clean.dart` | Analyze a GitHub organization for archive/delete candidates.           |
 | [`git-up`](#git-up)               | `bin/git_up.dart`        | Safely switch to and update the default branch.                        |
 | [`kscripts`](#kscripts)           | `bin/kscripts.dart`      | Unified CLI runner for kevmoo_scripts developer utilities.             |
 | [`lint-cleanup`](#lint-cleanup)   | `bin/lint_cleanup.dart`  | Clean up analysis_options.yaml files.                                  |
 | [`pr-check`](#pr-check)           | `bin/pr_check.dart`      | Validate local CI parity before running gh pr create.                  |
+| [`pr-triage`](#pr-triage)         | `bin/pr_triage.dart`     | Triage open PR comments, reviews, and CI check failures.               |
 | [`puppy`](#puppy)                 | `bin/puppy.dart`         | Run a command in all package directories.                              |
 | [`relay-whoami`](#relay-whoami)   | `bin/relay_whoami.dart`  | Cross-machine agent relay identity, envelope, and sync status checker. |
 | [`repo-align`](#repo-align)       | `bin/repo_align.dart`    | Personal GitHub Repositories Alignment & Audit Tool                    |
@@ -58,9 +60,14 @@ checkout even when the binary is already at that commit.
 
 Co-located agent skills that orchestrate `kscripts` subcommands:
 
+- [`skills/gh-post`](skills/gh-post/SKILL.md): Author and submit high-signal,
+  anti-slop GitHub issues and pull requests (`kscripts gh-orient`).
 - [`skills/pr-cleanup`](skills/pr-cleanup/SKILL.md): Multi-repo GitHub PR,
   Gerrit CL, and local Git worktree/branch cleanup sweep (`kscripts gh-clean`,
   `kscripts gh-view`, `kscripts gerrit-view`, `kscripts gh-issues`).
+- [`skills/pr-triage`](skills/pr-triage/SKILL.md): Interactive GitHub pull
+  request comment, review thread, merge conflict, and CI failure triage
+  (`kscripts pr-triage`).
 - [`skills/repo-align`](skills/repo-align/SKILL.md): Personal GitHub repository
   CI workflow, markdown, lint, and branch ruleset alignment
   (`kscripts repo-align`, `kscripts lint-cleanup`, `kscripts tighten`).
@@ -152,6 +159,26 @@ kscripts gh-issues [options]
     --json               Output results in JSON format.
 -m, --[no-]markdown      Output results as GitHub Flavored Markdown.
 -h, --help               Print this usage information.
+```
+
+### `gh-orient`
+
+Orient with repository conventions for issues and pull requests.
+
+**Requirements:** This tool wraps the GitHub CLI (`gh`) and requires it to be
+installed and authenticated in your `PATH`.
+
+**Usage:**
+
+```shell
+kscripts gh-orient [options]
+
+-C, --dir      Target repository directory path (defaults to current directory)
+-R, --repo     Target GitHub repository slug in owner/repo format
+-l, --limit    Sample limit for recent issues and PRs
+               (defaults to "20")
+    --json     Output result as machine-readable JSON
+-h, --help     Print this usage information.
 ```
 
 ### `gh-view`
@@ -287,6 +314,24 @@ kscripts pr-check [options]
     --[no-]require-wip    Require touched publishable packages at a released version to bump to a -wip version.
                           (defaults to on)
 -h, --help                Print this usage information.
+```
+
+### `pr-triage`
+
+Triage open PR comments, reviews, and CI check failures.
+
+**Requirements:** This tool wraps the GitHub CLI (`gh`) and requires it to be
+installed and authenticated in your `PATH`.
+
+**Usage:**
+
+```shell
+kscripts pr-triage [options]
+kscripts pr-triage resolve <thread_id> [<comment_id> "<body_text>"]
+
+-p, --pr      PR number or GitHub PR URL
+-C, --dir     Path to target git repository directory
+-h, --help    Print this usage information.
 ```
 
 ### `puppy`
