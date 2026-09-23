@@ -9,11 +9,14 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 Future<({int exitCode, List<String> lines})> _captureCli(
-  List<String> args,
-) async {
+  List<String> args, {
+  String? invokedAsEnv,
+}) async {
   final lines = <String>[];
   final code = await runZoned(
-    () => wrappedForTesting(() => runKScriptsCli(args)),
+    () => wrappedForTesting(
+      () => runKScriptsCli(args, invokedAsEnv: invokedAsEnv),
+    ),
     zoneSpecification: ZoneSpecification(
       print: (self, parent, zone, line) {
         lines.add(line);
@@ -88,6 +91,27 @@ void main() {
         ..contains('Unknown subcommand "not-a-subcommand".')
         ..contains('Run "kscripts --help" to see available subcommands.');
     });
+
+    test('KSCRIPTS_AS naming a known subcommand dispatches to it', () async {
+      final result = await _captureCli(['--help'], invokedAsEnv: 'gh-view');
+      check(result.exitCode).equals(0);
+      check(result.lines.first).contains('active pull requests');
+    });
+
+    test(
+      'KSCRIPTS_AS naming an unknown subcommand reports a stale binary',
+      () async {
+        final result = await _captureCli([
+          '--check',
+        ], invokedAsEnv: 'relay-whoami-from-the-future');
+        check(result.exitCode).equals(ExitCode.config.code);
+        check(result.lines.join('\n'))
+          ..contains('invoked as "relay-whoami-from-the-future"')
+          ..contains('newer than the installed binary')
+          ..contains("dart install 'kevmoo_scripts@{git:")
+          ..not((it) => it.contains('Usage: kscripts'));
+      },
+    );
 
     test('resolveEffectiveKScriptsArgs handles multicall env and argv[0]', () {
       check(

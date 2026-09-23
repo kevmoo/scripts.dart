@@ -261,9 +261,27 @@ String? _resolveRepoDirFromBundleLock(File exe) {
 }
 
 /// Entrypoint dispatcher for `kscripts`.
-Future<void> runKScriptsCli(List<String> rawArgs) async {
+///
+/// [invokedAsEnv] overrides `KSCRIPTS_AS` for tests.
+Future<void> runKScriptsCli(
+  List<String> rawArgs, {
+  String? invokedAsEnv,
+}) async {
   checkKScriptsStaleness();
-  final args = resolveEffectiveKScriptsArgs(rawArgs);
+
+  // A `_kscripts_shim` symlink sets `KSCRIPTS_AS` to its own name. If this
+  // build has no such subcommand, the dotfiles are newer than the installed
+  // binary; say so instead of falling through to usage or "unknown subcommand".
+  final invokedAs = invokedAsEnv ?? Platform.environment['KSCRIPTS_AS'];
+  if (invokedAs != null &&
+      invokedAs.isNotEmpty &&
+      invokedAs != 'kscripts' &&
+      findKScriptSubcommand(invokedAs) == null) {
+    _reportStaleShim(invokedAs);
+    return;
+  }
+
+  final args = resolveEffectiveKScriptsArgs(rawArgs, invokedAsEnv: invokedAs);
 
   if (args.isEmpty ||
       args.first == '--help' ||
@@ -292,6 +310,17 @@ Future<void> runKScriptsCli(List<String> rawArgs) async {
   }
 
   await subcommand.run(args.sublist(1));
+}
+
+void _reportStaleShim(String name) {
+  setError(
+    message:
+        'kscripts was invoked as "$name" through a _kscripts_shim symlink, but '
+        'this build of kscripts has no "$name" subcommand.\n'
+        'The dotfiles are newer than the installed binary. Refresh it:\n\n'
+        "  dart install 'kevmoo_scripts@{git: https://github.com/kevmoo/scripts.dart}'",
+    exitCode: ExitCode.config.code,
+  );
 }
 
 void _reportUnknownSubcommand(String commandName) {

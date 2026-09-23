@@ -24,6 +24,10 @@ ln -s "$(command -v kscripts)" ~/.local/bin/gh-view   # gh-view --json
 KSCRIPTS_AS=git-up kscripts --check                   # same as: kscripts git-up --check
 ```
 
+If `KSCRIPTS_AS` names a subcommand this build does not have, `kscripts` exits
+78 and tells you to reinstall: it means a `_kscripts_shim` symlink from a newer
+dotfiles sync outran the installed binary.
+
 For a `path:` install, `kscripts` warns when the binary is older than the
 checkout's `main` ref. For a `git:` install, set `KSCRIPTS_REPO_DIR` to a local
 `scripts.dart` checkout to enable the same check.
