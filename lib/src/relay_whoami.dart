@@ -234,6 +234,7 @@ RelayWhoamiOptions parseRelayWhoamiArgs(
         (results['model'] as String?) ??
         env['ANTIGRAVITY_MODEL'] ??
         env['CLAUDE_MODEL'] ??
+        env['GEMINI_MODEL'] ??
         '',
   );
 }

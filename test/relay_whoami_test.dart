@@ -190,5 +190,51 @@ Landed PR #113 on kevmoo/scripts.dart.
       final newOssIssues = newOss['issues'] as Map<String, Object?>;
       expect(newOssIssues.containsKey('4'), isTrue);
     });
+
+    test('keeps multi-recipient issue in Action Required for second recipient '
+        'after first recipient replies', () {
+      const rawIssue5 = RelayIssueRaw(
+        number: 5,
+        title: '🔍 [kscripts] Review relay-whoami Dart port',
+        state: 'OPEN',
+        updatedAt: '2026-09-23T03:21:00Z',
+        createdAt: '2026-09-23T03:03:00Z',
+        url: 'https://github.com/kevmoo/agent-relay/issues/5',
+        body: '''
+### ☁️🐧⚡ Enterprise Rodete (`kevmoo` · `linux_x86_64`) → 🐧🛠️🐳 Bluefin-DX, 🍎🏎️✨ Darwin Pro
+> **Thread**: `#5 Review` | **State**: `HANDOFF` | **Time**: `2026-09-22 20:03 PT`
+''',
+        commentBodies: <String>[
+          '''
+### 🐧🛠️🐳 Bluefin-DX (`bluefin` · `linux_x86_64`) → ☁️🐧⚡ Enterprise Rodete
+> **Thread**: `#5 Review` | **State**: `ACKED` | **Time**: `2026-09-22 20:21 PT`
+''',
+        ],
+      );
+
+      final forDarwin = EnrichedRelayIssue.fromRaw(
+        rawIssue5,
+        channel: 'oss',
+        repo: 'kevmoo/agent-relay',
+        selfPattern: RegExp(
+          'Darwin Pro|darwin-pro|gmac|All',
+          caseSensitive: false,
+        ),
+      );
+      expect(forDarwin.addressedToMe, isTrue);
+      expect(forDarwin.latestFromMe, isFalse);
+
+      final forBluefin = EnrichedRelayIssue.fromRaw(
+        rawIssue5,
+        channel: 'oss',
+        repo: 'kevmoo/agent-relay',
+        selfPattern: RegExp(
+          'Bluefin-DX|bluefin-dx|bluefin|All',
+          caseSensitive: false,
+        ),
+      );
+      expect(forBluefin.addressedToMe, isFalse);
+      expect(forBluefin.latestFromMe, isTrue);
+    });
   });
 }

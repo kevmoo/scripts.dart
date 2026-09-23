@@ -170,14 +170,22 @@ final class EnrichedRelayIssue {
     required RegExp selfPattern,
   }) {
     final opener = parseRelayEnvelope(raw.body, raw.title);
-    final latest = raw.commentBodies.isNotEmpty
-        ? parseRelayEnvelope(raw.commentBodies.last, raw.title)
-        : opener;
+    final commentEnvelopes = [
+      for (final b in raw.commentBodies) parseRelayEnvelope(b, raw.title),
+    ];
+    final latest = commentEnvelopes.isNotEmpty ? commentEnvelopes.last : opener;
     final activeTodos = latest.todos.isNotEmpty ? latest.todos : opener.todos;
     final latestFromMe = selfPattern.hasMatch(latest.from);
     final openedByMe = selfPattern.hasMatch(opener.from);
-    final addressedToMe =
-        selfPattern.hasMatch(latest.to) || selfPattern.hasMatch(raw.title);
+    var unansweredToMe = selfPattern.hasMatch(raw.title);
+    for (final turn in [opener, ...commentEnvelopes]) {
+      if (selfPattern.hasMatch(turn.from)) {
+        unansweredToMe = false;
+      } else if (selfPattern.hasMatch(turn.to)) {
+        unansweredToMe = true;
+      }
+    }
+    final addressedToMe = unansweredToMe || selfPattern.hasMatch(latest.to);
 
     return EnrichedRelayIssue(
       channel: channel,
