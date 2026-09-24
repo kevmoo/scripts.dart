@@ -234,8 +234,8 @@ String _resolveActionItemMarkdown(
 }
 
 String _formatCiActionMarkdown(GhPr pr) {
-  final detail = pr.ciDetail;
-  if (detail != null && detail.isNotEmpty) {
+  final detail = _sanitizeMarkdownCellDetail(pr.ciDetail);
+  if (detail != null) {
     final prefix = pr.isDraft ? 'draft · ' : '';
     return '🟠 **CI Action Required** ($prefix$detail)';
   }
@@ -245,14 +245,24 @@ String _formatCiActionMarkdown(GhPr pr) {
 }
 
 String _formatCiFailingMarkdown(GhPr pr) {
-  final detail = pr.ciDetail;
-  if (detail != null && detail.isNotEmpty) {
+  final detail = _sanitizeMarkdownCellDetail(pr.ciDetail);
+  if (detail != null) {
     final prefix = pr.isDraft ? 'draft · ' : '';
     return '🔴 **CI Failing** ($prefix$detail)';
   }
   return pr.isDraft
       ? '🔴 **CI Failing** (draft)'
       : '🔴 **CI Failing** (needs fix)';
+}
+
+String? _sanitizeMarkdownCellDetail(String? detail) {
+  if (detail == null) return null;
+  final cleaned = detail
+      .replaceAll('\r', '')
+      .replaceAll('\n', ' ')
+      .replaceAll('|', '/')
+      .trim();
+  return cleaned.isEmpty ? null : cleaned;
 }
 
 String _formatChangesRequestedActionMarkdown(

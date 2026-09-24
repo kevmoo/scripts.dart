@@ -431,7 +431,7 @@ CiStatus extractCiStatus(String repository, Map<String, dynamic>? commits) {
         _isFlutterTreeStatusOnlyFailure(statusRollup)) {
       return CiStatus.treeBroken;
     }
-    if (_isActionRequiredOnlyFailure(statusRollup)) {
+    if (_isActionRequiredOnlyFailure(statusRollup, repository: repository)) {
       return CiStatus.actionRequired;
     }
   }
@@ -439,13 +439,18 @@ CiStatus extractCiStatus(String repository, Map<String, dynamic>? commits) {
   return CiStatus(rawState);
 }
 
-bool _isActionRequiredOnlyFailure(Map<String, dynamic>? statusRollup) {
+bool _isActionRequiredOnlyFailure(
+  Map<String, dynamic>? statusRollup, {
+  String repository = '',
+}) {
   final contextNodes = _extractRollupContextNodes(statusRollup);
+  final isFlutter = repository.toLowerCase() == 'flutter/flutter';
 
   var hasActionRequired = false;
   var hasRealFailure = false;
 
   for (final ctx in contextNodes) {
+    if (isFlutter && ctx['context'] == 'tree-status') continue;
     final raw = (ctx['state'] ?? ctx['conclusion']) as String? ?? '';
     final status = CiStatus(raw);
     if (status == CiStatus.actionRequired) {
@@ -463,14 +468,12 @@ bool _isActionRequiredOnlyFailure(Map<String, dynamic>? statusRollup) {
 }
 
 final _failureKeywordRegex = RegExp(
-  r'\bfailed\b|\bfailure\b',
+  r'(?<!\b(?:0|no|none|zero)\s)\b(?:failed|failure)(?!\s*:\s*0\b)\b',
   caseSensitive: false,
 );
-final _bulletItemRegex = RegExp(
-  r'^\s*[-*]\s+`?([^`\n]+?)`?\s*$',
-  multiLine: true,
-);
+final _bulletItemRegex = RegExp(r'^\s*[-*]\s+(.+)$', multiLine: true);
 final _markdownNoiseRegex = RegExp(r'\*\*|\[([^\]]+)\]\([^)]+\)');
+final _leadingHeadingRegex = RegExp(r'^#+\s*');
 
 bool _isActionRequiredCheckRealFailure(Map<String, dynamic> ctx) {
   final text = ctx['text'] as String? ?? '';
@@ -489,7 +492,7 @@ List<Map<String, dynamic>> _extractRollupContextNodes(
   return nodes.whereType<Map<String, dynamic>>().toList();
 }
 
-/// Extracts a concise human-readable summary of failing or action-required
+/// Extracts a concise, table-safe summary of failing or action-required
 /// CI check runs from the latest commit's `statusCheckRollup`.
 String? extractCiDetail(Map<String, dynamic>? commits) {
   final commitNodes = commits?['nodes'] as List<dynamic>?;
@@ -505,7 +508,9 @@ String? extractCiDetail(Map<String, dynamic>? commits) {
   final filtered = failingNodes.length > 1
       ? failingNodes.where((c) => c['context'] != 'tree-status').toList()
       : failingNodes;
-  final targets = filtered.isNotEmpty ? filtered : failingNodes;
+  final nonTreeNodes = filtered.isNotEmpty ? filtered : failingNodes;
+  final realFailures = nonTreeNodes.where(_isRealFailureContext).toList();
+  final targets = realFailures.isNotEmpty ? realFailures : nonTreeNodes;
 
   final details = targets
       .map(_formatCheckContextDetail)
@@ -522,19 +527,42 @@ bool _isFailingOrActionContext(Map<String, dynamic> ctx) {
   return status == CiStatus.actionRequired || status.isFailureConclusion;
 }
 
+bool _isRealFailureContext(Map<String, dynamic> ctx) {
+  final raw = (ctx['state'] ?? ctx['conclusion']) as String? ?? '';
+  final status = CiStatus(raw);
+  if (status == CiStatus.actionRequired) {
+    return _isActionRequiredCheckRealFailure(ctx);
+  }
+  return status == CiStatus.failure ||
+      status == CiStatus.error ||
+      status == CiStatus.timedOut ||
+      status == CiStatus.startupFailure;
+}
+
 String _formatCheckContextDetail(Map<String, dynamic> ctx) {
-  final name = ((ctx['name'] ?? ctx['context']) as String? ?? '').trim();
+  final rawName = (ctx['name'] ?? ctx['context']) as String? ?? '';
+  final name = _sanitizeCheckText(rawName);
   final snippet = _extractCheckSnippet(ctx, name);
   if (name.isEmpty) return snippet ?? '';
   if (snippet == null || snippet.isEmpty) return name;
   return '$name: $snippet';
 }
 
+String _sanitizeCheckText(String input) => input
+    .replaceAll('\r', '')
+    .replaceAll('\n', ' ')
+    .replaceAllMapped(_markdownNoiseRegex, (m) => m.group(1) ?? '')
+    .replaceAll('`', '')
+    .replaceFirst(_leadingHeadingRegex, '')
+    .replaceAll('|', '/')
+    .replaceAll(RegExp(r'\s+'), ' ')
+    .trim();
+
 String? _extractCheckSnippet(Map<String, dynamic> ctx, String checkName) {
-  final text = (ctx['text'] as String? ?? '').trim();
+  final text = (ctx['text'] as String? ?? '').replaceAll('\r', '').trim();
   final bullets = _bulletItemRegex
       .allMatches(text)
-      .map((m) => m.group(1)!.trim())
+      .map((m) => _sanitizeCheckText(m.group(1)!))
       .where((s) => s.isNotEmpty)
       .toList();
   if (bullets.isNotEmpty) {
@@ -543,18 +571,25 @@ String? _extractCheckSnippet(Map<String, dynamic> ctx, String checkName) {
   }
 
   for (final raw in [text, ctx['summary'], ctx['description'], ctx['title']]) {
-    final str = (raw as String? ?? '').trim();
-    if (str.isEmpty) continue;
-    final firstLine = str
-        .split('\n')
-        .first
-        .replaceAllMapped(_markdownNoiseRegex, (m) => m.group(1) ?? '')
-        .trim();
-    if (firstLine.isNotEmpty &&
-        firstLine.length <= 60 &&
-        firstLine.toLowerCase() != checkName.toLowerCase()) {
-      return firstLine;
+    final line = _firstCleanNonTableLine(raw as String? ?? '', checkName);
+    if (line != null) return line;
+  }
+  return null;
+}
+
+String? _firstCleanNonTableLine(String raw, String checkName) {
+  final str = raw.replaceAll('\r', '').trim();
+  if (str.isEmpty) return null;
+  for (final rawLine in str.split('\n')) {
+    final trimmed = rawLine.trim();
+    if (trimmed.isEmpty || trimmed.startsWith('|')) continue;
+    final cleaned = _sanitizeCheckText(trimmed);
+    if (cleaned.isNotEmpty &&
+        cleaned.length <= 60 &&
+        cleaned.toLowerCase() != checkName.toLowerCase()) {
+      return cleaned;
     }
+    return null;
   }
   return null;
 }

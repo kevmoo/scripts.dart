@@ -1229,6 +1229,94 @@ void main() {
         'Manual trigger required to run suite',
       );
     });
+
+    test('extractCiDetail prioritizes real FAILURE checks ahead of collateral '
+        'CANCELLED matrix jobs and non-failing ACTION_REQUIRED gates', () {
+      final commitNode = {
+        'nodes': [
+          {
+            'commit': {
+              'statusCheckRollup': {
+                'state': 'FAILURE',
+                'contexts': {
+                  'nodes': [
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'CI / test (ubuntu-latest, 3.10)',
+                      'conclusion': 'CANCELLED',
+                      'status': 'COMPLETED',
+                    },
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'CI / test (macos-latest, 3.10)',
+                      'conclusion': 'CANCELLED',
+                      'status': 'COMPLETED',
+                    },
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'external-integration-check',
+                      'conclusion': 'ACTION_REQUIRED',
+                      'status': 'COMPLETED',
+                      'summary': '0 failed, 1 pending manual approval',
+                    },
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'CI / test (windows-latest, dev)',
+                      'conclusion': 'FAILURE',
+                      'status': 'COMPLETED',
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      };
+
+      final detail = extractCiDetail(commitNode);
+      check(detail).equals('CI / test (windows-latest, dev)');
+    });
+
+    test('sanitizes pipes/tables in ciDetail and handles 0 failed + tree-status', () {
+      final commitNode = {
+        'nodes': [
+          {
+            'commit': {
+              'statusCheckRollup': {
+                'state': 'FAILURE',
+                'contexts': {
+                  'nodes': [
+                    {
+                      '__typename': 'StatusContext',
+                      'context': 'tree-status',
+                      'state': 'FAILURE',
+                    },
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'Linux | Integration Gate',
+                      'conclusion': 'ACTION_REQUIRED',
+                      'status': 'COMPLETED',
+                      'summary':
+                          '| Stage | Result |\r\n'
+                          '|---|---|\r\n'
+                          '### 0 failed | Waiting for maintainer approval',
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      };
+
+      final status = extractCiStatus('flutter/flutter', commitNode);
+      check(status).equals(CiStatus.actionRequired);
+
+      final detail = extractCiDetail(commitNode);
+      check(detail).equals(
+        'Linux / Integration Gate: 0 failed / Waiting for maintainer approval',
+      );
+    });
   });
 
   group('parsePrNode reviewer and ping detection', () {

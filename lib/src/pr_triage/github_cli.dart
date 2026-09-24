@@ -415,7 +415,15 @@ String? parseRunIdFromLink(String link) {
 
 /// Extracts the check run ID from a GitHub check run or job URL.
 String? parseCheckRunIdFromLink(String link) {
-  final rawSegments = Uri.tryParse(link)?.pathSegments ?? const [];
+  final uri = Uri.tryParse(link);
+  if (uri == null) return null;
+
+  final queryCheckRunId = uri.queryParameters['check_run_id'];
+  if (queryCheckRunId != null && _digitsOnly.hasMatch(queryCheckRunId)) {
+    return queryCheckRunId;
+  }
+
+  final rawSegments = uri.pathSegments;
   final segments = rawSegments.where((s) => s.isNotEmpty).toList();
   if (segments.isEmpty) return null;
 
@@ -497,7 +505,10 @@ Future<Map<dynamic, dynamic>?> _fetchExternalCheckRun(
       if (decoded is Map) return decoded;
     }
     if (headSha.isNotEmpty) {
-      final payload = await ghRepoApi('commits/$headSha/check-runs');
+      final encodedName = Uri.encodeQueryComponent(check.name);
+      final payload = await ghRepoApi(
+        'commits/$headSha/check-runs?check_name=$encodedName&per_page=100',
+      );
       final decoded = jsonDecode(payload) as Map<dynamic, dynamic>;
       final checkRuns = decoded['check_runs'] as List<dynamic>? ?? const [];
       final matching = checkRuns

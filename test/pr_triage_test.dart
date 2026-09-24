@@ -330,6 +330,12 @@ void _registerJobLogsTests() {
         ),
         equals('67890'),
       );
+      expect(
+        parseCheckRunIdFromLink(
+          'https://github.com/flutter/flutter/pull/192818/checks?check_run_id=987654321',
+        ),
+        equals('987654321'),
+      );
     });
   });
 }
