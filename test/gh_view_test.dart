@@ -1380,6 +1380,141 @@ void main() {
       check(pr.unrequestedActiveReviewers).deepEquals(const <String>[]);
       check(pr.needsReviewReRequest).isFalse();
     });
+
+    test('preserves top-level issue comment mentions and isAlreadyPinged even '
+        'when author later replies inside a review thread', () {
+      final node = <String, dynamic>{
+        'number': 201,
+        'title': 'Fix 1 regression test',
+        'url': 'https://github.com/org/repo/pull/201',
+        'author': {'login': 'kevmoo'},
+        'isDraft': false,
+        'state': 'OPEN',
+        'reviewDecision': 'CHANGES_REQUESTED',
+        'reviewRequests': {'nodes': <Object>[]},
+        'reviews': {
+          'nodes': [
+            {
+              'author': {'login': 'bob'},
+              'submittedAt': '2026-09-24T01:00:00Z',
+              'state': 'CHANGES_REQUESTED',
+            },
+            {
+              'author': {'login': 'kevmoo'},
+              'submittedAt': '2026-09-24T03:00:00Z',
+              'state': 'COMMENTED',
+            },
+          ],
+        },
+        'comments': {
+          'nodes': [
+            {
+              'author': {'login': 'kevmoo'},
+              'body': 'PTAL @alice @bob',
+              'createdAt': '2026-09-24T02:00:00Z',
+            },
+          ],
+        },
+        'reviewThreads': {'totalCount': 0, 'nodes': <Object>[]},
+        'mergeable': 'MERGEABLE',
+        'mergeStateStatus': 'BLOCKED',
+        'isInMergeQueue': false,
+        'headRefName': 'fix-1',
+        'headRefOid': 'abc',
+        'baseRefName': 'main',
+        'updatedAt': '2026-09-24T03:00:00Z',
+        'repository': {
+          'nameWithOwner': 'org/repo',
+          'url': 'https://github.com/org/repo',
+          'isArchived': false,
+        },
+      };
+
+      final pr = parsePrNode(node)!;
+      check(pr.activeReviewers).deepEquals(['alice', 'bob']);
+      check(pr.isAlreadyPinged).isTrue();
+      check(pr.lastAuthorReviewAt)
+          .equals(DateTime.parse('2026-09-24T03:00:00Z'));
+      check(pr.hasAuthorRespondedSinceLastReview).isTrue();
+    });
+
+    test(
+      'bystander issue comment or second reviewer approval after author push '
+      'does not suppress needsReviewReRequest for unrequested reviewer',
+      () {
+        final node = <String, dynamic>{
+          'number': 202,
+          'title': 'Fix 2 & Fix 4 regression test',
+          'url': 'https://github.com/org/repo/pull/202',
+          'author': {'login': 'kevmoo'},
+          'isDraft': false,
+          'state': 'OPEN',
+          'reviewDecision': 'CHANGES_REQUESTED',
+          'reviewRequests': {'nodes': <Object>[]},
+          'reviews': {
+            'nodes': [
+              {
+                'author': {'login': 'bob'},
+                'submittedAt': '2026-09-24T01:00:00Z',
+                'state': 'CHANGES_REQUESTED',
+              },
+              {
+                'author': {'login': 'alice'},
+                'submittedAt': '2026-09-24T03:00:00Z',
+                'state': 'APPROVED',
+              },
+              {
+                'author': {'login': 'alice'},
+                'submittedAt': '2026-09-24T03:05:00Z',
+                'state': 'COMMENTED',
+              },
+            ],
+          },
+          'comments': {
+            'nodes': [
+              {
+                'author': {'login': 'bystander'},
+                'body': 'Following along!',
+                'createdAt': '2026-09-24T04:00:00Z',
+              },
+            ],
+          },
+          'reviewThreads': {'totalCount': 0, 'nodes': <Object>[]},
+          'commits': {
+            'nodes': [
+              {
+                'commit': {
+                  'committedDate': '2026-09-24T02:00:00Z',
+                  'statusCheckRollup': {'state': 'SUCCESS'},
+                },
+              },
+            ],
+          },
+          'mergeable': 'MERGEABLE',
+          'mergeStateStatus': 'BLOCKED',
+          'isInMergeQueue': false,
+          'headRefName': 'fix-2',
+          'headRefOid': 'def',
+          'baseRefName': 'main',
+          'updatedAt': '2026-09-24T04:00:00Z',
+          'repository': {
+            'nameWithOwner': 'org/repo',
+            'url': 'https://github.com/org/repo',
+            'isArchived': false,
+          },
+        };
+
+        final pr = parsePrNode(node)!;
+        // Fix 4: alice's APPROVED state is preserved after COMMENTED review.
+        check(pr.approvedReviewers).deepEquals(['alice']);
+        check(pr.unrequestedActiveReviewers).deepEquals(['bob']);
+        check(pr.changesRequestedReviewers).deepEquals(['bob']);
+        // Fix 2: author committed at 02:00 (after bob's 01:00 review), even
+        // though alice approved at 03:00 and bystander commented at 04:00.
+        check(pr.hasAuthorRespondedSinceLastReview).isTrue();
+        check(pr.needsReviewReRequest).isTrue();
+      },
+    );
   });
 }
 

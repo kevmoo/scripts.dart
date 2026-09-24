@@ -252,14 +252,18 @@ String _formatChangesRequestedActionMarkdown(
   if (areThreadsResolved) {
     return '🔄 **Re-review Needed** (threads resolved)';
   }
+  final crReviewers = pr.changesRequestedReviewers;
+  final crReviewersText = crReviewers.isNotEmpty
+      ? '@${crReviewers.join(', @')}'
+      : '';
   if (pr.unresolvedReviewThreads > 0) {
-    final suffix = reviewersText.isNotEmpty ? ' · $reviewersText' : '';
+    final suffix = crReviewersText.isNotEmpty ? ' · $crReviewersText' : '';
     final plural = pr.unresolvedReviewThreads > 1 ? 's' : '';
     return '🔴 **Changes Requested** '
         '(${pr.unresolvedReviewThreads} open thread$plural$suffix)';
   }
-  return reviewersText.isNotEmpty
-      ? '🔴 **Changes Requested** ($reviewersText)'
+  return crReviewersText.isNotEmpty
+      ? '🔴 **Changes Requested** ($crReviewersText)'
       : '🔴 **Changes Requested**';
 }
 
@@ -316,8 +320,9 @@ String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) =>
         '🔴 Changes Requested (Resolved)',
       ReviewDecision.changesRequested when pr.unresolvedReviewThreads > 0 =>
         '🔴 Changes Requested (${pr.unresolvedReviewThreads} open)',
-      ReviewDecision.changesRequested when pr.targetReviewers.isNotEmpty =>
-        '🔴 Changes Requested (@${pr.targetReviewers.join(', @')})',
+      ReviewDecision.changesRequested
+          when pr.changesRequestedReviewers.isNotEmpty =>
+        '🔴 Changes Requested (@${pr.changesRequestedReviewers.join(', @')})',
       ReviewDecision.changesRequested => '🔴 Changes Requested',
       ReviewDecision.reviewRequired when pr.needsReviewReRequest =>
         '🟠 Re-request Review (@${pr.unrequestedActiveReviewers.join(', @')})',
@@ -533,9 +538,12 @@ String _formatReviewBadgeTerminal(GhPr pr) {
         when pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0 =>
       yellow.wrap('Changes Requested (Resolved: Re-review Needed)') ??
           'Changes Requested (Resolved: Re-review Needed)',
-    ReviewDecision.changesRequested when pr.targetReviewers.isNotEmpty =>
-      red.wrap('Changes Requested (@${pr.targetReviewers.join(', @')})') ??
-          'Changes Requested (@${pr.targetReviewers.join(', @')})',
+    ReviewDecision.changesRequested
+        when pr.changesRequestedReviewers.isNotEmpty =>
+      red.wrap(
+            'Changes Requested (@${pr.changesRequestedReviewers.join(', @')})',
+          ) ??
+          'Changes Requested (@${pr.changesRequestedReviewers.join(', @')})',
     ReviewDecision.changesRequested =>
       red.wrap('Changes Requested') ?? 'Changes Requested',
     ReviewDecision.reviewRequired when pr.needsReviewReRequest =>

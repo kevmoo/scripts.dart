@@ -104,8 +104,10 @@ class GhPr extends GhPrRef {
     required this.totalReviewThreads,
     required this.unresolvedReviewThreads,
     this.lastAuthorCommentAt,
+    this.lastAuthorReviewAt,
     this.lastCommitAt,
     this.lastReviewerActivityAt,
+    this.lastUnrequestedReviewAt,
     required this.mergeable,
     required this.mergeStateStatus,
     required this.isInMergeQueue,
@@ -122,7 +124,15 @@ class GhPr extends GhPrRef {
   });
 
   final List<String>? reviewAuthors;
+  final DateTime? lastAuthorReviewAt;
   final DateTime? lastCommitAt;
+  final DateTime? lastUnrequestedReviewAt;
+}
+
+DateTime? _maxDateTime(DateTime? a, DateTime? b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return a.isAfter(b) ? a : b;
 }
 
 /// Domain status helpers for [GhPr].
@@ -169,20 +179,25 @@ extension GhPrStatus on GhPr {
           )
           .toList();
 
+  /// Reviewers to attribute on a `CHANGES_REQUESTED` PR: prefers
+  /// [unrequestedActiveReviewers] (excluding already-approved reviewers and
+  /// issue-only commenters) when non-empty, falling back to [targetReviewers].
+  List<String> get changesRequestedReviewers =>
+      unrequestedActiveReviewers.isNotEmpty
+      ? unrequestedActiveReviewers
+      : targetReviewers;
+
   /// Latest timestamp of any PR author activity (commit push/author date,
   /// top-level issue comment, or inline review reply).
-  DateTime? get lastAuthorActivityAt {
-    final commentAt = lastAuthorCommentAt;
-    final commitAt = lastCommitAt;
-    if (commentAt == null) return commitAt;
-    if (commitAt == null) return commentAt;
-    return commentAt.isAfter(commitAt) ? commentAt : commitAt;
-  }
+  DateTime? get lastAuthorActivityAt => _maxDateTime(
+    _maxDateTime(lastAuthorCommentAt, lastAuthorReviewAt),
+    lastCommitAt,
+  );
 
   /// True when the PR author has pushed a commit or posted a comment/reply
-  /// more recently than the latest human reviewer activity.
+  /// more recently than the latest non-approved review activity.
   bool get hasAuthorRespondedSinceLastReview {
-    final reviewerActivity = lastReviewerActivityAt;
+    final reviewerActivity = lastUnrequestedReviewAt ?? lastReviewerActivityAt;
     if (reviewerActivity == null) return true;
     final authorActivity = lastAuthorActivityAt;
     if (authorActivity == null) return false;

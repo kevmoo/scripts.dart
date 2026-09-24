@@ -621,6 +621,97 @@ void _registerTriageReportTests() {
       expect(report, isNot(contains('--add-reviewer alice')));
     });
 
+    test('excludes reviewer who approved with empty body or commented after '
+        'approving from unrequested warning', () {
+      final report = buildTriageReport((
+        prData: <String, dynamic>{
+          'number': 185920,
+          'title': 'Support empty-body approval and follow-up comment',
+          'url': 'https://github.com/flutter/flutter/pull/185920',
+          'author': {'login': 'kevmoo'},
+          'headRefName': 'feat-a11y',
+          'headRefOid': 'abc1234',
+          'reviewDecision': 'CHANGES_REQUESTED',
+          'mergeable': 'MERGEABLE',
+          'reviewRequests': <Object>[],
+          'humanReviewers': ['bob'],
+          'approvedReviewers': ['empty_body_approver'],
+        },
+        syncStatus: (
+          localBranch: 'feat-a11y',
+          remoteBranch: 'feat-a11y',
+          localHeadSha: 'abc1234',
+          remoteHeadSha: 'abc1234',
+          isSynced: true,
+          syncState: 'in_sync',
+          warning: null,
+        ),
+        unresolvedThreads: <PrReviewThread>[
+          (
+            id: 'PRRT_2',
+            isResolved: false,
+            comments: [
+              (
+                databaseId: '9002',
+                path: 'lib/foo.dart',
+                line: 12,
+                body: 'Nit before empty-body approval',
+                author: 'empty_body_approver',
+                createdAt: '2026-09-14T00:00:00Z',
+                url: 'https://github.com/flutter/flutter/pull/185920#r9002',
+              ),
+            ],
+          ),
+        ],
+        reviewComments: <PrReview>[
+          (
+            id: 'PRR_1',
+            databaseId: '8001',
+            state: 'APPROVED',
+            body: 'LGTM',
+            author: 'alice',
+            submittedAt: '2026-09-14T01:00:00Z',
+            url: 'https://github.com/flutter/flutter/pull/185920#r8001',
+          ),
+          (
+            id: 'PRR_2',
+            databaseId: '8002',
+            state: 'COMMENTED',
+            body: 'Follow-up thought',
+            author: 'alice',
+            submittedAt: '2026-09-14T01:05:00Z',
+            url: 'https://github.com/flutter/flutter/pull/185920#r8002',
+          ),
+          (
+            id: 'PRR_3',
+            databaseId: '8003',
+            state: 'CHANGES_REQUESTED',
+            body: 'Please add a test.',
+            author: 'bob',
+            submittedAt: '2026-09-14T02:00:00Z',
+            url: 'https://github.com/flutter/flutter/pull/185920#r8003',
+          ),
+        ],
+        generalComments: const <PrComment>[],
+        failedChecks: const <PrCheckRun>[],
+        pendingChecks: const <PrCheckRun>[],
+        checkLogs: const <String, String>{},
+      ));
+
+      expect(
+        report,
+        contains(
+          '**Review Requests**: None (`[]`) ⚠️ (Missing active reviewer: @bob)',
+        ),
+      );
+      expect(
+        report,
+        contains('gh pr edit 185920 -R flutter/flutter --add-reviewer bob'),
+      );
+      expect(report, isNot(contains('--add-reviewer alice')));
+      expect(report, isNot(contains('--add-reviewer empty_body_approver')));
+    });
+
     test(
       'buildTriageReport and parseMergeTreeConflictOutput surface conflicts',
       () {

@@ -218,6 +218,10 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
     graphData,
     prAuthor,
   );
+  prData['approvedReviewers'] = _collectApprovedReviewers(
+    graphData.reviews,
+    prAuthor,
+  ).toList();
 
   print('Fetching check runs...');
   final checks = await fetchPrChecks(context);
@@ -252,6 +256,10 @@ String _extractPrAuthorLogin(Map<String, dynamic> prData) =>
 bool _isNonAuthorHumanReviewer(String login, String prAuthor) =>
     login.isNotEmpty && login != prAuthor && !isBotLogin(login);
 
+bool _shouldUpdateReviewState(String? previousState, String newState) =>
+    newState.isNotEmpty &&
+    (newState != 'COMMENTED' || previousState != 'APPROVED');
+
 Set<String> _collectApprovedReviewers(
   Iterable<PrReview> reviews,
   String prAuthor,
@@ -259,7 +267,8 @@ Set<String> _collectApprovedReviewers(
   final latestStateByReviewer = <String, String>{};
   for (final review in reviews) {
     if (!_isNonAuthorHumanReviewer(review.author, prAuthor)) continue;
-    if (review.state.isNotEmpty) {
+    final previous = latestStateByReviewer[review.author];
+    if (_shouldUpdateReviewState(previous, review.state)) {
       latestStateByReviewer[review.author] = review.state;
     }
   }
@@ -356,7 +365,10 @@ List<String> _parseRequestedReviewerIds(Object? rawRequests) {
 
 Set<String> _collectTriageHumanReviewers(TriageData data, String prAuthor) {
   final explicitList = _prDataList(data.prData['humanReviewers']);
-  final approved = _collectApprovedReviewers(data.reviewComments, prAuthor);
+  final approved = <String>{
+    ..._prDataList(data.prData['approvedReviewers']),
+    ..._collectApprovedReviewers(data.reviewComments, prAuthor),
+  };
   final candidateAuthors = <String>{
     ...explicitList,
     ...data.reviewComments.map((r) => r.author),
