@@ -202,7 +202,7 @@ String _resolveActionItemMarkdown(
       pr.ciStatus == CiStatus.actionRequired) {
     return pr.isDraft
         ? '🟠 **CI Action Required** (draft)'
-        : '🟠 **CI Action Required** (e.g. `/gcbrun`)';
+        : '🟠 **CI Action Required** (needs manual trigger/approval)';
   }
 
   return switch ((

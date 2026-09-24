@@ -136,17 +136,16 @@ kscripts pr-triage resolve --dir /path/to/target-repository <thread_id> <comment
        Report) or create the `pr_triage_report.md` artifact until the user has
        answered, because final CI results might change the triage plan and
        action items.
-   - **`ACTION_REQUIRED` Checks (e.g., `Needs /gcbrun` on Google Cloud Build)**:
+   - **`ACTION_REQUIRED` Checks**:
      - `kscripts pr-triage` marks checks in `state: "ACTION_REQUIRED"` with
        `### ⚠️ <check_name> (ACTION_REQUIRED)` and extracts the CheckRun
-       `output.summary` (e.g., `ACTION_REQUIRED: Needs /gcbrun`).
+       `output.summary`.
      - Distinguish `ACTION_REQUIRED` checks from actual code/test failures:
-       these checks have not failed a test suite, but require a maintainer
-       trigger comment (such as `/gcbrun`) on the PR.
-     - Because pushing a new commit resets `gcb-pr-integration` back to
-       `ACTION_REQUIRED` (`Needs /gcbrun`), **never** post `/gcbrun` before code
-       commits are pushed. Only post (or offer to post) `/gcbrun` via
-       `gh pr comment` after all code fixes for the triage pass have been
+       these checks have not failed a test suite, but require a manual trigger
+       comment or maintainer approval on the PR.
+     - Because pushing a new commit resets `ACTION_REQUIRED` checks, **never**
+       post a trigger comment before code commits are pushed. Only trigger or
+       approve the check after all code fixes for the triage pass have been
        committed and pushed, or when no code changes are needed.
    - Analyze the stack traces, compile errors, or analyzer failures to
      understand why any failed checks failed.

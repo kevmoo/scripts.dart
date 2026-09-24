@@ -990,10 +990,7 @@ void main() {
         ],
       };
 
-      final status = extractCiStatus(
-        'googleapis/google-cloud-dart',
-        commitNode,
-      );
+      final status = extractCiStatus('example-org/example-repo', commitNode);
       check(status).equals(CiStatus.actionRequired);
       check(status.isPassing).isFalse();
     });
@@ -1018,7 +1015,7 @@ void main() {
                       },
                       {
                         '__typename': 'CheckRun',
-                        'name': 'gcb-pr-integration (dart-sdk-testing)',
+                        'name': 'external-integration-check',
                         'conclusion': 'ACTION_REQUIRED',
                         'status': 'COMPLETED',
                       },
@@ -1030,10 +1027,7 @@ void main() {
           ],
         };
 
-        final status = extractCiStatus(
-          'googleapis/google-cloud-dart',
-          commitNode,
-        );
+        final status = extractCiStatus('example-org/example-repo', commitNode);
         check(status).equals(CiStatus.actionRequired);
       },
     );
@@ -1056,7 +1050,7 @@ void main() {
                     },
                     {
                       '__typename': 'CheckRun',
-                      'name': 'gcb-pr-integration (dart-sdk-testing)',
+                      'name': 'external-integration-check',
                       'conclusion': 'ACTION_REQUIRED',
                       'status': 'COMPLETED',
                     },
@@ -1068,10 +1062,7 @@ void main() {
         ],
       };
 
-      final status = extractCiStatus(
-        'googleapis/google-cloud-dart',
-        commitNode,
-      );
+      final status = extractCiStatus('example-org/example-repo', commitNode);
       check(status).equals(CiStatus.failure);
     });
   });
