@@ -341,45 +341,68 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
   return (gerritHost, gerritProject, isGerrit);
 }
 
-(List<Map<String, dynamic>>, Set<String>) _collectGerritComments(
+String _findRootCommentId(String id, Map<String, String> parentById) {
+  var current = id;
+  final visited = <String>{current};
+  while (true) {
+    final parent = parentById[current];
+    if (parent == null || parent.isEmpty || !visited.add(parent)) break;
+    current = parent;
+  }
+  return current;
+}
+
+Map<String, List<Map<String, dynamic>>> _groupCommentsByRoot(
   Map<String, dynamic> commentsByFile,
 ) {
   final allComments = <Map<String, dynamic>>[];
-  final parentIds = <String>{};
+  final parentById = <String, String>{};
 
   for (final fileList in commentsByFile.values) {
     if (fileList is! List) continue;
     for (final item in fileList) {
       if (item is! Map<String, dynamic>) continue;
       allComments.add(item);
+      final id = item['id'] as String? ?? '';
       final parentId = item['in_reply_to'] as String? ?? '';
-      if (parentId.isNotEmpty) {
-        parentIds.add(parentId);
+      if (id.isNotEmpty && parentId.isNotEmpty) {
+        parentById[id] = parentId;
       }
     }
   }
-  return (allComments, parentIds);
+
+  final threadsByRoot = <String, List<Map<String, dynamic>>>{};
+  for (var i = 0; i < allComments.length; i++) {
+    final comment = allComments[i];
+    final id = comment['id'] as String? ?? 'anon_$i';
+    final rootId = _findRootCommentId(id, parentById);
+    (threadsByRoot[rootId] ??= []).add(comment);
+  }
+  return threadsByRoot;
 }
 
-/// Reconstructs Gerrit `in_reply_to` comment chains and counts only leaf
-/// comments so resolved root comments are never miscounted as unresolved.
+/// Reconstructs Gerrit `in_reply_to` comment trees by root ancestor ID and
+/// evaluates the latest comment in each root thread so sibling replies and
+/// resolved parent comments match Gerrit's native unresolved thread state.
 ThreadSummary parseGerritCommentsJson(
   Map<String, dynamic> commentsByFile,
   int? ownerId,
 ) {
-  final (allComments, parentIds) = _collectGerritComments(commentsByFile);
+  final threadsByRoot = _groupCommentsByRoot(commentsByFile);
 
-  var totalThreads = 0;
   var unresolvedReviewerLeaves = 0;
   var unresolvedAuthorLeaves = 0;
 
-  for (final comment in allComments) {
-    final id = comment['id'] as String? ?? '';
-    if (parentIds.contains(id)) continue;
-    totalThreads++;
-    if (comment['unresolved'] != true) continue;
+  for (final thread in threadsByRoot.values) {
+    thread.sort(
+      (a, b) => (a['updated'] as String? ?? '').compareTo(
+        b['updated'] as String? ?? '',
+      ),
+    );
+    final latest = thread.last;
+    if (latest['unresolved'] != true) continue;
 
-    final authorMap = comment['author'] as Map<String, dynamic>?;
+    final authorMap = latest['author'] as Map<String, dynamic>?;
     final authorId = authorMap?['_account_id'] as int?;
     if (ownerId != null && authorId == ownerId) {
       unresolvedAuthorLeaves++;
@@ -389,7 +412,7 @@ ThreadSummary parseGerritCommentsJson(
   }
 
   return (
-    totalThreads: totalThreads,
+    totalThreads: threadsByRoot.length,
     unresolvedReviewerLeaves: unresolvedReviewerLeaves,
     unresolvedAuthorLeaves: unresolvedAuthorLeaves,
   );
@@ -405,17 +428,21 @@ String computeGerritNextAction({
     final count = threads.unresolvedReviewerLeaves;
     return '❌ Address $count unresolved reviewer comment(s)';
   }
+  if (crVotes.any((v) => v.endsWith(':-1') || v.endsWith(':-2'))) {
+    return '❌ Address negative Code-Review (${crVotes.join(', ')})';
+  }
   if (cqStatus.startsWith('❌')) {
     return '❌ Fix failing CQ tryjobs';
+  }
+  if (threads.unresolvedAuthorLeaves > 0) {
+    final target = reviewers.isEmpty ? 'Reviewer' : reviewers.join(', ');
+    return '🔔 Ping $target (${threads.unresolvedAuthorLeaves} open thread(s))';
   }
   if (crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'))) {
     return '🚀 Approved (${crVotes.join(', ')})';
   }
   if (reviewers.isEmpty) {
     return '⚠️ Add Reviewer (0 assigned)';
-  }
-  if (threads.unresolvedAuthorLeaves > 0) {
-    return '🔔 Ping Reviewer (${reviewers.join(', ')}; author replied)';
   }
   return '⏳ Awaiting Review (${reviewers.join(', ')})';
 }
@@ -433,13 +460,14 @@ List<String> _extractReviewers(Map<String, dynamic> item, int? ownerId) {
   return names;
 }
 
-List<String> _extractCrVotes(Map<String, dynamic> item) {
+List<String> _extractCrVotes(Map<String, dynamic> item, int? ownerId) {
   final labels = item['labels'] as Map<String, dynamic>?;
   final cr = labels?['Code-Review'] as Map<String, dynamic>?;
   final all = cr?['all'] as List<dynamic>? ?? const [];
   final votes = <String>[];
   for (final v in all) {
     if (v is! Map<String, dynamic>) continue;
+    if (ownerId != null && v['_account_id'] == ownerId) continue;
     final val = v['value'] as int? ?? 0;
     if (val == 0) continue;
     final name = (v['name'] ?? v['email'] ?? '?').toString().trim();
@@ -449,13 +477,39 @@ List<String> _extractCrVotes(Map<String, dynamic> item) {
   return votes;
 }
 
-(String, String) _extractMessagesTelemetry(
+bool _hasActiveCqVote(Map<String, dynamic> item) {
+  final labels = item['labels'] as Map<String, dynamic>?;
+  final cq = labels?['Commit-Queue'] as Map<String, dynamic>?;
+  final all = cq?['all'] as List<dynamic>? ?? const [];
+  return all.any(
+    (v) => v is Map<String, dynamic> && (v['value'] as int? ?? 0) > 0,
+  );
+}
+
+String _nextCqStatus(
+  String current,
+  String msg,
+  String date,
+  bool activeCqVote,
+) {
+  if (msg.contains('This CL has passed the run')) return '✅ Passed ($date)';
+  if (msg.contains('This CL has failed the run')) return '❌ Failed ($date)';
+  if (msg.contains('-Commit-Queue') && current.startsWith('⏳')) return 'None';
+  if (msg.contains('Dry run: CV is trying the patch') && activeCqVote) {
+    return '⏳ Running ($date)';
+  }
+  return current;
+}
+
+(String, String) extractGerritMessagesTelemetry(
   Map<String, dynamic> item,
   int? ownerId,
+  int currentRevisionNumber,
 ) {
   final created = (item['created'] as String? ?? '').split(' ').first;
   var lastAuthorTouch = created;
   var cqStatus = 'None';
+  final activeCqVote = _hasActiveCqVote(item);
 
   final messages = item['messages'] as List<dynamic>? ?? const [];
   for (final m in messages) {
@@ -467,14 +521,10 @@ List<String> _extractCrVotes(Map<String, dynamic> item) {
         date.isNotEmpty) {
       lastAuthorTouch = date;
     }
+    final rev = m['_revision_number'] as int? ?? currentRevisionNumber;
+    if (rev != currentRevisionNumber) continue;
     final msg = m['message'] as String? ?? '';
-    if (msg.contains('This CL has passed the run')) {
-      cqStatus = '✅ Passed ($date)';
-    } else if (msg.contains('This CL has failed the run')) {
-      cqStatus = '❌ Failed ($date)';
-    } else if (msg.contains('Dry run: CV is trying the patch')) {
-      cqStatus = '⏳ Running ($date)';
-    }
+    cqStatus = _nextCqStatus(cqStatus, msg, date, activeCqVote);
   }
   return (lastAuthorTouch, cqStatus);
 }
@@ -532,10 +582,11 @@ RemoteCL? _parseRemoteClItem(
     final ownerMap = item['owner'] as Map<String, dynamic>?;
     final ownerId = ownerMap?['_account_id'] as int?;
     final reviewers = _extractReviewers(item, ownerId);
-    final crVotes = _extractCrVotes(item);
-    final (lastAuthorTouch, cqStatus) = _extractMessagesTelemetry(
+    final crVotes = _extractCrVotes(item, ownerId);
+    final (lastAuthorTouch, cqStatus) = extractGerritMessagesTelemetry(
       item,
       ownerId,
+      currentRevisionNumber,
     );
     final threads = _fetchClCommentSummary(
       actualRepoRoot,
@@ -663,14 +714,18 @@ Map<String, int> _readConfiguredBranchIssues(String actualRepoRoot) {
   };
 
   for (final branch in allBranches) {
-    if (branch == defaultBranch) continue;
+    if (branch == defaultBranch && !localBranchIssues.containsKey(branch)) {
+      continue;
+    }
     final details = _fetchCommitDetails(actualRepoRoot, branch);
     if (details == null) continue;
     branchDetails[branch] = details;
 
-    final matchedIssue = bySha[details.sha] ?? byChangeId[details.changeId];
-    if (matchedIssue != null) {
-      localBranchIssues.putIfAbsent(branch, () => matchedIssue);
+    if (branch != defaultBranch) {
+      final matchedIssue = bySha[details.sha] ?? byChangeId[details.changeId];
+      if (matchedIssue != null) {
+        localBranchIssues.putIfAbsent(branch, () => matchedIssue);
+      }
     }
   }
 
