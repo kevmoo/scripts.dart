@@ -6,9 +6,9 @@ description: >-
   asked to run a PR cleanup sweep, prune merged worktrees or branches, review
   open PRs and next steps across repositories, or reconcile local checkouts in
   ~/github against GitHub, Gerrit, and active Jetski sessions. Don't use for
-  triaging inline review comments or CI failures on a single PR (use
-  github-pr-triage or pr-loop), creating new worktrees (use new-worktree), or
-  Google3 Piper CL triage (use cl-triage).
+  triaging inline review comments or CI failures on a single PR (use pr-triage),
+  creating new worktrees (use new-worktree), or Google3 Piper CL triage (use
+  cl-triage).
 compatibility: "Requires kscripts (kevmoo_scripts via dart install) and local checkouts in ~/github"
 metadata:
   author: kevmoo
