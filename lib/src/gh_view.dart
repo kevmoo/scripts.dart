@@ -85,6 +85,7 @@ class GhPr extends GhPrRef {
   final bool isInMergeQueue;
   final bool isRepoArchived;
   final CiStatus ciStatus;
+  final String? ciDetail;
   final DateTime updatedAt;
   final LocalBranchStatus? localStatus;
   final String? context;
@@ -118,6 +119,7 @@ class GhPr extends GhPrRef {
     required super.repoUrl,
     required this.isRepoArchived,
     required this.ciStatus,
+    this.ciDetail,
     required this.updatedAt,
     this.localStatus,
     this.context,
@@ -438,23 +440,123 @@ CiStatus extractCiStatus(String repository, Map<String, dynamic>? commits) {
 }
 
 bool _isActionRequiredOnlyFailure(Map<String, dynamic>? statusRollup) {
-  final contexts = statusRollup?['contexts'] as Map<String, dynamic>?;
-  final contextNodes = contexts?['nodes'] as List<dynamic>? ?? [];
+  final contextNodes = _extractRollupContextNodes(statusRollup);
 
   var hasActionRequired = false;
   var hasRealFailure = false;
 
-  for (final ctx in contextNodes.whereType<Map<String, dynamic>>()) {
+  for (final ctx in contextNodes) {
     final raw = (ctx['state'] ?? ctx['conclusion']) as String? ?? '';
     final status = CiStatus(raw);
     if (status == CiStatus.actionRequired) {
-      hasActionRequired = true;
+      if (_isActionRequiredCheckRealFailure(ctx)) {
+        hasRealFailure = true;
+      } else {
+        hasActionRequired = true;
+      }
     } else if (status.isFailureConclusion) {
       hasRealFailure = true;
     }
   }
 
   return hasActionRequired && !hasRealFailure;
+}
+
+final _failureKeywordRegex = RegExp(
+  r'\bfailed\b|\bfailure\b',
+  caseSensitive: false,
+);
+final _bulletItemRegex = RegExp(
+  r'^\s*[-*]\s+`?([^`\n]+?)`?\s*$',
+  multiLine: true,
+);
+final _markdownNoiseRegex = RegExp(r'\*\*|\[([^\]]+)\]\([^)]+\)');
+
+bool _isActionRequiredCheckRealFailure(Map<String, dynamic> ctx) {
+  final text = ctx['text'] as String? ?? '';
+  final summary = ctx['summary'] as String? ?? '';
+  final title = ctx['title'] as String? ?? '';
+  return _failureKeywordRegex.hasMatch(text) ||
+      _failureKeywordRegex.hasMatch(summary) ||
+      _failureKeywordRegex.hasMatch(title);
+}
+
+List<Map<String, dynamic>> _extractRollupContextNodes(
+  Map<String, dynamic>? statusRollup,
+) {
+  final contexts = statusRollup?['contexts'] as Map<String, dynamic>?;
+  final nodes = contexts?['nodes'] as List<dynamic>? ?? const [];
+  return nodes.whereType<Map<String, dynamic>>().toList();
+}
+
+/// Extracts a concise human-readable summary of failing or action-required
+/// CI check runs from the latest commit's `statusCheckRollup`.
+String? extractCiDetail(Map<String, dynamic>? commits) {
+  final commitNodes = commits?['nodes'] as List<dynamic>?;
+  if (commitNodes == null || commitNodes.isEmpty) return null;
+  final firstCommit = commitNodes.first as Map<String, dynamic>?;
+  final commitObj = firstCommit?['commit'] as Map<String, dynamic>?;
+  final statusRollup = commitObj?['statusCheckRollup'] as Map<String, dynamic>?;
+  final contextNodes = _extractRollupContextNodes(statusRollup);
+
+  final failingNodes = contextNodes.where(_isFailingOrActionContext).toList();
+  if (failingNodes.isEmpty) return null;
+
+  final filtered = failingNodes.length > 1
+      ? failingNodes.where((c) => c['context'] != 'tree-status').toList()
+      : failingNodes;
+  final targets = filtered.isNotEmpty ? filtered : failingNodes;
+
+  final details = targets
+      .map(_formatCheckContextDetail)
+      .where((s) => s.isNotEmpty)
+      .toList();
+  if (details.isEmpty) return null;
+  if (details.length <= 2) return details.join(', ');
+  return '${details.take(2).join(', ')} +${details.length - 2} more';
+}
+
+bool _isFailingOrActionContext(Map<String, dynamic> ctx) {
+  final raw = (ctx['state'] ?? ctx['conclusion']) as String? ?? '';
+  final status = CiStatus(raw);
+  return status == CiStatus.actionRequired || status.isFailureConclusion;
+}
+
+String _formatCheckContextDetail(Map<String, dynamic> ctx) {
+  final name = ((ctx['name'] ?? ctx['context']) as String? ?? '').trim();
+  final snippet = _extractCheckSnippet(ctx, name);
+  if (name.isEmpty) return snippet ?? '';
+  if (snippet == null || snippet.isEmpty) return name;
+  return '$name: $snippet';
+}
+
+String? _extractCheckSnippet(Map<String, dynamic> ctx, String checkName) {
+  final text = (ctx['text'] as String? ?? '').trim();
+  final bullets = _bulletItemRegex
+      .allMatches(text)
+      .map((m) => m.group(1)!.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+  if (bullets.isNotEmpty) {
+    final shown = bullets.take(2).join(', ');
+    return bullets.length > 2 ? '$shown +${bullets.length - 2} more' : shown;
+  }
+
+  for (final raw in [text, ctx['summary'], ctx['description'], ctx['title']]) {
+    final str = (raw as String? ?? '').trim();
+    if (str.isEmpty) continue;
+    final firstLine = str
+        .split('\n')
+        .first
+        .replaceAllMapped(_markdownNoiseRegex, (m) => m.group(1) ?? '')
+        .trim();
+    if (firstLine.isNotEmpty &&
+        firstLine.length <= 60 &&
+        firstLine.toLowerCase() != checkName.toLowerCase()) {
+      return firstLine;
+    }
+  }
+  return null;
 }
 
 bool _isFlutterTreeStatusOnlyFailure(Map<String, dynamic>? statusRollup) {
@@ -698,6 +800,7 @@ Future<GhPr> _attachLocalStatus(
   repoUrl: pr.repoUrl,
   isRepoArchived: pr.isRepoArchived,
   ciStatus: pr.ciStatus,
+  ciDetail: pr.ciDetail,
   updatedAt: pr.updatedAt,
   localStatus: await _matchLocalStatus(
     pr,

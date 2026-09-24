@@ -86,11 +86,15 @@ query($q: String!, $limit: Int!, $cursor: String) {
                     ... on StatusContext {
                       context
                       state
+                      description
                     }
                     ... on CheckRun {
                       name
                       conclusion
                       status
+                      title
+                      summary
+                      text
                     }
                   }
                 }
@@ -216,6 +220,7 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     core.repository,
     node['commits'] as Map<String, dynamic>?,
   );
+  final ciDetail = extractCiDetail(node['commits'] as Map<String, dynamic>?);
 
   return GhPr(
     number: core.number,
@@ -252,6 +257,7 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     repoUrl: core.repoUrl,
     isRepoArchived: repoMap?['isArchived'] as bool? ?? false,
     ciStatus: ciStatus,
+    ciDetail: ciDetail,
     updatedAt: updatedAt,
   );
 }
