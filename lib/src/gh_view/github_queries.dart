@@ -125,6 +125,7 @@ Future<List<GhPr>> fetchOpenPullRequests({
     graphqlQuery: _pullRequestsGraphqlQuery,
     searchQuery: searchQuery,
     limit: limit,
+    maxPageSize: 15,
     runner: runner,
     exceptionBuilder: (message, {exitCode = 1}) =>
         GhViewException(message, exitCode: exitCode),

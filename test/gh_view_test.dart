@@ -1293,7 +1293,13 @@ void main() {
           ],
         },
         'comments': {'nodes': <Object>[]},
-        'reviewThreads': {'totalCount': 0, 'nodes': <Object>[]},
+        'reviewThreads': {
+          'totalCount': 2,
+          'nodes': [
+            {'isResolved': true},
+            {'isResolved': true},
+          ],
+        },
         'commits': {
           'nodes': [
             {

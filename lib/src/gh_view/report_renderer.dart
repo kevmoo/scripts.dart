@@ -249,7 +249,7 @@ String _formatChangesRequestedActionMarkdown(
   if (hasRequestedReviewers) {
     return '🟡 **Re-review Requested** ($reviewersText)';
   }
-  if (areThreadsResolved) {
+  if (areThreadsResolved && pr.hasAuthorRespondedSinceLastReview) {
     return '🔄 **Re-review Needed** (threads resolved)';
   }
   final crReviewers = pr.changesRequestedReviewers;
@@ -316,7 +316,8 @@ String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) =>
           when pr.requestedReviewers.isNotEmpty &&
               pr.unrequestedActiveReviewers.isEmpty =>
         '🟡 Re-review Requested (@${pr.targetReviewers.join(', @')})',
-      ReviewDecision.changesRequested when areThreadsResolved =>
+      ReviewDecision.changesRequested
+          when areThreadsResolved && pr.hasAuthorRespondedSinceLastReview =>
         '🔴 Changes Requested (Resolved)',
       ReviewDecision.changesRequested when pr.unresolvedReviewThreads > 0 =>
         '🔴 Changes Requested (${pr.unresolvedReviewThreads} open)',
@@ -535,7 +536,9 @@ String _formatReviewBadgeTerminal(GhPr pr) {
             pr.unrequestedActiveReviewers.isEmpty =>
       formatRequested('Re-review Requested'),
     ReviewDecision.changesRequested
-        when pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0 =>
+        when pr.totalReviewThreads > 0 &&
+            pr.unresolvedReviewThreads == 0 &&
+            pr.hasAuthorRespondedSinceLastReview =>
       yellow.wrap('Changes Requested (Resolved: Re-review Needed)') ??
           'Changes Requested (Resolved: Re-review Needed)',
     ReviewDecision.changesRequested
