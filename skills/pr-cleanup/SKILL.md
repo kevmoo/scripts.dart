@@ -5,10 +5,9 @@ description: >-
   and branch cleanup sweeps alongside active open-PR next-step triage. Use when
   asked to run a PR cleanup sweep, prune merged worktrees or branches, review
   open PRs and next steps across repositories, or reconcile local checkouts in
-  ~/github against GitHub, Gerrit, and active Jetski sessions. Don't use for
-  triaging inline review comments or CI failures on a single PR (use pr-triage),
-  creating new worktrees (use new-worktree), or Google3 Piper CL triage (use
-  cl-triage).
+  ~/github against GitHub, Gerrit, and active agent sessions. Don't use for
+  triaging inline review comments or CI failures on a single PR (use pr-triage)
+  or creating new worktrees (use new-worktree).
 compatibility: "Requires kscripts (kevmoo_scripts via dart install) and local checkouts in ~/github"
 metadata:
   author: kevmoo
@@ -71,7 +70,7 @@ parallel to build a unified view of `~/github`:
    kscripts gh-issues --linked-prs --markdown
    ```
 
-## 2. Active Session & PM-OS Ownership Cross-Reference
+## 2. Active Worktree & Session Ownership Cross-Reference
 
 Before proposing to delete any worktree, local branch, or unpushed commit:
 
@@ -91,20 +90,14 @@ Before proposing to delete any worktree, local branch, or unpushed commit:
      ```
      If the count is `0`, the branch was reset onto the squash-merge commit and
      is safe to delete via `git -C <repo_path> branch -D <branch>`.
-2. **Cross-Reference Active Jetski Conversations & PM-OS Tasks (Bounded
-   Lookup)**:
-   - Use the `grep_search` tool on `~/.gemini/jetski/annotations` (or run
-     `pm-status pickup`) to identify active (`🟢` / `🧪`) or waiting (`⏳` /
-     `🔔`) sessions. Do **not** run shell `grep` or unbounded scans across all
-     `~/.gemini/jetski/brain/*/transcript.jsonl` files; only inspect
-     `transcript.jsonl` for specific active/waiting conversation IDs when
-     `.pbtxt` titles do not already identify the worktree.
-   - If a worktree belongs to an **active (`🟢` / `🧪`)** sister session or an
-     open PR/CL, classify it in **Bucket A (`🚫 DO NOT TOUCH`)**.
-   - If a worktree belongs to a **waiting (`⏳` / `🔔`)** session whose PR/CL
-     has already **merged**, include pruning its VCS state in **Bucket B** and
-     queue an `agentapi send-message` wake-up to that sister session so it can
-     verify follow-ups, docs, and PM-OS tasks before marking itself `--done`.
+2. **Cross-Reference Active Sessions & Local Tasks**:
+   - Check whether any worktree is actively in use by another running terminal
+     or agent session before proposing deletion.
+   - If a worktree belongs to an **active** session or an open PR/CL, classify
+     it in **Bucket A (`🚫 DO NOT TOUCH`)**.
+   - If a worktree belongs to a **waiting/idle** session whose PR/CL has already
+     **merged**, include pruning its VCS state in **Bucket B** and reconcile any
+     linked local tasks or waiting sessions according to your workspace rules.
 
 ## 3. Three-Bucket Classification & Report
 
@@ -128,8 +121,8 @@ sweeps) divided into 3 buckets:
   - Clean worktrees (`git worktree remove`), merged local feature branches
     (`git branch -D`), dangling remote head branches on writable repos, and
     trunk fast-forwards (`--ff-only`).
-  - List any waiting Jetski conversations whose PRs have landed so they can be
-    messaged via `agentapi send-message` after VCS cleanup.
+  - List any linked tasks or waiting sessions whose PRs have landed so they can
+    be reconciled after VCS cleanup.
 - **Bucket C — `⚠️ Requires Explicit Confirmation` (Closed-Unmerged PRs, Dirty
   Worktrees, Unpushed Experiments)**:
   - Detail the exact modified/untracked files (`git status -s`) or unmerged
@@ -147,7 +140,7 @@ Once approved:
 
 1. **Execute Bucket B Pruning**:
    - If **any** merged-PR worktree was held back in **Bucket A** (because an
-     active sister session is still using it), run
+     active session is still using it), run
      `kscripts gh-clean -R <owner/repo> --apply` for each approved Bucket B
      repository individually so the Bucket A worktree is not touched.
    - Only run unscoped `kscripts gh-clean -l 50 --apply` when **zero** merged-PR
@@ -155,12 +148,6 @@ Once approved:
 2. **Execute Bucket C Pruning** _(only if Bucket C was explicitly approved)_:
    - Run `git -C <parent_repo> worktree remove --force <worktree_path>` and
      `git -C <parent_repo> branch -D <branch>`.
-3. **Message Waiting Sister Sessions (`agentapi send-message`)**:
-   - Do **not** directly mark a waiting sister session `--done` from the
-     `pr-cleanup` orchestrator. Instead, send a message using
-     `env -u ANTIGRAVITY_PROJECT_ID agentapi send-message --title="PR Landed & Cleaned Up" <conversation_id> "..."`
-     (unsetting `ANTIGRAVITY_PROJECT_ID` avoids `project_id mismatch` across
-     different workspaces), informing the sister session that its PR landed and
-     its local/remote worktree and branch were pruned, and instructing that
-     session to double-check any needed follow-up, documentation/memory updates,
-     or PM-OS tasks (`pm-work complete`) and then mark itself `--done`.
+3. **Reconcile Linked Tasks & Waiting Sessions**:
+   - After pruning landed PRs/CLs, verify and close any linked local tasks or
+     notify waiting sessions as configured in your local workspace rules.
