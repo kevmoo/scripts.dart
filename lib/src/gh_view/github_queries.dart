@@ -76,6 +76,8 @@ query($q: String!, $limit: Int!, $cursor: String) {
         commits(last: 1) {
           nodes {
             commit {
+              committedDate
+              pushedDate
               statusCheckRollup {
                 state
                 contexts(first: 50) {
@@ -177,7 +179,11 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
   );
   final authorComment = _extractAuthorComment(
     node['comments'] as Map<String, dynamic>?,
+    node['reviews'] as Map<String, dynamic>?,
     prAuthor,
+  );
+  final lastCommitAt = _extractLastCommitDateTime(
+    node['commits'] as Map<String, dynamic>?,
   );
 
   final lastAuthorCommentAt = authorComment.lastAuthorCommentAt;
@@ -219,10 +225,12 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     ),
     requestedReviewers: requested.allReviewers,
     activeReviewers: activeReviewers,
+    reviewAuthors: reviewerActivity.reviewAuthors,
     approvedReviewers: approvedReviewers,
     totalReviewThreads: threads.total,
     unresolvedReviewThreads: threads.unresolved,
     lastAuthorCommentAt: lastAuthorCommentAt,
+    lastCommitAt: lastCommitAt,
     lastReviewerActivityAt: lastReviewerActivityAt,
     mergeable: MergeableState(
       node['mergeable'] as String? ?? MergeableState.unknown,
@@ -281,7 +289,11 @@ bool _isHumanReviewer(String? login, String prAuthor) =>
     login != prAuthor &&
     !isBotLogin(login);
 
-({DateTime? lastReviewerActivityAt, List<String> humanParticipants})
+({
+  DateTime? lastReviewerActivityAt,
+  List<String> humanParticipants,
+  List<String> reviewAuthors,
+})
 _extractReviewerActivity(
   Map<String, dynamic>? reviewsObj,
   Map<String, dynamic>? commentsObj,
@@ -289,12 +301,20 @@ _extractReviewerActivity(
 ) {
   DateTime? lastActivity;
   final participants = <String>{};
+  final reviewAuthorSet = <String>{};
 
-  void processNodes(List<dynamic>? nodes, String dateKey) {
+  void processNodes(
+    List<dynamic>? nodes,
+    String dateKey, {
+    required bool isReview,
+  }) {
     for (final item in (nodes ?? const []).whereType<Map<String, dynamic>>()) {
       final login = _extractNodeLogin(item);
       if (!_isHumanReviewer(login, prAuthor)) continue;
       participants.add(login!);
+      if (isReview) {
+        reviewAuthorSet.add(login);
+      }
       final dt = _extractNodeDateTime(item, dateKey);
       if (dt != null && (lastActivity == null || dt.isAfter(lastActivity!))) {
         lastActivity = dt;
@@ -302,23 +322,36 @@ _extractReviewerActivity(
     }
   }
 
-  processNodes(reviewsObj?['nodes'] as List<dynamic>?, 'submittedAt');
-  processNodes(commentsObj?['nodes'] as List<dynamic>?, 'createdAt');
+  processNodes(
+    reviewsObj?['nodes'] as List<dynamic>?,
+    'submittedAt',
+    isReview: true,
+  );
+  processNodes(
+    commentsObj?['nodes'] as List<dynamic>?,
+    'createdAt',
+    isReview: false,
+  );
   return (
     lastReviewerActivityAt: lastActivity,
     humanParticipants: participants.toList(),
+    reviewAuthors: reviewAuthorSet.toList(),
   );
 }
 
 ({DateTime? lastAuthorCommentAt, List<String> mentionedUsers})
-_extractAuthorComment(Map<String, dynamic>? commentsObj, String prAuthor) {
+_extractAuthorComment(
+  Map<String, dynamic>? commentsObj,
+  Map<String, dynamic>? reviewsObj,
+  String prAuthor,
+) {
   if (prAuthor.isEmpty) {
     return (lastAuthorCommentAt: null, mentionedUsers: const []);
   }
   DateTime? lastCommentAt;
   var latestBody = '';
-  final nodes = commentsObj?['nodes'] as List<dynamic>? ?? const [];
-  for (final item in nodes.whereType<Map<String, dynamic>>()) {
+  final commentNodes = commentsObj?['nodes'] as List<dynamic>? ?? const [];
+  for (final item in commentNodes.whereType<Map<String, dynamic>>()) {
     if (_extractNodeLogin(item) != prAuthor) continue;
     final dt = _extractNodeDateTime(item, 'createdAt');
     if (dt != null && (lastCommentAt == null || dt.isAfter(lastCommentAt))) {
@@ -327,10 +360,33 @@ _extractAuthorComment(Map<String, dynamic>? commentsObj, String prAuthor) {
     }
   }
 
+  final reviewNodes = reviewsObj?['nodes'] as List<dynamic>? ?? const [];
+  for (final item in reviewNodes.whereType<Map<String, dynamic>>()) {
+    if (_extractNodeLogin(item) != prAuthor) continue;
+    final dt = _extractNodeDateTime(item, 'submittedAt');
+    if (dt != null && (lastCommentAt == null || dt.isAfter(lastCommentAt))) {
+      lastCommentAt = dt;
+    }
+  }
+
   return (
     lastAuthorCommentAt: lastCommentAt,
     mentionedUsers: _extractMentionedUsers(latestBody, prAuthor),
   );
+}
+
+DateTime? _extractLastCommitDateTime(Map<String, dynamic>? commitsObj) {
+  final nodes = commitsObj?['nodes'] as List<dynamic>? ?? const [];
+  if (nodes.isEmpty) return null;
+  final lastNode = nodes.last;
+  if (lastNode is! Map<String, dynamic>) return null;
+  final commit = lastNode['commit'] as Map<String, dynamic>?;
+  if (commit == null) return null;
+  final pushed = _extractNodeDateTime(commit, 'pushedDate');
+  final committed = _extractNodeDateTime(commit, 'committedDate');
+  if (pushed == null) return committed;
+  if (committed == null) return pushed;
+  return pushed.isAfter(committed) ? pushed : committed;
 }
 
 List<String> _extractMentionedUsers(String body, String prAuthor) {

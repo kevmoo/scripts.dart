@@ -1191,7 +1191,7 @@ void main() {
 
     test('excludes reviewers whose latest review state is APPROVED from '
         'unrequestedActiveReviewers on multi-reviewer PRs', () {
-      final node = <String, dynamic>{
+      Map<String, dynamic> buildNode({String? committedDate}) => {
         'number': 193200,
         'title': 'Multi-reviewer PR',
         'url': 'https://github.com/flutter/flutter/pull/193200',
@@ -1226,13 +1226,91 @@ void main() {
             {'isResolved': true},
           ],
         },
+        if (committedDate != null)
+          'commits': {
+            'nodes': [
+              {
+                'commit': {
+                  'committedDate': committedDate,
+                  'statusCheckRollup': {'state': 'SUCCESS'},
+                },
+              },
+            ],
+          },
         'mergeable': 'MERGEABLE',
         'mergeStateStatus': 'BLOCKED',
         'isInMergeQueue': false,
         'headRefName': 'multi-reviewer',
         'headRefOid': 'abc1234',
         'baseRefName': 'main',
-        'updatedAt': '2026-09-14T03:00:00Z',
+        'updatedAt': committedDate ?? '2026-09-14T03:00:00Z',
+        'repository': {
+          'nameWithOwner': 'flutter/flutter',
+          'url': 'https://github.com/flutter/flutter',
+          'isArchived': false,
+        },
+      };
+
+      // Before author pushes a fix after bob's CHANGES_REQUESTED:
+      final unaddressedPr = parsePrNode(
+        buildNode(committedDate: '2026-09-14T00:30:00Z'),
+      )!;
+      check(unaddressedPr.approvedReviewers).deepEquals(['alice']);
+      check(unaddressedPr.activeReviewers).deepEquals(['alice', 'bob']);
+      check(unaddressedPr.unrequestedActiveReviewers).deepEquals(['bob']);
+      check(unaddressedPr.hasAuthorRespondedSinceLastReview).isFalse();
+      check(unaddressedPr.needsReviewReRequest).isFalse();
+
+      // After author pushes a new commit after bob's CHANGES_REQUESTED:
+      final addressedPr = parsePrNode(
+        buildNode(committedDate: '2026-09-14T04:00:00Z'),
+      )!;
+      check(addressedPr.unrequestedActiveReviewers).deepEquals(['bob']);
+      check(addressedPr.hasAuthorRespondedSinceLastReview).isTrue();
+      check(addressedPr.needsReviewReRequest).isTrue();
+    });
+
+    test('keeps Changes Requested when reviewer submitted top-level '
+        'CHANGES_REQUESTED and author has not responded (#192965)', () {
+      final now = DateTime.parse('2026-09-24T06:45:00Z');
+      final node = <String, dynamic>{
+        'number': 192965,
+        'title':
+            '[web] Omit group role on menu scrollables and assign region role',
+        'url': 'https://github.com/flutter/flutter/pull/192965',
+        'author': {'login': 'kevmoo'},
+        'isDraft': false,
+        'state': 'OPEN',
+        'reviewDecision': 'CHANGES_REQUESTED',
+        'reviewRequests': {'nodes': <Object>[]},
+        'reviews': {
+          'nodes': [
+            {
+              'author': {'login': 'flutter-zl'},
+              'submittedAt': '2026-09-24T05:56:45Z',
+              'state': 'CHANGES_REQUESTED',
+            },
+          ],
+        },
+        'comments': {'nodes': <Object>[]},
+        'reviewThreads': {'totalCount': 0, 'nodes': <Object>[]},
+        'commits': {
+          'nodes': [
+            {
+              'commit': {
+                'committedDate': '2026-09-23T19:00:00Z',
+                'statusCheckRollup': {'state': 'PENDING'},
+              },
+            },
+          ],
+        },
+        'mergeable': 'MERGEABLE',
+        'mergeStateStatus': 'BLOCKED',
+        'isInMergeQueue': false,
+        'headRefName': 'web-a11y-pr3-menu-route-roles',
+        'headRefOid': '88ec987',
+        'baseRefName': 'master',
+        'updatedAt': '2026-09-24T05:56:45Z',
         'repository': {
           'nameWithOwner': 'flutter/flutter',
           'url': 'https://github.com/flutter/flutter',
@@ -1241,10 +1319,66 @@ void main() {
       };
 
       final pr = parsePrNode(node)!;
-      check(pr.approvedReviewers).deepEquals(['alice']);
-      check(pr.activeReviewers).deepEquals(['alice', 'bob']);
-      check(pr.unrequestedActiveReviewers).deepEquals(['bob']);
-      check(pr.needsReviewReRequest).isTrue();
+      check(pr.needsReviewReRequest).isFalse();
+      final md = renderMarkdownReport([pr], currentTime: now);
+      check(md).contains(
+        'Review:&nbsp;🔴&nbsp;Changes&nbsp;Requested&nbsp;(@flutter-zl)',
+      );
+      check(md).contains('🔴 **Changes Requested** (@flutter-zl)');
+      check(md).not((it) => it.contains('Re-request Review'));
+    });
+
+    test('does not flag issue-comment-only or mentioned users as dropped '
+        'reviewers when they never submitted a PullRequestReview', () {
+      final node = <String, dynamic>{
+        'number': 192964,
+        'title': '[web] Propagate aria-label to inner slider',
+        'url': 'https://github.com/flutter/flutter/pull/192964',
+        'author': {'login': 'kevmoo'},
+        'isDraft': false,
+        'state': 'OPEN',
+        'reviewDecision': 'REVIEW_REQUIRED',
+        'reviewRequests': {
+          'nodes': [
+            {
+              'requestedReviewer': {'login': 'flutter-zl'},
+            },
+          ],
+        },
+        'reviews': {'nodes': <Object>[]},
+        'comments': {
+          'nodes': [
+            {
+              'author': {'login': 'chunhtai'},
+              'body': 'Does this fix #192618?',
+              'createdAt': '2026-09-23T21:36:45Z',
+            },
+            {
+              'author': {'login': 'kevmoo'},
+              'body': 'Good catch @chunhtai!',
+              'createdAt': '2026-09-23T22:09:40Z',
+            },
+          ],
+        },
+        'reviewThreads': {'totalCount': 0, 'nodes': <Object>[]},
+        'mergeable': 'MERGEABLE',
+        'mergeStateStatus': 'BLOCKED',
+        'isInMergeQueue': false,
+        'headRefName': 'web-a11y-pr2-input-aria-label',
+        'headRefOid': 'ff9c244',
+        'baseRefName': 'master',
+        'updatedAt': '2026-09-23T22:09:40Z',
+        'repository': {
+          'nameWithOwner': 'flutter/flutter',
+          'url': 'https://github.com/flutter/flutter',
+          'isArchived': false,
+        },
+      };
+
+      final pr = parsePrNode(node)!;
+      check(pr.reviewAuthors).isNotNull().deepEquals(const <String>[]);
+      check(pr.unrequestedActiveReviewers).deepEquals(const <String>[]);
+      check(pr.needsReviewReRequest).isFalse();
     });
   });
 }
