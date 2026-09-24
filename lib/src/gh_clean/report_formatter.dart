@@ -69,7 +69,6 @@ String formatMarkdownReport(
     buffer.writeln('No recently landed pull requests found.');
   } else {
     buffer
-      ..writeln('<!-- mdformat off -->')
       ..writeln('| Repository | PR(s) | Local Directory | Actions / Status |')
       ..writeln('| :--- | :--- | :--- | :--- |');
 
@@ -77,8 +76,6 @@ String formatMarkdownReport(
     for (final row in rows) {
       buffer.writeln(row.markdown);
     }
-
-    buffer.writeln('<!-- mdformat on -->');
   }
 
   _appendClosedUnmergedMarkdownSection(buffer, closedUnmergedPrs);
@@ -96,7 +93,6 @@ void _appendClosedUnmergedMarkdownSection(
     ..writeln()
     ..writeln('## Closed (Unmerged) Pull Requests')
     ..writeln()
-    ..writeln('<!-- mdformat off -->')
     ..writeln(
       '| Repository | Closed PR | Branch / Worktree | Verification Status |',
     )
@@ -113,8 +109,6 @@ void _appendClosedUnmergedMarkdownSection(
     final statusStr = _formatClosedUnmergedStatus(c);
     buffer.writeln('| $repoLink | $prLink | $branchStr | $statusStr |');
   }
-
-  buffer.writeln('<!-- mdformat on -->');
 }
 
 void _appendUnlinkedWorktreesMarkdownSection(
@@ -127,7 +121,6 @@ void _appendUnlinkedWorktreesMarkdownSection(
     ..writeln()
     ..writeln('## Worktrees with No Associated PR')
     ..writeln()
-    ..writeln('<!-- mdformat off -->')
     ..writeln(
       '| Repository | Worktree | Branch | Commits Ahead | Last Commit |',
     )
@@ -145,8 +138,6 @@ void _appendUnlinkedWorktreesMarkdownSection(
       '| $repoLink | $wtLink | $branchStr | $aheadStr | $dateStr |',
     );
   }
-
-  buffer.writeln('<!-- mdformat on -->');
 }
 
 String _formatClosedUnmergedStatus(ClosedUnmergedPr c) {

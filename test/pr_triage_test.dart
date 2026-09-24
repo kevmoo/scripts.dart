@@ -497,7 +497,7 @@ void _registerTriageReportTests() {
         expect(report, contains('# PR Triage Report: #42 - Fix parser bug'));
         expect(
           report,
-          contains('> [!WARNING]\n> Local branch is behind remote.'),
+          contains('> [!WARNING]\n>\n> Local branch is behind remote.'),
         );
         expect(report, contains('Thread `PRRT_1`, Comment `9001`'));
         expect(report, contains('### ❌ test (ubuntu-latest)'));

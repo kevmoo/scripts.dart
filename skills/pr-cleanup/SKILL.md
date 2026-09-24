@@ -16,7 +16,9 @@ metadata:
 
 # PR & Worktree Cleanup Sweep (`pr-cleanup`)
 
-> [!NOTE] This skill targets the personal repository layout (`~/github` and
+> [!NOTE]
+>
+> This skill targets the personal repository layout (`~/github` and
 > `~/github/kevmoo/*`) and invokes the unified `kscripts` AOT CLI.
 
 ## Quick Start & Prerequisites
@@ -32,12 +34,14 @@ Thereafter `upkeep update dart_install` keeps it current -- it re-reads the
 source descriptor from the installed bundle's own `pubspec.lock` and reinstalls
 from the same remote.
 
-> [!WARNING] Do **not** run `dart install ~/github/kevmoo/scripts.dart`.
-> Installing from a local path builds whatever branch that checkout is on, and
-> it _replaces_ the `app-bundles/kevmoo_scripts/git/<sha>/` bundle with a
-> `local/` one -- which permanently repoints `upkeep update dart_install` at
-> that checkout instead of the remote. Only use a path install to test
-> uncommitted work, and reinstall from Git afterwards.
+> [!WARNING]
+>
+> Do **not** run `dart install ~/github/kevmoo/scripts.dart`. Installing from a
+> local path builds whatever branch that checkout is on, and it _replaces_ the
+> `app-bundles/kevmoo_scripts/git/<sha>/` bundle with a `local/` one -- which
+> permanently repoints `upkeep update dart_install` at that checkout instead of
+> the remote. Only use a path install to test uncommitted work, and reinstall
+> from Git afterwards.
 
 ## 1. Read-Only Pre-Flight Sweep (Always Start Read-Only)
 

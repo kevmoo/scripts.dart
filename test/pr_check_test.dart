@@ -271,4 +271,37 @@ environment:
     check(checks).contains('dart-analyze-fatal-infos');
     check(checks).contains('prettier-markdown');
   });
+
+  test('detects single-line and collapsible 2-line GFM alerts and Google3 '
+      'mdformat/TOC directives outside fenced code blocks', () {
+    final violations = checkGitHubMarkdownLines('skills/sample/SKILL.md', [
+      '# Sample Skill',
+      '',
+      '> [!NOTE] Inline alert text breaks GitHub rendering.',
+      '',
+      '> [!WARNING]',
+      '> Collapsible 2-line alert without empty `>` line.',
+      '',
+      '<!-- mdformat off -->',
+      '[TOC]',
+      '',
+      '```markdown',
+      '> [!NOTE] Inside code fence is ignored.',
+      '<!-- mdformat off -->',
+      '[TOC]',
+      '```',
+      '',
+      '> [!IMPORTANT]',
+      '>',
+      '> Valid Prettier-safe GFM alert with empty `>` line.',
+    ]);
+
+    check(violations).length.equals(4);
+    check(violations.map((v) => v.check).toList()).deepEquals([
+      'gfm-alert-format',
+      'gfm-alert-format',
+      'gfm-no-google3-directives',
+      'gfm-no-google3-directives',
+    ]);
+  });
 }

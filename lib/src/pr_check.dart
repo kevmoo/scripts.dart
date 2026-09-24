@@ -203,6 +203,7 @@ PrCheckReport runPrCheck({
 
   final mdFiles = changedFiles.where((f) => f.endsWith('.md')).toList();
   if (mdFiles.isNotEmpty) {
+    violations.addAll(_checkGitHubMarkdownConventions(repoRoot, mdFiles));
     final prettierViolation = _checkPrettierMarkdown(
       repoRoot,
       mdFiles,
@@ -615,4 +616,106 @@ PrCheckViolation? _checkPrettierMarkdown(
         '${mdFiles.join(', ')}',
     remediation: 'npx --yes prettier@3.9.6 --write ${mdFiles.join(' ')}',
   );
+}
+
+final _gfmAlertInlineRegex = RegExp(
+  r'^\s*>\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s+\S',
+);
+final _gfmAlertHeaderRegex = RegExp(
+  r'^\s*>\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$',
+);
+final _google3DirectiveRegex = RegExp(r'<!--\s*mdformat\b|^\s*\[TOC\]\s*$');
+
+List<PrCheckViolation> _checkGitHubMarkdownConventions(
+  Directory repoRoot,
+  List<String> mdFiles,
+) {
+  final violations = <PrCheckViolation>[];
+  for (final relPath in mdFiles) {
+    final file = File(p.join(repoRoot.path, relPath));
+    if (!file.existsSync()) continue;
+    violations.addAll(
+      checkGitHubMarkdownLines(relPath, file.readAsLinesSync()),
+    );
+  }
+  return violations;
+}
+
+/// Validates that [lines] from [relPath] follow GitHub Flavored Markdown
+/// conventions (Prettier-safe GFM alerts with an empty `>` separator line, and
+/// no Google3-only `<!-- mdformat ... -->` or `[TOC]` directives).
+List<PrCheckViolation> checkGitHubMarkdownLines(
+  String relPath,
+  List<String> lines,
+) {
+  final violations = <PrCheckViolation>[];
+  String? activeFence;
+  for (var i = 0; i < lines.length; i++) {
+    final line = lines[i];
+    final nextFence = _updateFenceState(activeFence, line);
+    if (activeFence != null || nextFence != null) {
+      activeFence = nextFence;
+      continue;
+    }
+    final nextLine = i + 1 < lines.length ? lines[i + 1] : null;
+    final violation = _checkSingleMarkdownLine(relPath, i + 1, line, nextLine);
+    if (violation != null) violations.add(violation);
+  }
+  return violations;
+}
+
+String? _updateFenceState(String? activeFence, String line) {
+  final match = RegExp(r'^\s*(`{3,}|~{3,})(.*)$').firstMatch(line);
+  if (match == null) return activeFence;
+  final fence = match.group(1)!;
+  if (activeFence == null) return fence;
+  final isClosing =
+      fence.startsWith(activeFence) && match.group(2)!.trim().isEmpty;
+  return isClosing ? null : activeFence;
+}
+
+PrCheckViolation? _checkSingleMarkdownLine(
+  String relPath,
+  int lineNumber,
+  String line,
+  String? nextLine,
+) {
+  if (_gfmAlertInlineRegex.hasMatch(line)) {
+    return PrCheckViolation(
+      check: 'gfm-alert-format',
+      message:
+          '$relPath:$lineNumber has inline text on the same line as a GitHub '
+          'Alert marker (> [!TYPE] ...), which renders as a plain blockquote '
+          'on GitHub.',
+      remediation:
+          'Place > [!TYPE] on its own line followed by an empty blockquote '
+          'line (>), or run `mdf $relPath`.',
+    );
+  }
+  if (_gfmAlertHeaderRegex.hasMatch(line) &&
+      nextLine != null &&
+      nextLine.trim() != '>') {
+    return PrCheckViolation(
+      check: 'gfm-alert-format',
+      message:
+          '$relPath:$lineNumber is missing an empty blockquote line (>) after '
+          '> [!TYPE], which Prettier (--prose-wrap always) collapses onto '
+          'one line.',
+      remediation:
+          'Insert an empty `>` line immediately after `> [!TYPE]`, or run '
+          '`mdf $relPath`.',
+    );
+  }
+  if (_google3DirectiveRegex.hasMatch(line)) {
+    return PrCheckViolation(
+      check: 'gfm-no-google3-directives',
+      message:
+          '$relPath:$lineNumber contains a Google3-only Markdown directive '
+          '(`<!-- mdformat ... -->` or `[TOC]`).',
+      remediation:
+          'Remove `<!-- mdformat ... -->` and `[TOC]` directives from '
+          'GitHub Markdown files.',
+    );
+  }
+  return null;
 }

@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:checks/checks.dart';
+import 'package:kevmoo_scripts/src/pr_check.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:yaml/yaml.dart';
@@ -102,6 +103,18 @@ void main() {
           because: 'Skill body should include a ## Quick Start section',
           body,
         ).contains('## Quick Start');
+
+        // GitHub Flavored Markdown conventions (alerts + no Google3 directives)
+        final mdViolations = checkGitHubMarkdownLines(
+          'skills/$folderName/SKILL.md',
+          lines,
+        );
+        check(
+          because:
+              'skills/$folderName/SKILL.md must follow GitHub Markdown '
+              'conventions: ${mdViolations.map((v) => v.message).join('; ')}',
+          mdViolations,
+        ).isEmpty();
 
         // README.md must list every co-located skill
         check(
