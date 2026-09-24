@@ -139,6 +139,17 @@ gh pr edit 123 -R <owner/repo> --add-reviewer <reviewer_login>
        Report) or create the `pr_triage_report.md` artifact until the user has
        answered, because final CI results might change the triage plan and
        action items.
+   - **`ACTION_REQUIRED` Checks**:
+     - `kscripts pr-triage` marks checks in `state: "ACTION_REQUIRED"` with
+       `### ⚠️ <check_name> (ACTION_REQUIRED)` and extracts the CheckRun
+       `output.summary`.
+     - Distinguish `ACTION_REQUIRED` checks from actual code/test failures:
+       these checks have not failed a test suite, but require a manual trigger
+       comment or maintainer approval on the PR.
+     - Because pushing a new commit resets `ACTION_REQUIRED` checks, **never**
+       post a trigger comment before code commits are pushed. Only trigger or
+       approve the check after all code fixes for the triage pass have been
+       committed and pushed, or when no code changes are needed.
    - Analyze the stack traces, compile errors, or analyzer failures to
      understand why any failed checks failed.
 

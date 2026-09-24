@@ -225,6 +225,52 @@ void _registerJobLogsTests() {
       expect(result, contains('https://example.com/build/123'));
     });
 
+    test(
+      'surfaces ACTION_REQUIRED output.summary via commits/<sha>/check-runs',
+      () async {
+        const check = (
+          name: 'external-integration-check',
+          state: 'ACTION_REQUIRED',
+          bucket: 'fail',
+          link: 'https://ci.example.com/builds/4bfd9600',
+          workflow: '',
+        );
+
+        final result = await fetchFailedCheckLog(
+          context,
+          check,
+          headSha: 'deadbeef1234',
+          runCommand: (executable, arguments, {workingDirectory}) async {
+            final joined = arguments.join(' ');
+            if (joined.contains('commits/deadbeef1234/check-runs')) {
+              return jsonEncode({
+                'check_runs': [
+                  {
+                    'id': 107423572822,
+                    'name': 'external-integration-check',
+                    'status': 'completed',
+                    'conclusion': 'action_required',
+                    'output': {
+                      'title': 'Summary',
+                      'summary': 'Manual trigger required',
+                      'text': null,
+                    },
+                  },
+                ],
+              });
+            }
+            if (joined.contains('check-runs/107423572822/annotations')) {
+              return jsonEncode(<Object>[]);
+            }
+            throw StateError('Unexpected command: $joined');
+          },
+        );
+
+        expect(result, contains('ACTION_REQUIRED: Manual trigger required'));
+        expect(result, contains('https://ci.example.com/builds/4bfd9600'));
+      },
+    );
+
     test('combines check annotations and failed job logs from API', () async {
       const check = (
         name: 'CI / test',
@@ -416,6 +462,13 @@ void _registerTriageReportTests() {
               link: 'https://github.com/o/r/actions/runs/1/job/2',
               workflow: 'CI',
             ),
+            (
+              name: 'external-integration-check',
+              state: 'ACTION_REQUIRED',
+              bucket: 'fail',
+              link: 'https://ci.example.com/triggers/1',
+              workflow: '',
+            ),
           ],
           pendingChecks: <PrCheckRun>[
             (
@@ -428,6 +481,9 @@ void _registerTriageReportTests() {
           ],
           checkLogs: <String, String>{
             'test (ubuntu-latest)': '1 test failed in parser_test.dart',
+            'external-integration-check':
+                'ACTION_REQUIRED: Manual trigger required\n'
+                'Inspect details at: https://ci.example.com/triggers/1',
           },
         );
 
@@ -439,6 +495,11 @@ void _registerTriageReportTests() {
         );
         expect(report, contains('Thread `PRRT_1`, Comment `9001`'));
         expect(report, contains('### ❌ test (ubuntu-latest)'));
+        expect(
+          report,
+          contains('### ⚠️ external-integration-check (ACTION_REQUIRED)'),
+        );
+        expect(report, contains('ACTION_REQUIRED: Manual trigger required'));
         expect(report, contains('⏳ **test (macos-latest)**'));
       },
     );
@@ -486,8 +547,78 @@ void _registerTriageReportTests() {
       expect(report, contains('**Reviewer Dropped from Queue**'));
       expect(
         report,
-        contains('gh pr edit 193187 --add-reviewer harryterkelsen'),
+        contains(
+          'gh pr edit 193187 -R flutter/flutter --add-reviewer harryterkelsen',
+        ),
       );
+    });
+
+    test('excludes latest-APPROVED reviewer on multi-reviewer PR', () {
+      const data = (
+        prData: <String, dynamic>{
+          'number': 193187,
+          'title': 'Clean suite runner',
+          'url': 'https://github.com/flutter/flutter/pull/193187',
+          'author': <String, dynamic>{'login': 'kevmoo'},
+          'baseRefName': 'master',
+          'headRefName': 'clean-suite-runner',
+          'headRefOid': 'abc1234',
+          'reviewDecision': 'CHANGES_REQUESTED',
+          'reviewRequests': <Object>[],
+          'humanReviewers': ['alice', 'harryterkelsen'],
+          'mergeable': 'MERGEABLE',
+        },
+        syncStatus: (
+          localBranch: 'clean-suite-runner',
+          remoteBranch: 'clean-suite-runner',
+          localHeadSha: 'abc1234',
+          remoteHeadSha: 'abc1234',
+          isSynced: true,
+          syncState: 'in_sync',
+          warning: null,
+        ),
+        unresolvedThreads: <PrReviewThread>[],
+        reviewComments: <PrReview>[
+          (
+            id: 'PRR_1',
+            databaseId: '1',
+            state: 'APPROVED',
+            body: 'LGTM',
+            author: 'alice',
+            submittedAt: '2026-09-23T01:00:00Z',
+            url: 'https://github.com/flutter/flutter/pull/193187#r1',
+          ),
+          (
+            id: 'PRR_2',
+            databaseId: '2',
+            state: 'CHANGES_REQUESTED',
+            body: 'Needs change',
+            author: 'harryterkelsen',
+            submittedAt: '2026-09-23T02:00:00Z',
+            url: 'https://github.com/flutter/flutter/pull/193187#r2',
+          ),
+        ],
+        generalComments: <PrComment>[],
+        failedChecks: <PrCheckRun>[],
+        pendingChecks: <PrCheckRun>[],
+        checkLogs: <String, String>{},
+      );
+
+      final report = buildTriageReport(data);
+      expect(
+        report,
+        contains(
+          '**Review Requests**: None (`[]`) ⚠️ '
+          '(Missing active reviewer: @harryterkelsen)',
+        ),
+      );
+      expect(
+        report,
+        contains(
+          'gh pr edit 193187 -R flutter/flutter --add-reviewer harryterkelsen',
+        ),
+      );
+      expect(report, isNot(contains('--add-reviewer alice')));
     });
 
     test(

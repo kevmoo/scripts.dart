@@ -1025,6 +1025,95 @@ void main() {
     },
   );
 
+  group('extractCiStatus', () {
+    test('extracts ACTION_REQUIRED and correctly identifies it as failing', () {
+      final commitNode = {
+        'nodes': [
+          {
+            'commit': {
+              'statusCheckRollup': {'state': 'ACTION_REQUIRED'},
+            },
+          },
+        ],
+      };
+
+      final status = extractCiStatus('example-org/example-repo', commitNode);
+      check(status).equals(CiStatus.actionRequired);
+      check(status.isPassing).isFalse();
+    });
+
+    test(
+      'classifies statusCheckRollup.state == FAILURE as '
+      'CiStatus.actionRequired when only ACTION_REQUIRED CheckRuns exist',
+      () {
+        final commitNode = {
+          'nodes': [
+            {
+              'commit': {
+                'statusCheckRollup': {
+                  'state': 'FAILURE',
+                  'contexts': {
+                    'nodes': [
+                      {
+                        '__typename': 'CheckRun',
+                        'name': 'VM Unit Tests (ubuntu-latest, stable)',
+                        'conclusion': 'SUCCESS',
+                        'status': 'COMPLETED',
+                      },
+                      {
+                        '__typename': 'CheckRun',
+                        'name': 'external-integration-check',
+                        'conclusion': 'ACTION_REQUIRED',
+                        'status': 'COMPLETED',
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        };
+
+        final status = extractCiStatus('example-org/example-repo', commitNode);
+        check(status).equals(CiStatus.actionRequired);
+      },
+    );
+
+    test('preserves CiStatus.failure when both ACTION_REQUIRED and FAILURE '
+        'CheckRuns exist', () {
+      final commitNode = {
+        'nodes': [
+          {
+            'commit': {
+              'statusCheckRollup': {
+                'state': 'FAILURE',
+                'contexts': {
+                  'nodes': [
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'VM Unit Tests (ubuntu-latest, stable)',
+                      'conclusion': 'FAILURE',
+                      'status': 'COMPLETED',
+                    },
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'external-integration-check',
+                      'conclusion': 'ACTION_REQUIRED',
+                      'status': 'COMPLETED',
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      };
+
+      final status = extractCiStatus('example-org/example-repo', commitNode);
+      check(status).equals(CiStatus.failure);
+    });
+  });
+
   group('parsePrNode reviewer and ping detection', () {
     test('detects when author pinged after last reviewer activity', () {
       final node = {
@@ -1098,6 +1187,64 @@ void main() {
       check(pr.isAlreadyPinged).isTrue();
       check(pr.activeReviewers).deepEquals(['liamappelbe', 'natebosch']);
       check(pr.targetReviewers).deepEquals(['liamappelbe', 'natebosch']);
+    });
+
+    test('excludes reviewers whose latest review state is APPROVED from '
+        'unrequestedActiveReviewers on multi-reviewer PRs', () {
+      final node = <String, dynamic>{
+        'number': 193200,
+        'title': 'Multi-reviewer PR',
+        'url': 'https://github.com/flutter/flutter/pull/193200',
+        'author': {'login': 'kevmoo'},
+        'isDraft': false,
+        'state': 'OPEN',
+        'reviewDecision': 'CHANGES_REQUESTED',
+        'reviewRequests': {'nodes': <Object>[]},
+        'reviews': {
+          'nodes': [
+            {
+              'author': {'login': 'alice'},
+              'submittedAt': '2026-09-14T01:00:00Z',
+              'state': 'COMMENTED',
+            },
+            {
+              'author': {'login': 'alice'},
+              'submittedAt': '2026-09-14T02:00:00Z',
+              'state': 'APPROVED',
+            },
+            {
+              'author': {'login': 'bob'},
+              'submittedAt': '2026-09-14T03:00:00Z',
+              'state': 'CHANGES_REQUESTED',
+            },
+          ],
+        },
+        'comments': {'nodes': <Object>[]},
+        'reviewThreads': {
+          'totalCount': 1,
+          'nodes': [
+            {'isResolved': true},
+          ],
+        },
+        'mergeable': 'MERGEABLE',
+        'mergeStateStatus': 'BLOCKED',
+        'isInMergeQueue': false,
+        'headRefName': 'multi-reviewer',
+        'headRefOid': 'abc1234',
+        'baseRefName': 'main',
+        'updatedAt': '2026-09-14T03:00:00Z',
+        'repository': {
+          'nameWithOwner': 'flutter/flutter',
+          'url': 'https://github.com/flutter/flutter',
+          'isArchived': false,
+        },
+      };
+
+      final pr = parsePrNode(node)!;
+      check(pr.approvedReviewers).deepEquals(['alice']);
+      check(pr.activeReviewers).deepEquals(['alice', 'bob']);
+      check(pr.unrequestedActiveReviewers).deepEquals(['bob']);
+      check(pr.needsReviewReRequest).isTrue();
     });
   });
 }

@@ -224,7 +224,8 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
   final failedChecks = checks.where((c) => c.isFail).toList();
   final pendingChecks = checks.where((c) => c.isPending).toList();
 
-  final checkLogs = await _fetchFailedCheckLogs(context, failedChecks);
+  final headSha = prData['headRefOid']?.toString() ?? '';
+  final checkLogs = await _fetchFailedCheckLogs(context, failedChecks, headSha);
 
   return (
     (
@@ -251,29 +252,56 @@ String _extractPrAuthorLogin(Map<String, dynamic> prData) =>
 bool _isNonAuthorHumanReviewer(String login, String prAuthor) =>
     login.isNotEmpty && login != prAuthor && !isBotLogin(login);
 
+Set<String> _collectApprovedReviewers(
+  Iterable<PrReview> reviews,
+  String prAuthor,
+) {
+  final latestStateByReviewer = <String, String>{};
+  for (final review in reviews) {
+    if (!_isNonAuthorHumanReviewer(review.author, prAuthor)) continue;
+    if (review.state.isNotEmpty) {
+      latestStateByReviewer[review.author] = review.state;
+    }
+  }
+  return latestStateByReviewer.entries
+      .where((e) => e.value == 'APPROVED')
+      .map((e) => e.key)
+      .toSet();
+}
+
 List<String> _collectHumanReviewersFromGraphData(
   PrGraphData graphData,
   String prAuthor,
 ) {
+  final approved = _collectApprovedReviewers(graphData.reviews, prAuthor);
   final authors = <String>{
     ...graphData.reviews.map((r) => r.author),
     ...graphData.reviewThreads.expand((t) => t.comments.map((c) => c.author)),
   };
   return authors
-      .where((login) => _isNonAuthorHumanReviewer(login, prAuthor))
+      .where(
+        (login) =>
+            _isNonAuthorHumanReviewer(login, prAuthor) &&
+            !approved.contains(login),
+      )
       .toList();
 }
 
 Future<Map<String, String>> _fetchFailedCheckLogs(
   PrContext context,
   List<PrCheckRun> failedChecks,
+  String headSha,
 ) async {
   final checkLogs = <String, String>{};
   for (final check in failedChecks) {
     final checkName = check.name;
     print('Fetching failed logs for check "$checkName"...');
     try {
-      final logOutput = await fetchFailedCheckLog(context, check);
+      final logOutput = await fetchFailedCheckLog(
+        context,
+        check,
+        headSha: headSha,
+      );
       checkLogs[checkName] = truncateLog(logOutput);
     } catch (e) {
       checkLogs[checkName] = 'Failed to fetch logs: $e';
@@ -327,18 +355,23 @@ List<String> _parseRequestedReviewerIds(Object? rawRequests) {
 }
 
 Set<String> _collectTriageHumanReviewers(TriageData data, String prAuthor) {
-  final explicitList = prDataList(data.prData['humanReviewers']);
+  final explicitList = _prDataList(data.prData['humanReviewers']);
+  final approved = _collectApprovedReviewers(data.reviewComments, prAuthor);
   final candidateAuthors = <String>{
     ...explicitList,
     ...data.reviewComments.map((r) => r.author),
     ...data.unresolvedThreads.expand((t) => t.comments.map((c) => c.author)),
   };
   return candidateAuthors
-      .where((login) => _isNonAuthorHumanReviewer(login, prAuthor))
+      .where(
+        (login) =>
+            _isNonAuthorHumanReviewer(login, prAuthor) &&
+            !approved.contains(login),
+      )
       .toSet();
 }
 
-List<String> prDataList(Object? value) =>
+List<String> _prDataList(Object? value) =>
     value is List ? value.map((e) => e.toString()).toList() : const [];
 
 ({List<String> requested, List<String> unrequestedHumans})
@@ -359,12 +392,21 @@ _extractTriageReviewerQueue(TriageData data) {
   return (requested: requested, unrequestedHumans: unrequestedHumans);
 }
 
+final _prUrlRepoRegex = RegExp(r'github\.com/([^/]+/[^/]+)/pull/\d+');
+
+String _extractRepoFlag(Map<String, dynamic> prData) {
+  final url = prData['url']?.toString() ?? '';
+  final match = _prUrlRepoRegex.firstMatch(url);
+  return match != null ? ' -R ${match.group(1)}' : '';
+}
+
 ({String line, String warningBlock}) _formatReviewerQueueSection(
   ({List<String> requested, List<String> unrequestedHumans}) queue,
   Map<String, dynamic> prData,
 ) {
   final unrequested = queue.unrequestedHumans;
   final unrequestedMentions = unrequested.map((r) => '@$r').join(', ');
+  final repoFlag = _extractRepoFlag(prData);
   final warningBlock = unrequested.isEmpty
       ? ''
       : '> [!IMPORTANT]\n'
@@ -375,7 +417,7 @@ _extractTriageReviewerQueue(TriageData data) {
             'PR back into their GitHub Review Queue (`review-requested:@me`). '
             'After pushing fixes and resolving threads, re-request review '
             'via:\n'
-            '> `gh pr edit ${prData['number']} --add-reviewer '
+            '> `gh pr edit ${prData['number']}$repoFlag --add-reviewer '
             '${unrequested.join(',')}`\n\n';
 
   if (!prData.containsKey('reviewRequests')) {
@@ -613,8 +655,10 @@ void _writeFailedChecks(
   }
 
   for (final check in failedChecks) {
+    final icon = check.isActionRequired ? '⚠️' : '❌';
+    final suffix = check.isActionRequired ? ' (ACTION_REQUIRED)' : '';
     report.write('''
-### ❌ ${check.name}
+### $icon ${check.name}$suffix
 Link: ${check.link}
 
 ```text
