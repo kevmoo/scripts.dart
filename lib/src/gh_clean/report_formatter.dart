@@ -4,6 +4,7 @@ import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
 
 import '../gh_clean.dart';
+import '../shared/markdown_table.dart';
 
 /// Renders and prints the `gh-clean` report according to [options].
 void outputGhCleanReport(
@@ -68,17 +69,17 @@ String formatMarkdownReport(
   if (results.isEmpty) {
     buffer.writeln('No recently landed pull requests found.');
   } else {
-    buffer
-      ..writeln('<!-- mdformat off -->')
-      ..writeln('| Repository | PR(s) | Local Directory | Actions / Status |')
-      ..writeln('| :--- | :--- | :--- | :--- |');
-
     final rows = _buildSortedReportRows(results, applied: applied);
-    for (final row in rows) {
-      buffer.writeln(row.markdown);
-    }
-
-    buffer.writeln('<!-- mdformat on -->');
+    writeMarkdownTable(
+      buffer,
+      headers: const [
+        'Repository',
+        'PR(s)',
+        'Local Directory',
+        'Actions / Status',
+      ],
+      rows: rows.map((r) => r.cells),
+    );
   }
 
   _appendClosedUnmergedMarkdownSection(buffer, closedUnmergedPrs);
@@ -95,26 +96,28 @@ void _appendClosedUnmergedMarkdownSection(
   buffer
     ..writeln()
     ..writeln('## Closed (Unmerged) Pull Requests')
-    ..writeln()
-    ..writeln('<!-- mdformat off -->')
-    ..writeln(
-      '| Repository | Closed PR | Branch / Worktree | Verification Status |',
-    )
-    ..writeln('| :--- | :--- | :--- | :--- |');
+    ..writeln();
 
-  for (final c in closedUnmergedPrs) {
-    final repoLink =
-        '[**${c.repository}**](https://github.com/${c.repository})';
-    final prLink = '[#${c.number}](${c.url})';
-    final wtPart = c.worktreePath != null
-        ? ' ([`${p.basename(c.worktreePath!)}`](file://${c.worktreePath}))'
-        : '';
-    final branchStr = '`${c.branch}`$wtPart';
-    final statusStr = _formatClosedUnmergedStatus(c);
-    buffer.writeln('| $repoLink | $prLink | $branchStr | $statusStr |');
-  }
-
-  buffer.writeln('<!-- mdformat on -->');
+  writeMarkdownTable(
+    buffer,
+    headers: const [
+      'Repository',
+      'Closed PR',
+      'Branch / Worktree',
+      'Verification Status',
+    ],
+    rows: closedUnmergedPrs.map((c) {
+      final repoLink =
+          '[**${c.repository}**](https://github.com/${c.repository})';
+      final prLink = '[#${c.number}](${c.url})';
+      final wtPart = c.worktreePath != null
+          ? ' ([`${p.basename(c.worktreePath!)}`](file://${c.worktreePath}))'
+          : '';
+      final branchStr = '`${c.branch}`$wtPart';
+      final statusStr = _formatClosedUnmergedStatus(c);
+      return [repoLink, prLink, branchStr, statusStr];
+    }),
+  );
 }
 
 void _appendUnlinkedWorktreesMarkdownSection(
@@ -126,27 +129,35 @@ void _appendUnlinkedWorktreesMarkdownSection(
   buffer
     ..writeln()
     ..writeln('## Worktrees with No Associated PR')
-    ..writeln()
-    ..writeln('<!-- mdformat off -->')
-    ..writeln(
-      '| Repository | Worktree | Branch | Commits Ahead | Last Commit |',
-    )
-    ..writeln('| :--- | :--- | :--- | :---: | :--- |');
+    ..writeln();
 
-  for (final u in unlinkedWorktrees) {
-    final repoLink =
-        '[**${u.repository}**](https://github.com/${u.repository})';
-    final wtLink =
-        '[`${p.basename(u.worktreePath)}`](file://${u.worktreePath})';
-    final branchStr = '`${u.branch}`';
-    final aheadStr = u.commitsAhead != null ? '${u.commitsAhead}' : '?';
-    final dateStr = u.lastCommitDate ?? '?';
-    buffer.writeln(
-      '| $repoLink | $wtLink | $branchStr | $aheadStr | $dateStr |',
-    );
-  }
-
-  buffer.writeln('<!-- mdformat on -->');
+  writeMarkdownTable(
+    buffer,
+    headers: const [
+      'Repository',
+      'Worktree',
+      'Branch',
+      'Commits Ahead',
+      'Last Commit',
+    ],
+    alignments: const [
+      MdAlign.left,
+      MdAlign.left,
+      MdAlign.left,
+      MdAlign.center,
+      MdAlign.left,
+    ],
+    rows: unlinkedWorktrees.map((u) {
+      final repoLink =
+          '[**${u.repository}**](https://github.com/${u.repository})';
+      final wtLink =
+          '[`${p.basename(u.worktreePath)}`](file://${u.worktreePath})';
+      final branchStr = '`${u.branch}`';
+      final aheadStr = u.commitsAhead != null ? '${u.commitsAhead}' : '?';
+      final dateStr = u.lastCommitDate ?? '?';
+      return [repoLink, wtLink, branchStr, aheadStr, dateStr];
+    }),
+  );
 }
 
 String _formatClosedUnmergedStatus(ClosedUnmergedPr c) {
@@ -194,7 +205,7 @@ List<_ReportRow> _buildSortedReportRows(
         org: org,
         repo: repo,
         minPrNumber: r.pr.number,
-        markdown: _formatActionableMarkdownRow(r, applied: applied),
+        cells: _buildActionableMarkdownRowCells(r, applied: applied),
       ));
     }
 
@@ -203,7 +214,7 @@ List<_ReportRow> _buildSortedReportRows(
         org: org,
         repo: repo,
         minPrNumber: noOps.first.pr.number,
-        markdown: _formatNoOpClusterMarkdownRow(noOps, applied: applied),
+        cells: _buildNoOpClusterMarkdownRowCells(noOps, applied: applied),
       ));
     }
   }
@@ -223,7 +234,7 @@ typedef _ReportRow = ({
   String org,
   String repo,
   int minPrNumber,
-  String markdown,
+  List<String> cells,
 });
 
 bool _hasLocalBranchOrWorktreeAction(PrCleanResult r) =>
@@ -241,7 +252,10 @@ bool _hasLocalBranchOrWorktreeAction(PrCleanResult r) =>
           a.description.contains('branch'),
     );
 
-String _formatActionableMarkdownRow(PrCleanResult r, {required bool applied}) {
+List<String> _buildActionableMarkdownRowCells(
+  PrCleanResult r, {
+  required bool applied,
+}) {
   final pr = r.pr;
   final repoLink = '[**${pr.repository}**](${pr.repoUrl})';
   final prLink = '[#${pr.number}](${pr.url})';
@@ -249,19 +263,18 @@ String _formatActionableMarkdownRow(PrCleanResult r, {required bool applied}) {
       ? '[`${r.localRepo!.repoPath}`](file://${r.localRepo!.repoPath})'
       : '_Not cloned_';
 
-  String statusDetail;
-  if (applied) {
-    statusDetail = r.executedActions
-        .map((a) => '${a.success ? "✅" : "❌"} ${a.description}')
-        .join('<br>');
-  } else {
-    statusDetail = r.plannedActions.map((a) => '• $a').join('<br>');
-  }
+  final statusDetail = applied
+      ? formatMarkdownCellLines(
+          r.executedActions.map(
+            (a) => '${a.success ? "✅" : "❌"} ${a.description}',
+          ),
+        )
+      : formatMarkdownCellLines(r.plannedActions.map((a) => '• $a'));
 
-  return '| $repoLink | $prLink | $localDir | $statusDetail |';
+  return [repoLink, prLink, localDir, statusDetail];
 }
 
-String _formatNoOpClusterMarkdownRow(
+List<String> _buildNoOpClusterMarkdownRowCells(
   List<PrCleanResult> list, {
   required bool applied,
 }) {
@@ -292,7 +305,7 @@ String _formatNoOpClusterMarkdownRow(
     }
   }
 
-  return '| $repoLink | $prLabel | $localDir | $statusDetail |';
+  return [repoLink, prLabel, localDir, statusDetail];
 }
 
 /// Formats output for terminal viewing.

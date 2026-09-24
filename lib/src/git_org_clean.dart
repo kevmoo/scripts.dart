@@ -11,6 +11,7 @@ import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 import 'package:pool/pool.dart';
 
+import 'shared/markdown_table.dart';
 import 'testable_print.dart';
 import 'util.dart';
 
@@ -279,20 +280,23 @@ void _writeSafeForks(
       'These forks have no unsynced branches/commits relative '
       'to upstream. You can delete them safely. (Ordered oldest-push first)',
     )
-    ..writeln()
-    ..writeln('| Repository | Upstream | Last Push | Actionable? |')
-    ..writeln('| :--- | :--- | :--- | :--- |');
+    ..writeln();
 
-  for (final repo in safeForks) {
-    final upstream =
-        _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
-        '(Inaccessible)';
-    buffer.writeln(
-      '| ${_formatRepoName(repo)} | `$upstream` | '
-      '${_timeAgo(repo['pushedAt'] as String?, currentTime)} | '
-      '${_isActionable(repo)} |',
-    );
-  }
+  writeMarkdownTable(
+    buffer,
+    headers: const ['Repository', 'Upstream', 'Last Push', 'Actionable?'],
+    rows: safeForks.map((repo) {
+      final upstream =
+          _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
+          '(Inaccessible)';
+      return [
+        _formatRepoName(repo),
+        '`$upstream`',
+        _timeAgo(repo['pushedAt'] as String?, currentTime),
+        _isActionable(repo),
+      ];
+    }),
+  );
   buffer.writeln();
 }
 
@@ -309,24 +313,31 @@ void _writeUnsafeForks(
       'These forks have one or more branches with commits not '
       'present upstream. Review before deleting. (Ordered oldest-push first)',
     )
-    ..writeln()
-    ..writeln(
-      '| Repository | Upstream | Last Push | Unsynced Branches | '
-      'Actionable? |',
-    )
-    ..writeln('| :--- | :--- | :--- | :--- | :--- |');
+    ..writeln();
 
-  for (final repo in unsafeForks) {
-    final upstream =
-        _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
-        '(Inaccessible)';
-    final unsynced = repo['unsyncedStatus'] as String? ?? 'Not checked';
-    buffer.writeln(
-      '| ${_formatRepoName(repo)} | `$upstream` | '
-      '${_timeAgo(repo['pushedAt'] as String?, currentTime)} | $unsynced | '
-      '${_isActionable(repo)} |',
-    );
-  }
+  writeMarkdownTable(
+    buffer,
+    headers: const [
+      'Repository',
+      'Upstream',
+      'Last Push',
+      'Unsynced Branches',
+      'Actionable?',
+    ],
+    rows: unsafeForks.map((repo) {
+      final upstream =
+          _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
+          '(Inaccessible)';
+      final unsynced = repo['unsyncedStatus'] as String? ?? 'Not checked';
+      return [
+        _formatRepoName(repo),
+        '`$upstream`',
+        _timeAgo(repo['pushedAt'] as String?, currentTime),
+        unsynced,
+        _isActionable(repo),
+      ];
+    }),
+  );
   buffer.writeln();
 }
 
@@ -343,18 +354,21 @@ void _writeStaleRepos(
       'Repositories with no push activity in over 365 days. '
       '(Ordered oldest-push first)',
     )
-    ..writeln()
-    ..writeln('| Repository | Last Push | Actionable? | Description |')
-    ..writeln('| :--- | :--- | :--- | :--- |');
+    ..writeln();
 
-  for (final repo in stale) {
-    final desc = repo['description'] as String? ?? '';
-    buffer.writeln(
-      '| ${_formatRepoName(repo)} | '
-      '${_timeAgo(repo['pushedAt'] as String?, currentTime)} | '
-      '${_isActionable(repo)} | $desc |',
-    );
-  }
+  writeMarkdownTable(
+    buffer,
+    headers: const ['Repository', 'Last Push', 'Actionable?', 'Description'],
+    rows: stale.map((repo) {
+      final desc = repo['description'] as String? ?? '';
+      return [
+        _formatRepoName(repo),
+        _timeAgo(repo['pushedAt'] as String?, currentTime),
+        _isActionable(repo),
+        desc,
+      ];
+    }),
+  );
   buffer.writeln();
 }
 
