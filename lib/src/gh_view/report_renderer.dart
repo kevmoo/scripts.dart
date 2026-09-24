@@ -202,9 +202,7 @@ String _resolveActionItemMarkdown(
 
   if (pr.mergeable != MergeableState.conflicting &&
       pr.ciStatus == CiStatus.actionRequired) {
-    return pr.isDraft
-        ? '🟠 **CI Action Required** (draft)'
-        : '🟠 **CI Action Required** (needs manual trigger/approval)';
+    return _formatCiActionMarkdown(pr);
   }
 
   return switch ((
@@ -215,8 +213,7 @@ String _resolveActionItemMarkdown(
   )) {
     (true, _, _, true) => '⚠️ **Conflicting** (draft)',
     (true, _, _, false) => '⚠️ **Conflicting** (needs rebase)',
-    (_, true, _, true) => '🔴 **CI Failing** (draft)',
-    (_, true, _, false) => '🔴 **CI Failing** (needs fix)',
+    (_, true, _, _) => _formatCiFailingMarkdown(pr),
     (_, _, ReviewDecision.changesRequested, _) =>
       _formatChangesRequestedActionMarkdown(
         pr,
@@ -234,6 +231,38 @@ String _resolveActionItemMarkdown(
     (_, _, _, true) => '⚪ **Work in progress**',
     _ => '⚪ **Active**',
   };
+}
+
+String _formatCiActionMarkdown(GhPr pr) {
+  final detail = _sanitizeMarkdownCellDetail(pr.ciDetail);
+  if (detail != null) {
+    final prefix = pr.isDraft ? 'draft · ' : '';
+    return '🟠 **CI Action Required** ($prefix$detail)';
+  }
+  return pr.isDraft
+      ? '🟠 **CI Action Required** (draft)'
+      : '🟠 **CI Action Required** (needs manual trigger/approval)';
+}
+
+String _formatCiFailingMarkdown(GhPr pr) {
+  final detail = _sanitizeMarkdownCellDetail(pr.ciDetail);
+  if (detail != null) {
+    final prefix = pr.isDraft ? 'draft · ' : '';
+    return '🔴 **CI Failing** ($prefix$detail)';
+  }
+  return pr.isDraft
+      ? '🔴 **CI Failing** (draft)'
+      : '🔴 **CI Failing** (needs fix)';
+}
+
+String? _sanitizeMarkdownCellDetail(String? detail) {
+  if (detail == null) return null;
+  final cleaned = detail
+      .replaceAll('\r', '')
+      .replaceAll('\n', ' ')
+      .replaceAll('|', '/')
+      .trim();
+  return cleaned.isEmpty ? null : cleaned;
 }
 
 String _formatChangesRequestedActionMarkdown(
@@ -499,6 +528,10 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
     buffer.writeln('    Merge:   $conflictLine');
   }
 
+  if (pr.ciDetail != null && pr.ciDetail!.trim().isNotEmpty) {
+    buffer.writeln('    Checks:  ${pr.ciDetail!.trim()}');
+  }
+
   if (pr.context != null && pr.context!.trim().isNotEmpty) {
     buffer.writeln('    Context: ${pr.context!.trim()}');
   }
@@ -598,6 +631,7 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'areAllReviewThreadsResolved':
         pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0,
     'ciStatus': pr.ciStatus,
+    'ciDetail': pr.ciDetail,
     'mergeable': pr.mergeable,
     'mergeStateStatus': pr.mergeStateStatus,
     'isInMergeQueue': pr.isInMergeQueue,
