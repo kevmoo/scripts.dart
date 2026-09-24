@@ -183,6 +183,7 @@ Future<bool> _hasGitRemote(
 extension PrCheckRunExt on PrCheckRun {
   bool get isFail => bucket == 'fail';
   bool get isPending => bucket == 'pending';
+  bool get isActionRequired => state.toUpperCase() == 'ACTION_REQUIRED';
 }
 
 /// Sync status information comparing local repository state to remote PR state.
@@ -447,16 +448,28 @@ Future<String> fetchFailedCheckLog(
   PrContext context,
   PrCheckRun check, {
   CommandRunner runCommand = runCommand,
+  String headSha = '',
 }) async {
   final link = check.link;
   final runId = parseRunIdFromLink(link);
-  final checkRunId = parseCheckRunIdFromLink(link);
+  var checkRunId = parseCheckRunIdFromLink(link);
 
   Future<String> ghRepoApi(String subpath) => runCommand('gh', [
     'api',
     '--allow-escape-sequences',
     'repos/${context.owner}/${context.repo}/$subpath',
   ], workingDirectory: context.workingDir);
+
+  Map<dynamic, dynamic>? matchedCheckRun;
+  if (runId == null && (checkRunId != null || headSha.isNotEmpty)) {
+    matchedCheckRun = await _fetchExternalCheckRun(
+      check,
+      checkRunId: checkRunId,
+      headSha: headSha,
+      ghRepoApi: ghRepoApi,
+    );
+    checkRunId ??= matchedCheckRun?['id']?.toString();
+  }
 
   final annotations = await _fetchCheckRunAnnotations(checkRunId, ghRepoApi);
   final logBody = runId != null
@@ -466,9 +479,70 @@ Future<String> fetchFailedCheckLog(
           ghRepoApi: ghRepoApi,
           runCommand: runCommand,
         )
-      : 'Non-GitHub Actions run. Inspect details at: $link';
+      : _formatNonActionsCheckLog(check, matchedCheckRun);
 
   return _prependAnnotations(annotations, logBody);
+}
+
+Future<Map<dynamic, dynamic>?> _fetchExternalCheckRun(
+  PrCheckRun check, {
+  required String? checkRunId,
+  required String headSha,
+  required Future<String> Function(String) ghRepoApi,
+}) async {
+  try {
+    if (checkRunId != null) {
+      final payload = await ghRepoApi('check-runs/$checkRunId');
+      final decoded = jsonDecode(payload);
+      if (decoded is Map) return decoded;
+    }
+    if (headSha.isNotEmpty) {
+      final payload = await ghRepoApi('commits/$headSha/check-runs');
+      final decoded = jsonDecode(payload) as Map<dynamic, dynamic>;
+      final checkRuns = decoded['check_runs'] as List<dynamic>? ?? const [];
+      final matching = checkRuns
+          .whereType<Map<dynamic, dynamic>>()
+          .where((c) => c['name'] == check.name)
+          .toList();
+      if (matching.isEmpty) return null;
+      final targetState = check.state.toLowerCase();
+      return matching.firstWhere(
+        (c) => c['conclusion']?.toString().toLowerCase() == targetState,
+        orElse: () => matching.last,
+      );
+    }
+  } catch (_) {
+    // Fall back gracefully if check-runs endpoint is unavailable.
+  }
+  return null;
+}
+
+String _formatNonActionsCheckLog(
+  PrCheckRun check,
+  Map<dynamic, dynamic>? matchedCheckRun,
+) {
+  final link = check.link;
+  final conclusion = matchedCheckRun?['conclusion']?.toString().toLowerCase();
+  final output = matchedCheckRun?['output'] as Map<dynamic, dynamic>?;
+  final summary = output?['summary']?.toString().trim() ?? '';
+  final text = output?['text']?.toString().trim() ?? '';
+  final details = [
+    if (summary.isNotEmpty) summary,
+    if (text.isNotEmpty && text != summary) text,
+  ].join('\n\n');
+
+  final isActionRequired =
+      conclusion == 'action_required' || check.isActionRequired;
+  if (isActionRequired) {
+    final msg = details.isNotEmpty
+        ? details
+        : 'Check run requires manual trigger or approval.';
+    return 'ACTION_REQUIRED: $msg\nInspect details at: $link';
+  }
+  if (details.isNotEmpty) {
+    return '$details\nInspect details at: $link';
+  }
+  return 'Non-GitHub Actions run. Inspect details at: $link';
 }
 
 String _prependAnnotations(List<String> annotations, String logBody) {

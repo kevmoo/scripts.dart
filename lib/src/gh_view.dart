@@ -50,6 +50,7 @@ extension type const CiStatus(String value) implements String {
   static const failure = CiStatus('FAILURE');
   static const pending = CiStatus('PENDING');
   static const treeBroken = CiStatus('TREE_BROKEN');
+  static const actionRequired = CiStatus('ACTION_REQUIRED');
   static const none = CiStatus('NONE');
 
   bool get isPassing => this == success || this == treeBroken;
@@ -253,7 +254,8 @@ bool _isActionNeeded(GhPr pr) {
   final isChangesRequested =
       pr.reviewDecision == ReviewDecision.changesRequested &&
       pr.requestedReviewers.isEmpty;
-  final isCiFailure = pr.ciStatus == CiStatus.failure;
+  final isCiFailure =
+      pr.ciStatus == CiStatus.failure || pr.ciStatus == CiStatus.actionRequired;
   final isConflicting = pr.mergeable == MergeableState.conflicting;
   return isChangesRequested ||
       isCiFailure ||
@@ -336,14 +338,47 @@ CiStatus extractCiStatus(String repository, Map<String, dynamic>? commits) {
   final statusRollup = commitObj?['statusCheckRollup'] as Map<String, dynamic>?;
   final rawState = statusRollup?['state'] as String? ?? CiStatus.none;
 
-  if (repository.toLowerCase() == 'flutter/flutter' &&
-      rawState == CiStatus.failure) {
-    if (_isFlutterTreeStatusOnlyFailure(statusRollup)) {
+  if (rawState == CiStatus.failure) {
+    if (repository.toLowerCase() == 'flutter/flutter' &&
+        _isFlutterTreeStatusOnlyFailure(statusRollup)) {
       return CiStatus.treeBroken;
+    }
+    if (_isActionRequiredOnlyFailure(statusRollup)) {
+      return CiStatus.actionRequired;
     }
   }
 
   return CiStatus(rawState);
+}
+
+bool _isActionRequiredOnlyFailure(Map<String, dynamic>? statusRollup) {
+  final contexts = statusRollup?['contexts'] as Map<String, dynamic>?;
+  final contextNodes = contexts?['nodes'] as List<dynamic>? ?? [];
+
+  var hasActionRequired = false;
+  var hasRealFailure = false;
+
+  for (final ctx in contextNodes.whereType<Map<String, dynamic>>()) {
+    switch (ctx['__typename']) {
+      case 'StatusContext':
+        final state = ctx['state'] as String?;
+        if (state == CiStatus.failure || state == 'ERROR') {
+          hasRealFailure = true;
+        }
+      case 'CheckRun':
+        final conclusion = ctx['conclusion'] as String?;
+        if (conclusion == CiStatus.actionRequired) {
+          hasActionRequired = true;
+        } else if (conclusion == CiStatus.failure ||
+            conclusion == 'TIMED_OUT' ||
+            conclusion == 'CANCELLED' ||
+            conclusion == 'STARTUP_FAILURE') {
+          hasRealFailure = true;
+        }
+    }
+  }
+
+  return hasActionRequired && !hasRealFailure;
 }
 
 bool _isFlutterTreeStatusOnlyFailure(Map<String, dynamic>? statusRollup) {
@@ -378,6 +413,7 @@ _FlutterContextStatus _evaluateFlutterContext(Map<String, dynamic> ctx) =>
       },
       'CheckRun' => switch (ctx['conclusion']) {
         CiStatus.failure ||
+        CiStatus.actionRequired ||
         'TIMED_OUT' ||
         'CANCELLED' => _FlutterContextStatus.realFailure,
         _ => _FlutterContextStatus.ok,

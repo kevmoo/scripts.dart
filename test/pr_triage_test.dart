@@ -225,6 +225,49 @@ void _registerJobLogsTests() {
       expect(result, contains('https://example.com/build/123'));
     });
 
+    test('surfaces ACTION_REQUIRED output.summary (e.g. Needs /gcbrun) via commits/<sha>/check-runs', () async {
+      const check = (
+        name: 'gcb-pr-integration (dart-sdk-testing)',
+        state: 'ACTION_REQUIRED',
+        bucket: 'fail',
+        link: 'https://console.cloud.google.com/cloud-build/triggers;region=us-central1/edit/4bfd9600',
+        workflow: '',
+      );
+
+      final result = await fetchFailedCheckLog(
+        context,
+        check,
+        headSha: 'deadbeef1234',
+        runCommand: (executable, arguments, {workingDirectory}) async {
+          final joined = arguments.join(' ');
+          if (joined.contains('commits/deadbeef1234/check-runs')) {
+            return jsonEncode({
+              'check_runs': [
+                {
+                  'id': 107423572822,
+                  'name': 'gcb-pr-integration (dart-sdk-testing)',
+                  'status': 'completed',
+                  'conclusion': 'action_required',
+                  'output': {
+                    'title': 'Summary',
+                    'summary': 'Needs /gcbrun',
+                    'text': null,
+                  },
+                },
+              ],
+            });
+          }
+          if (joined.contains('check-runs/107423572822/annotations')) {
+            return jsonEncode(<Object>[]);
+          }
+          throw StateError('Unexpected command: $joined');
+        },
+      );
+
+      expect(result, contains('ACTION_REQUIRED: Needs /gcbrun'));
+      expect(result, contains('https://console.cloud.google.com/cloud-build'));
+    });
+
     test('combines check annotations and failed job logs from API', () async {
       const check = (
         name: 'CI / test',
@@ -416,6 +459,13 @@ void _registerTriageReportTests() {
               link: 'https://github.com/o/r/actions/runs/1/job/2',
               workflow: 'CI',
             ),
+            (
+              name: 'gcb-pr-integration (dart-sdk-testing)',
+              state: 'ACTION_REQUIRED',
+              bucket: 'fail',
+              link: 'https://console.cloud.google.com/cloud-build/triggers/1',
+              workflow: '',
+            ),
           ],
           pendingChecks: <PrCheckRun>[
             (
@@ -428,6 +478,7 @@ void _registerTriageReportTests() {
           ],
           checkLogs: <String, String>{
             'test (ubuntu-latest)': '1 test failed in parser_test.dart',
+            'gcb-pr-integration (dart-sdk-testing)': 'ACTION_REQUIRED: Needs /gcbrun\nInspect details at: https://console.cloud.google.com/cloud-build/triggers/1',
           },
         );
 
@@ -439,6 +490,13 @@ void _registerTriageReportTests() {
         );
         expect(report, contains('Thread `PRRT_1`, Comment `9001`'));
         expect(report, contains('### ❌ test (ubuntu-latest)'));
+        expect(
+          report,
+          contains(
+            '### ⚠️ gcb-pr-integration (dart-sdk-testing) (ACTION_REQUIRED)',
+          ),
+        );
+        expect(report, contains('ACTION_REQUIRED: Needs /gcbrun'));
         expect(report, contains('⏳ **test (macos-latest)**'));
       },
     );

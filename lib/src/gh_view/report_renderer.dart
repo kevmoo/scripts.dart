@@ -198,6 +198,13 @@ String _resolveActionItemMarkdown(
   final hasReviewers = reviewers.isNotEmpty;
   final reviewersText = hasReviewers ? '@${reviewers.join(', @')}' : '';
 
+  if (pr.mergeable != MergeableState.conflicting &&
+      pr.ciStatus == CiStatus.actionRequired) {
+    return pr.isDraft
+        ? '🟠 **CI Action Required** (draft)'
+        : '🟠 **CI Action Required** (e.g. `/gcbrun`)';
+  }
+
   return switch ((
     pr.mergeable == MergeableState.conflicting,
     pr.ciStatus == CiStatus.failure,
@@ -286,6 +293,7 @@ String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) =>
 String _formatCiBadgeMarkdown(CiStatus ciStatus) => switch (ciStatus) {
   CiStatus.success => '🟢 Passing',
   CiStatus.treeBroken => '🟠 Tree Broken (PR Clean)',
+  CiStatus.actionRequired => '🟠 Action Required',
   CiStatus.failure => '🔴 Failing',
   CiStatus.pending => '⏳ Pending',
   _ => '⚪ None',
@@ -491,6 +499,8 @@ String _formatCiBadgeTerminal(GhPr pr) => switch (pr.ciStatus) {
   CiStatus.success => green.wrap('CI: Passing') ?? 'CI: Passing',
   CiStatus.treeBroken =>
     yellow.wrap('CI: Tree Broken (PR Clean)') ?? 'CI: Tree Broken (PR Clean)',
+  CiStatus.actionRequired =>
+    yellow.wrap('CI: Action Required') ?? 'CI: Action Required',
   CiStatus.failure => red.wrap('CI: Failing') ?? 'CI: Failing',
   CiStatus.pending => yellow.wrap('CI: Pending') ?? 'CI: Pending',
   _ => styleDim.wrap('CI: None') ?? 'CI: None',

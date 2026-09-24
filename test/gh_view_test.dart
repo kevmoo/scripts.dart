@@ -978,6 +978,104 @@ void main() {
     },
   );
 
+  group('extractCiStatus', () {
+    test('extracts ACTION_REQUIRED and correctly identifies it as failing', () {
+      final commitNode = {
+        'nodes': [
+          {
+            'commit': {
+              'statusCheckRollup': {'state': 'ACTION_REQUIRED'},
+            },
+          },
+        ],
+      };
+
+      final status = extractCiStatus(
+        'googleapis/google-cloud-dart',
+        commitNode,
+      );
+      check(status).equals(CiStatus.actionRequired);
+      check(status.isPassing).isFalse();
+    });
+
+    test(
+      'classifies statusCheckRollup.state == FAILURE as '
+      'CiStatus.actionRequired when only ACTION_REQUIRED CheckRuns exist',
+      () {
+        final commitNode = {
+          'nodes': [
+            {
+              'commit': {
+                'statusCheckRollup': {
+                  'state': 'FAILURE',
+                  'contexts': {
+                    'nodes': [
+                      {
+                        '__typename': 'CheckRun',
+                        'name': 'VM Unit Tests (ubuntu-latest, stable)',
+                        'conclusion': 'SUCCESS',
+                        'status': 'COMPLETED',
+                      },
+                      {
+                        '__typename': 'CheckRun',
+                        'name': 'gcb-pr-integration (dart-sdk-testing)',
+                        'conclusion': 'ACTION_REQUIRED',
+                        'status': 'COMPLETED',
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        };
+
+        final status = extractCiStatus(
+          'googleapis/google-cloud-dart',
+          commitNode,
+        );
+        check(status).equals(CiStatus.actionRequired);
+      },
+    );
+
+    test('preserves CiStatus.failure when both ACTION_REQUIRED and FAILURE '
+        'CheckRuns exist', () {
+      final commitNode = {
+        'nodes': [
+          {
+            'commit': {
+              'statusCheckRollup': {
+                'state': 'FAILURE',
+                'contexts': {
+                  'nodes': [
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'VM Unit Tests (ubuntu-latest, stable)',
+                      'conclusion': 'FAILURE',
+                      'status': 'COMPLETED',
+                    },
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'gcb-pr-integration (dart-sdk-testing)',
+                      'conclusion': 'ACTION_REQUIRED',
+                      'status': 'COMPLETED',
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      };
+
+      final status = extractCiStatus(
+        'googleapis/google-cloud-dart',
+        commitNode,
+      );
+      check(status).equals(CiStatus.failure);
+    });
+  });
+
   group('parsePrNode reviewer and ping detection', () {
     test('detects when author pinged after last reviewer activity', () {
       final node = {
