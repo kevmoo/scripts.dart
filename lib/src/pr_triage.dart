@@ -213,23 +213,11 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
       .where((c) => c.body.trim().isNotEmpty)
       .toList();
 
-  final prAuthor = switch (prData['author']) {
-    {'login': final String login} => login,
-    final String login => login,
-    _ => '',
-  };
-  final humanReviewers = <String>{
-    for (final r in graphData.reviews)
-      if (r.author.isNotEmpty && r.author != prAuthor && !isBotLogin(r.author))
-        r.author,
-    for (final t in graphData.reviewThreads)
-      for (final c in t.comments)
-        if (c.author.isNotEmpty &&
-            c.author != prAuthor &&
-            !isBotLogin(c.author))
-          c.author,
-  };
-  prData['humanReviewers'] = humanReviewers.toList();
+  final prAuthor = _extractPrAuthorLogin(prData);
+  prData['humanReviewers'] = _collectHumanReviewersFromGraphData(
+    graphData,
+    prAuthor,
+  );
 
   print('Fetching check runs...');
   final checks = await fetchPrChecks(context);
@@ -251,6 +239,29 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
     ),
     conflictAnalysis,
   );
+}
+
+String _extractPrAuthorLogin(Map<String, dynamic> prData) =>
+    switch (prData['author']) {
+      {'login': final String login} => login,
+      final String login => login,
+      _ => '',
+    };
+
+bool _isNonAuthorHumanReviewer(String login, String prAuthor) =>
+    login.isNotEmpty && login != prAuthor && !isBotLogin(login);
+
+List<String> _collectHumanReviewersFromGraphData(
+  PrGraphData graphData,
+  String prAuthor,
+) {
+  final authors = <String>{
+    ...graphData.reviews.map((r) => r.author),
+    ...graphData.reviewThreads.expand((t) => t.comments.map((c) => c.author)),
+  };
+  return authors
+      .where((login) => _isNonAuthorHumanReviewer(login, prAuthor))
+      .toList();
 }
 
 Future<Map<String, String>> _fetchFailedCheckLogs(
@@ -298,6 +309,38 @@ String _formatMergeableBadge(
         : '`${prData['mergeable']}`',
 };
 
+String? _extractRequestId(Object? item) => switch (item) {
+  final String s => s,
+  {'login': final String s} => s,
+  {'slug': final String s} => s,
+  {'name': final String s} => s,
+  _ => null,
+};
+
+List<String> _parseRequestedReviewerIds(Object? rawRequests) {
+  if (rawRequests is! List) return const [];
+  return rawRequests
+      .map(_extractRequestId)
+      .whereType<String>()
+      .where((s) => s.isNotEmpty)
+      .toList();
+}
+
+Set<String> _collectTriageHumanReviewers(TriageData data, String prAuthor) {
+  final explicitList = prDataList(data.prData['humanReviewers']);
+  final candidateAuthors = <String>{
+    ...explicitList,
+    ...data.reviewComments.map((r) => r.author),
+    ...data.unresolvedThreads.expand((t) => t.comments.map((c) => c.author)),
+  };
+  return candidateAuthors
+      .where((login) => _isNonAuthorHumanReviewer(login, prAuthor))
+      .toSet();
+}
+
+List<String> prDataList(Object? value) =>
+    value is List ? value.map((e) => e.toString()).toList() : const [];
+
 ({List<String> requested, List<String> unrequestedHumans})
 _extractTriageReviewerQueue(TriageData data) {
   final prData = data.prData;
@@ -306,46 +349,48 @@ _extractTriageReviewerQueue(TriageData data) {
     return (requested: const [], unrequestedHumans: const []);
   }
 
-  final prAuthor = switch (prData['author']) {
-    {'login': final String login} => login,
-    final String login => login,
-    _ => '',
-  };
-
-  final requested = <String>[];
-  final rawRequests = prData['reviewRequests'];
-  if (rawRequests is List) {
-    for (final item in rawRequests) {
-      final id = switch (item) {
-        final String s => s,
-        {'login': final String s} => s,
-        {'slug': final String s} => s,
-        {'name': final String s} => s,
-        _ => null,
-      };
-      if (id != null && id.isNotEmpty) requested.add(id);
-    }
-  }
-
-  final humanReviewers = <String>{
-    if (prData['humanReviewers'] case final List<dynamic> list)
-      ...list.map((e) => e.toString()),
-    for (final r in data.reviewComments)
-      if (r.author.isNotEmpty && r.author != prAuthor && !isBotLogin(r.author))
-        r.author,
-    for (final t in data.unresolvedThreads)
-      for (final c in t.comments)
-        if (c.author.isNotEmpty &&
-            c.author != prAuthor &&
-            !isBotLogin(c.author))
-          c.author,
-  };
-
+  final prAuthor = _extractPrAuthorLogin(prData);
+  final requested = _parseRequestedReviewerIds(prData['reviewRequests']);
+  final humanReviewers = _collectTriageHumanReviewers(data, prAuthor);
   final isApproved = prData['reviewDecision']?.toString() == 'APPROVED';
   final unrequestedHumans = isApproved
       ? const <String>[]
       : humanReviewers.where((r) => !requested.contains(r)).toList();
   return (requested: requested, unrequestedHumans: unrequestedHumans);
+}
+
+({String line, String warningBlock}) _formatReviewerQueueSection(
+  ({List<String> requested, List<String> unrequestedHumans}) queue,
+  Map<String, dynamic> prData,
+) {
+  final unrequested = queue.unrequestedHumans;
+  final unrequestedMentions = unrequested.map((r) => '@$r').join(', ');
+  final warningBlock = unrequested.isEmpty
+      ? ''
+      : '> [!IMPORTANT]\n'
+            '> **Reviewer Dropped from Queue**: $unrequestedMentions '
+            'previously reviewed this PR and '
+            '${unrequested.length == 1 ? 'was' : 'were'} removed from '
+            '`reviewRequests`. Posting a comment (`PTAL`) will NOT put this '
+            'PR back into their GitHub Review Queue (`review-requested:@me`). '
+            'After pushing fixes and resolving threads, re-request review '
+            'via:\n'
+            '> `gh pr edit ${prData['number']} --add-reviewer '
+            '${unrequested.join(',')}`\n\n';
+
+  if (!prData.containsKey('reviewRequests')) {
+    return (line: '', warningBlock: warningBlock);
+  }
+  final requestedLabel = queue.requested.isEmpty
+      ? 'None (`[]`)'
+      : queue.requested.map((r) => '@$r').join(', ');
+  final missingSuffix = unrequested.isEmpty
+      ? ''
+      : ' ⚠️ (Missing active reviewer: $unrequestedMentions)';
+  return (
+    line: '**Review Requests**: $requestedLabel$missingSuffix\n',
+    warningBlock: warningBlock,
+  );
 }
 
 String buildTriageReport(
@@ -355,7 +400,10 @@ String buildTriageReport(
   final prData = data.prData;
   final syncStatus = data.syncStatus;
   final conflict = conflictAnalysis ?? _defaultConflictAnalysis(prData);
-  final reviewerQueue = _extractTriageReviewerQueue(data);
+  final queueSection = _formatReviewerQueueSection(
+    _extractTriageReviewerQueue(data),
+    prData,
+  );
   final syncWarningBlock = syncStatus.warning != null
       ? '> [!WARNING]\n> ${syncStatus.warning}\n\n'
       : '';
@@ -367,33 +415,12 @@ String buildTriageReport(
             '${conflict.mergeStateStatus}`) and cannot be merged until '
             'resolved.\n\n'
       : '';
-  final unrequested = reviewerQueue.unrequestedHumans;
-  final reviewerQueueWarningBlock = unrequested.isNotEmpty
-      ? '> [!IMPORTANT]\n'
-            '> **Reviewer Dropped from Queue**: '
-            '${unrequested.map((r) => '@$r').join(', ')} previously reviewed '
-            'this PR and ${unrequested.length == 1 ? 'was' : 'were'} removed '
-            'from `reviewRequests`. Posting a comment (`PTAL`) will NOT put '
-            'this PR back into their GitHub Review Queue '
-            '(`review-requested:@me`). After pushing fixes and resolving '
-            'threads, re-request review via:\n'
-            '> `gh pr edit ${prData['number']} --add-reviewer '
-            '${unrequested.join(',')}`\n\n'
-      : '';
   final localCommit = syncStatus.localHeadSha.isEmpty
       ? 'N/A'
       : syncStatus.localHeadSha;
   final mergeableBadge = _formatMergeableBadge(conflict, prData);
-  final requestedLabel = reviewerQueue.requested.isEmpty
-      ? 'None (`[]`)'
-      : reviewerQueue.requested.map((r) => '@$r').join(', ');
-  final missingSuffix = unrequested.isNotEmpty
-      ? ' ⚠️ (Missing active reviewer: '
-            '${unrequested.map((r) => '@$r').join(', ')})'
-      : '';
-  final reviewRequestsLine = prData.containsKey('reviewRequests')
-      ? '**Review Requests**: $requestedLabel$missingSuffix\n'
-      : '';
+  final reviewRequestsLine = queueSection.line;
+  final reviewerQueueWarningBlock = queueSection.warningBlock;
 
   final report = StringBuffer('''
 # PR Triage Report: #${prData['number']} - ${prData['title']}
