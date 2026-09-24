@@ -272,36 +272,52 @@ environment:
     check(checks).contains('prettier-markdown');
   });
 
-  test('detects single-line and collapsible 2-line GFM alerts and Google3 '
-      'mdformat/TOC directives outside fenced code blocks', () {
-    final violations = checkGitHubMarkdownLines('skills/sample/SKILL.md', [
-      '# Sample Skill',
-      '',
-      '> [!NOTE] Inline alert text breaks GitHub rendering.',
-      '',
-      '> [!WARNING]',
-      '> Collapsible 2-line alert without empty `>` line.',
-      '',
-      '<!-- mdformat off -->',
-      '[TOC]',
-      '',
-      '```markdown',
-      '> [!NOTE] Inside code fence is ignored.',
-      '<!-- mdformat off -->',
-      '[TOC]',
-      '```',
-      '',
-      '> [!IMPORTANT]',
-      '>',
-      '> Valid Prettier-safe GFM alert with empty `>` line.',
-    ]);
+  test(
+    'detects single-line, collapsible 2-line, nested, and bodyless GFM '
+    'alerts and Google3 mdformat/TOC directives outside fenced code blocks',
+    () {
+      final violations = checkGitHubMarkdownLines('skills/sample/SKILL.md', [
+        '# Sample Skill',
+        '',
+        '> [!NOTE] Inline alert text breaks GitHub rendering.',
+        '',
+        '> [!WARNING]',
+        '> Collapsible 2-line alert without empty `>` line.',
+        '',
+        '> > [!TIP]',
+        '> >',
+        '> > Nested blockquote alert is unsupported by GitHub GFM.',
+        '',
+        '> [!CAUTION]',
+        '>',
+        'Body text outside blockquote.',
+        '',
+        '<!-- mdformat off -->',
+        '[TOC]',
+        '',
+        '```markdown',
+        '> [!NOTE] Inside code fence is ignored.',
+        '<!-- mdformat off -->',
+        '[TOC]',
+        '```',
+        '',
+        '> [!IMPORTANT]',
+        '>',
+        '> Valid Prettier-safe GFM alert with empty `>` line.',
+        '',
+        '> [!NOTE]',
+      ]);
 
-    check(violations).length.equals(4);
-    check(violations.map((v) => v.check).toList()).deepEquals([
-      'gfm-alert-format',
-      'gfm-alert-format',
-      'gfm-no-google3-directives',
-      'gfm-no-google3-directives',
-    ]);
-  });
+      check(violations).length.equals(7);
+      check(violations.map((v) => v.check).toList()).deepEquals([
+        'gfm-alert-format',
+        'gfm-alert-format',
+        'gfm-alert-format',
+        'gfm-alert-format',
+        'gfm-no-google3-directives',
+        'gfm-no-google3-directives',
+        'gfm-alert-format',
+      ]);
+    },
+  );
 }

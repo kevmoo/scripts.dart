@@ -618,12 +618,16 @@ PrCheckViolation? _checkPrettierMarkdown(
   );
 }
 
+final _gfmAlertNestedRegex = RegExp(
+  r'^\s*>\s*>+\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]',
+);
 final _gfmAlertInlineRegex = RegExp(
   r'^\s*>\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s+\S',
 );
 final _gfmAlertHeaderRegex = RegExp(
   r'^\s*>\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$',
 );
+final _gfmAlertBodyLineRegex = RegExp(r'^\s*>\s*\S');
 final _google3DirectiveRegex = RegExp(r'<!--\s*mdformat\b|^\s*\[TOC\]\s*$');
 
 List<PrCheckViolation> _checkGitHubMarkdownConventions(
@@ -658,7 +662,14 @@ List<PrCheckViolation> checkGitHubMarkdownLines(
       continue;
     }
     final nextLine = i + 1 < lines.length ? lines[i + 1] : null;
-    final violation = _checkSingleMarkdownLine(relPath, i + 1, line, nextLine);
+    final bodyLine = i + 2 < lines.length ? lines[i + 2] : null;
+    final violation = _checkSingleMarkdownLine(
+      relPath,
+      i + 1,
+      line,
+      nextLine,
+      bodyLine,
+    );
     if (violation != null) violations.add(violation);
   }
   return violations;
@@ -679,7 +690,17 @@ PrCheckViolation? _checkSingleMarkdownLine(
   int lineNumber,
   String line,
   String? nextLine,
+  String? bodyLine,
 ) {
+  if (_gfmAlertNestedRegex.hasMatch(line)) {
+    return PrCheckViolation(
+      check: 'gfm-alert-format',
+      message:
+          '$relPath:$lineNumber nests a GitHub Alert inside a blockquote '
+          '(> > [!TYPE]), which GitHub renders as a plain blockquote.',
+      remediation: 'Move `> [!TYPE]` to a top-level blockquote (`> [!TYPE]`).',
+    );
+  }
   if (_gfmAlertInlineRegex.hasMatch(line)) {
     return PrCheckViolation(
       check: 'gfm-alert-format',
@@ -692,18 +713,16 @@ PrCheckViolation? _checkSingleMarkdownLine(
           'line (>), or run `mdf $relPath`.',
     );
   }
-  if (_gfmAlertHeaderRegex.hasMatch(line) &&
-      nextLine != null &&
-      nextLine.trim() != '>') {
+  if (_isMalformedAlertContinuation(line, nextLine, bodyLine)) {
     return PrCheckViolation(
       check: 'gfm-alert-format',
       message:
-          '$relPath:$lineNumber is missing an empty blockquote line (>) after '
-          '> [!TYPE], which Prettier (--prose-wrap always) collapses onto '
-          'one line.',
+          '$relPath:$lineNumber is missing an empty blockquote line (>) and '
+          'blockquote body line (> ...) after > [!TYPE], which Prettier '
+          '(--prose-wrap always) collapses onto one line.',
       remediation:
-          'Insert an empty `>` line immediately after `> [!TYPE]`, or run '
-          '`mdf $relPath`.',
+          'Insert an empty `>` line followed by `> <body text>` after '
+          '`> [!TYPE]`, or run `mdf $relPath`.',
     );
   }
   if (_google3DirectiveRegex.hasMatch(line)) {
@@ -718,4 +737,14 @@ PrCheckViolation? _checkSingleMarkdownLine(
     );
   }
   return null;
+}
+
+bool _isMalformedAlertContinuation(
+  String line,
+  String? nextLine,
+  String? bodyLine,
+) {
+  if (!_gfmAlertHeaderRegex.hasMatch(line)) return false;
+  if (nextLine == null || nextLine.trim() != '>') return true;
+  return bodyLine == null || !_gfmAlertBodyLineRegex.hasMatch(bodyLine);
 }
