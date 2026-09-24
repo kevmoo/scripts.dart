@@ -4,6 +4,7 @@ import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
 
 import '../gh_view.dart';
+import '../shared/markdown_table.dart';
 
 /// Renders GitHub Flavored Markdown report.
 String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
@@ -130,18 +131,11 @@ void _writeMarkdownPrRow(StringBuffer buffer, GhPr pr, DateTime now) {
       ? pr.repoUrl
       : 'https://github.com/${pr.repository}';
   final queuePrefix = pr.isInMergeQueue ? '`[🔀 Merge Queue]` ' : '';
-  final sanitizedTitle = pr.title
-      .replaceAll('|', '/')
-      .replaceAll('\n', ' ')
-      .trim();
+  final sanitizedTitle = sanitizeMarkdownCell(pr.title);
 
   final prLines = <String>[
     if (pr.context != null && pr.context!.trim().isNotEmpty) ...[
-      pr.context!
-          .trim()
-          .replaceAll('|', '/')
-          .replaceAll('\r\n', '\n')
-          .replaceAll('\n', '<br>'),
+      sanitizeMarkdownCell(pr.context!, newlinesToBr: true),
       '',
     ],
     '[#${pr.number}](${pr.url}) $queuePrefix$sanitizedTitle',
@@ -257,11 +251,7 @@ String _formatCiFailingMarkdown(GhPr pr) {
 
 String? _sanitizeMarkdownCellDetail(String? detail) {
   if (detail == null) return null;
-  final cleaned = detail
-      .replaceAll('\r', '')
-      .replaceAll('\n', ' ')
-      .replaceAll('|', '/')
-      .trim();
+  final cleaned = sanitizeMarkdownCell(detail);
   return cleaned.isEmpty ? null : cleaned;
 }
 

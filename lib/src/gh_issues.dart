@@ -10,6 +10,7 @@ import 'gh_view.dart' show formatTouchedMarkdown, formatTouchedTerminal;
 import 'process_utils.dart';
 import 'shared/gh_args.dart';
 import 'shared/graphql_utils.dart';
+import 'shared/markdown_table.dart';
 
 /// Exception thrown by `gh-issues` operations.
 class GhIssuesException extends CliException {
@@ -497,10 +498,7 @@ String renderMarkdownReport(
     final issueCell =
         '[#${issue.number}](${issue.url})<br>[${issue.repository}]($repoUrl)';
 
-    final sanitizedTitle = issue.title
-        .replaceAll('|', '/')
-        .replaceAll('\n', ' ')
-        .trim();
+    final sanitizedTitle = sanitizeMarkdownCell(issue.title);
 
     final labelStr = _formatLabels(issue.labels);
     final touched = formatTouchedMarkdown(issue.updatedAt, currentTime: now);

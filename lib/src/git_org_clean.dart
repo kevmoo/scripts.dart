@@ -11,6 +11,7 @@ import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 import 'package:pool/pool.dart';
 
+import 'shared/markdown_table.dart';
 import 'testable_print.dart';
 import 'util.dart';
 
@@ -320,7 +321,9 @@ void _writeUnsafeForks(
     final upstream =
         _upstreamRepo(repo['parent'] as Map<String, dynamic>?) ??
         '(Inaccessible)';
-    final unsynced = repo['unsyncedStatus'] as String? ?? 'Not checked';
+    final unsynced = sanitizeMarkdownCell(
+      repo['unsyncedStatus'] as String? ?? 'Not checked',
+    );
     buffer.writeln(
       '| ${_formatRepoName(repo)} | `$upstream` | '
       '${_timeAgo(repo['pushedAt'] as String?, currentTime)} | $unsynced | '
@@ -348,7 +351,7 @@ void _writeStaleRepos(
     ..writeln('| :--- | :--- | :--- | :--- |');
 
   for (final repo in stale) {
-    final desc = repo['description'] as String? ?? '';
+    final desc = sanitizeMarkdownCell(repo['description'] as String? ?? '');
     buffer.writeln(
       '| ${_formatRepoName(repo)} | '
       '${_timeAgo(repo['pushedAt'] as String?, currentTime)} | '
