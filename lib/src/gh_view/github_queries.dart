@@ -76,6 +76,8 @@ query($q: String!, $limit: Int!, $cursor: String) {
         commits(last: 1) {
           nodes {
             commit {
+              committedDate
+              pushedDate
               statusCheckRollup {
                 state
                 contexts(first: 50) {
@@ -170,14 +172,26 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
   final requested = _extractRequestedReviewers(
     node['reviewRequests'] as Map<String, dynamic>?,
   );
+  final approvedReviewers = _extractApprovedReviewers(
+    node['reviews'] as Map<String, dynamic>?,
+    prAuthor,
+  );
   final reviewerActivity = _extractReviewerActivity(
     node['reviews'] as Map<String, dynamic>?,
     node['comments'] as Map<String, dynamic>?,
     prAuthor,
+    excludedFromUnrequested: {...requested.allReviewers, ...approvedReviewers},
   );
   final authorComment = _extractAuthorComment(
     node['comments'] as Map<String, dynamic>?,
     prAuthor,
+  );
+  final lastAuthorReviewAt = _extractLatestAuthorReviewAt(
+    node['reviews'] as Map<String, dynamic>?,
+    prAuthor,
+  );
+  final lastCommitAt = _extractLastCommitDateTime(
+    node['commits'] as Map<String, dynamic>?,
   );
 
   final lastAuthorCommentAt = authorComment.lastAuthorCommentAt;
@@ -192,11 +206,6 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     humanParticipants: reviewerActivity.humanParticipants,
     mentionedUsers: authorComment.mentionedUsers,
     isAlreadyPinged: isAlreadyPinged,
-  );
-
-  final approvedReviewers = _extractApprovedReviewers(
-    node['reviews'] as Map<String, dynamic>?,
-    prAuthor,
   );
 
   final threads = _extractReviewThreads(
@@ -219,11 +228,15 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     ),
     requestedReviewers: requested.allReviewers,
     activeReviewers: activeReviewers,
+    reviewAuthors: reviewerActivity.reviewAuthors,
     approvedReviewers: approvedReviewers,
     totalReviewThreads: threads.total,
     unresolvedReviewThreads: threads.unresolved,
     lastAuthorCommentAt: lastAuthorCommentAt,
+    lastAuthorReviewAt: lastAuthorReviewAt,
+    lastCommitAt: lastCommitAt,
     lastReviewerActivityAt: lastReviewerActivityAt,
+    lastUnrequestedReviewAt: reviewerActivity.lastUnrequestedReviewAt,
     mergeable: MergeableState(
       node['mergeable'] as String? ?? MergeableState.unknown,
     ),
@@ -281,32 +294,70 @@ bool _isHumanReviewer(String? login, String prAuthor) =>
     login != prAuthor &&
     !isBotLogin(login);
 
-({DateTime? lastReviewerActivityAt, List<String> humanParticipants})
+DateTime? _laterDateTime(DateTime? current, DateTime? candidate) {
+  if (candidate == null) return current;
+  if (current == null || candidate.isAfter(current)) return candidate;
+  return current;
+}
+
+({Set<String> logins, DateTime? latestAt, DateTime? latestUnexcludedAt})
+_collectNodeParticipants(
+  List<dynamic>? nodes,
+  String dateKey,
+  String prAuthor, {
+  Set<String> excludedLogins = const {},
+}) {
+  final logins = <String>{};
+  DateTime? latestAt;
+  DateTime? latestUnexcludedAt;
+  for (final item in (nodes ?? const []).whereType<Map<String, dynamic>>()) {
+    final login = _extractNodeLogin(item);
+    if (!_isHumanReviewer(login, prAuthor)) continue;
+    logins.add(login!);
+    final dt = _extractNodeDateTime(item, dateKey);
+    latestAt = _laterDateTime(latestAt, dt);
+    if (!excludedLogins.contains(login)) {
+      latestUnexcludedAt = _laterDateTime(latestUnexcludedAt, dt);
+    }
+  }
+  return (
+    logins: logins,
+    latestAt: latestAt,
+    latestUnexcludedAt: latestUnexcludedAt,
+  );
+}
+
+({
+  DateTime? lastReviewerActivityAt,
+  DateTime? lastUnrequestedReviewAt,
+  List<String> humanParticipants,
+  List<String> reviewAuthors,
+})
 _extractReviewerActivity(
   Map<String, dynamic>? reviewsObj,
   Map<String, dynamic>? commentsObj,
-  String prAuthor,
-) {
-  DateTime? lastActivity;
-  final participants = <String>{};
-
-  void processNodes(List<dynamic>? nodes, String dateKey) {
-    for (final item in (nodes ?? const []).whereType<Map<String, dynamic>>()) {
-      final login = _extractNodeLogin(item);
-      if (!_isHumanReviewer(login, prAuthor)) continue;
-      participants.add(login!);
-      final dt = _extractNodeDateTime(item, dateKey);
-      if (dt != null && (lastActivity == null || dt.isAfter(lastActivity!))) {
-        lastActivity = dt;
-      }
-    }
-  }
-
-  processNodes(reviewsObj?['nodes'] as List<dynamic>?, 'submittedAt');
-  processNodes(commentsObj?['nodes'] as List<dynamic>?, 'createdAt');
+  String prAuthor, {
+  Set<String> excludedFromUnrequested = const {},
+}) {
+  final reviewStats = _collectNodeParticipants(
+    reviewsObj?['nodes'] as List<dynamic>?,
+    'submittedAt',
+    prAuthor,
+    excludedLogins: excludedFromUnrequested,
+  );
+  final commentStats = _collectNodeParticipants(
+    commentsObj?['nodes'] as List<dynamic>?,
+    'createdAt',
+    prAuthor,
+  );
   return (
-    lastReviewerActivityAt: lastActivity,
-    humanParticipants: participants.toList(),
+    lastReviewerActivityAt: _laterDateTime(
+      reviewStats.latestAt,
+      commentStats.latestAt,
+    ),
+    lastUnrequestedReviewAt: reviewStats.latestUnexcludedAt,
+    humanParticipants: {...reviewStats.logins, ...commentStats.logins}.toList(),
+    reviewAuthors: reviewStats.logins.toList(),
   );
 }
 
@@ -317,8 +368,8 @@ _extractAuthorComment(Map<String, dynamic>? commentsObj, String prAuthor) {
   }
   DateTime? lastCommentAt;
   var latestBody = '';
-  final nodes = commentsObj?['nodes'] as List<dynamic>? ?? const [];
-  for (final item in nodes.whereType<Map<String, dynamic>>()) {
+  final commentNodes = commentsObj?['nodes'] as List<dynamic>? ?? const [];
+  for (final item in commentNodes.whereType<Map<String, dynamic>>()) {
     if (_extractNodeLogin(item) != prAuthor) continue;
     final dt = _extractNodeDateTime(item, 'createdAt');
     if (dt != null && (lastCommentAt == null || dt.isAfter(lastCommentAt))) {
@@ -331,6 +382,37 @@ _extractAuthorComment(Map<String, dynamic>? commentsObj, String prAuthor) {
     lastAuthorCommentAt: lastCommentAt,
     mentionedUsers: _extractMentionedUsers(latestBody, prAuthor),
   );
+}
+
+DateTime? _extractLatestAuthorReviewAt(
+  Map<String, dynamic>? reviewsObj,
+  String prAuthor,
+) {
+  if (prAuthor.isEmpty) return null;
+  DateTime? latest;
+  final reviewNodes = reviewsObj?['nodes'] as List<dynamic>? ?? const [];
+  for (final item in reviewNodes.whereType<Map<String, dynamic>>()) {
+    if (_extractNodeLogin(item) != prAuthor) continue;
+    final dt = _extractNodeDateTime(item, 'submittedAt');
+    if (dt != null && (latest == null || dt.isAfter(latest))) {
+      latest = dt;
+    }
+  }
+  return latest;
+}
+
+DateTime? _extractLastCommitDateTime(Map<String, dynamic>? commitsObj) {
+  final nodes = commitsObj?['nodes'] as List<dynamic>? ?? const [];
+  if (nodes.isEmpty) return null;
+  final lastNode = nodes.last;
+  if (lastNode is! Map<String, dynamic>) return null;
+  final commit = lastNode['commit'] as Map<String, dynamic>?;
+  if (commit == null) return null;
+  final pushed = _extractNodeDateTime(commit, 'pushedDate');
+  final committed = _extractNodeDateTime(commit, 'committedDate');
+  if (pushed == null) return committed;
+  if (committed == null) return pushed;
+  return pushed.isAfter(committed) ? pushed : committed;
 }
 
 List<String> _extractMentionedUsers(String body, String prAuthor) {
@@ -347,6 +429,10 @@ List<String> _extractMentionedUsers(String body, String prAuthor) {
 
 final _mentionRegex = RegExp('@([a-zA-Z0-9-]+)');
 
+bool _shouldUpdateReviewState(String? previousState, String newState) =>
+    newState.isNotEmpty &&
+    (newState != 'COMMENTED' || previousState != 'APPROVED');
+
 List<String> _extractApprovedReviewers(
   Map<String, dynamic>? reviewsObj,
   String prAuthor,
@@ -357,8 +443,8 @@ List<String> _extractApprovedReviewers(
     final login = _extractNodeLogin(item);
     if (!_isHumanReviewer(login, prAuthor)) continue;
     final state = item['state'] as String? ?? '';
-    if (state.isNotEmpty) {
-      latestStateByReviewer[login!] = state;
+    if (_shouldUpdateReviewState(latestStateByReviewer[login!], state)) {
+      latestStateByReviewer[login] = state;
     }
   }
   return latestStateByReviewer.entries

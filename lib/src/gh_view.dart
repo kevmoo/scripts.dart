@@ -99,11 +99,15 @@ class GhPr extends GhPrRef {
     required this.reviewDecision,
     required this.requestedReviewers,
     this.activeReviewers = const [],
+    this.reviewAuthors,
     this.approvedReviewers = const [],
     required this.totalReviewThreads,
     required this.unresolvedReviewThreads,
     this.lastAuthorCommentAt,
+    this.lastAuthorReviewAt,
+    this.lastCommitAt,
     this.lastReviewerActivityAt,
+    this.lastUnrequestedReviewAt,
     required this.mergeable,
     required this.mergeStateStatus,
     required this.isInMergeQueue,
@@ -118,6 +122,17 @@ class GhPr extends GhPrRef {
     this.localStatus,
     this.context,
   });
+
+  final List<String>? reviewAuthors;
+  final DateTime? lastAuthorReviewAt;
+  final DateTime? lastCommitAt;
+  final DateTime? lastUnrequestedReviewAt;
+}
+
+DateTime? _maxDateTime(DateTime? a, DateTime? b) {
+  if (a == null) return b;
+  if (b == null) return a;
+  return a.isAfter(b) ? a : b;
 }
 
 /// Domain status helpers for [GhPr].
@@ -145,30 +160,60 @@ extension GhPrStatus on GhPr {
   List<String> get targetReviewers =>
       activeReviewers.isNotEmpty ? activeReviewers : requestedReviewers;
 
-  /// Active human reviewers who are NOT currently in [requestedReviewers]
-  /// (`reviewRequests`) and have NOT already approved the PR
-  /// ([approvedReviewers]).
+  /// Human reviewers who actually submitted a `PullRequestReview`
+  /// ([reviewAuthors], or [activeReviewers] when [reviewAuthors] is omitted)
+  /// who are NOT currently in [requestedReviewers] (`reviewRequests`) and have
+  /// NOT already approved the PR ([approvedReviewers]).
   ///
   /// When a reviewer submits a non-approving review (`COMMENTED`,
   /// `CHANGES_REQUESTED`, or an `APPROVED` review later `DISMISSED`), GitHub
   /// removes them from `reviewRequests`, dropping the PR from their GitHub
   /// Review Queue (`review-requested:@me`) until re-requested via
   /// `gh pr edit --add-reviewer`.
-  List<String> get unrequestedActiveReviewers => activeReviewers
-      .where(
-        (r) =>
-            !requestedReviewers.contains(r) && !approvedReviewers.contains(r),
-      )
-      .toList();
+  List<String> get unrequestedActiveReviewers =>
+      (reviewAuthors ?? activeReviewers)
+          .where(
+            (r) =>
+                !requestedReviewers.contains(r) &&
+                !approvedReviewers.contains(r),
+          )
+          .toList();
+
+  /// Reviewers to attribute on a `CHANGES_REQUESTED` PR: prefers
+  /// [unrequestedActiveReviewers] (excluding already-approved reviewers and
+  /// issue-only commenters) when non-empty, falling back to [targetReviewers].
+  List<String> get changesRequestedReviewers =>
+      unrequestedActiveReviewers.isNotEmpty
+      ? unrequestedActiveReviewers
+      : targetReviewers;
+
+  /// Latest timestamp of any PR author activity (commit push/author date,
+  /// top-level issue comment, or inline review reply).
+  DateTime? get lastAuthorActivityAt => _maxDateTime(
+    _maxDateTime(lastAuthorCommentAt, lastAuthorReviewAt),
+    lastCommitAt,
+  );
+
+  /// True when the PR author has pushed a commit or posted a comment/reply
+  /// more recently than the latest non-approved review activity.
+  bool get hasAuthorRespondedSinceLastReview {
+    final reviewerActivity = lastUnrequestedReviewAt ?? lastReviewerActivityAt;
+    if (reviewerActivity == null) return true;
+    final authorActivity = lastAuthorActivityAt;
+    if (authorActivity == null) return false;
+    return authorActivity.isAfter(reviewerActivity);
+  }
 
   /// True when the PR is open, not a draft, not approved, has no unresolved
-  /// review threads, and at least one active human reviewer has been dropped
-  /// from [requestedReviewers].
+  /// review threads, the author has responded or pushed commits since the
+  /// latest reviewer activity, and at least one human review author has been
+  /// dropped from [requestedReviewers].
   bool get needsReviewReRequest =>
       !isRepoArchived &&
       !isDraft &&
       !isApproved &&
       unresolvedReviewThreads == 0 &&
+      hasAuthorRespondedSinceLastReview &&
       unrequestedActiveReviewers.isNotEmpty;
 
   /// True when the PR author has posted a top-level comment more recently than

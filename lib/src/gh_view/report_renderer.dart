@@ -211,38 +211,60 @@ String _resolveActionItemMarkdown(
     pr.mergeable == MergeableState.conflicting,
     pr.ciStatus == CiStatus.failure,
     pr.reviewDecision,
-    hasRequestedReviewers,
-    areThreadsResolved,
-    pr.unresolvedReviewThreads,
     pr.isDraft,
   )) {
-    (true, _, _, _, _, _, true) => '⚠️ **Conflicting** (draft)',
-    (true, _, _, _, _, _, false) => '⚠️ **Conflicting** (needs rebase)',
-    (_, true, _, _, _, _, true) => '🔴 **CI Failing** (draft)',
-    (_, true, _, _, _, _, false) => '🔴 **CI Failing** (needs fix)',
-    (_, _, ReviewDecision.changesRequested, _, _, _, _)
-        when pr.needsReviewReRequest =>
-      '🔄 **Re-request Review** '
-          '(@${pr.unrequestedActiveReviewers.join(', @')})',
-    (_, _, ReviewDecision.changesRequested, true, _, _, _) =>
-      '🟡 **Re-review Requested** ($reviewersText)',
-    (_, _, ReviewDecision.changesRequested, false, true, _, _) =>
-      '🔄 **Re-review Needed** (threads resolved)',
-    (_, _, ReviewDecision.changesRequested, false, false, > 0, _) =>
-      '🔴 **Changes Requested** (${pr.unresolvedReviewThreads} open '
-          'thread${pr.unresolvedReviewThreads > 1 ? 's' : ''})',
-    (_, _, ReviewDecision.changesRequested, false, false, _, _) =>
-      '🔴 **Changes Requested**',
-    (_, _, ReviewDecision.reviewRequired || ReviewDecision.none, _, _, _, _) =>
+    (true, _, _, true) => '⚠️ **Conflicting** (draft)',
+    (true, _, _, false) => '⚠️ **Conflicting** (needs rebase)',
+    (_, true, _, true) => '🔴 **CI Failing** (draft)',
+    (_, true, _, false) => '🔴 **CI Failing** (needs fix)',
+    (_, _, ReviewDecision.changesRequested, _) =>
+      _formatChangesRequestedActionMarkdown(
+        pr,
+        reviewersText: reviewersText,
+        hasRequestedReviewers: hasRequestedReviewers,
+        areThreadsResolved: areThreadsResolved,
+      ),
+    (_, _, ReviewDecision.reviewRequired || ReviewDecision.none, _) =>
       _resolveReviewRequiredActionMarkdown(
         pr,
         reviewersText: reviewersText,
         areThreadsResolved: areThreadsResolved,
         now: now,
       ),
-    (_, _, _, _, _, _, true) => '⚪ **Work in progress**',
+    (_, _, _, true) => '⚪ **Work in progress**',
     _ => '⚪ **Active**',
   };
+}
+
+String _formatChangesRequestedActionMarkdown(
+  GhPr pr, {
+  required String reviewersText,
+  required bool hasRequestedReviewers,
+  required bool areThreadsResolved,
+}) {
+  if (pr.needsReviewReRequest) {
+    return '🔄 **Re-request Review** '
+        '(@${pr.unrequestedActiveReviewers.join(', @')})';
+  }
+  if (hasRequestedReviewers) {
+    return '🟡 **Re-review Requested** ($reviewersText)';
+  }
+  if (areThreadsResolved) {
+    return '🔄 **Re-review Needed** (threads resolved)';
+  }
+  final crReviewers = pr.changesRequestedReviewers;
+  final crReviewersText = crReviewers.isNotEmpty
+      ? '@${crReviewers.join(', @')}'
+      : '';
+  if (pr.unresolvedReviewThreads > 0) {
+    final suffix = crReviewersText.isNotEmpty ? ' · $crReviewersText' : '';
+    final plural = pr.unresolvedReviewThreads > 1 ? 's' : '';
+    return '🔴 **Changes Requested** '
+        '(${pr.unresolvedReviewThreads} open thread$plural$suffix)';
+  }
+  return crReviewersText.isNotEmpty
+      ? '🔴 **Changes Requested** ($crReviewersText)'
+      : '🔴 **Changes Requested**';
 }
 
 bool _isRecentPing(GhPr pr, DateTime now) {
@@ -288,7 +310,8 @@ String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) =>
     switch (pr.reviewDecision) {
       ReviewDecision.approved => '🟢 Approved',
       ReviewDecision.changesRequested when pr.needsReviewReRequest =>
-        '🟠 Re-request Review (@${pr.unrequestedActiveReviewers.join(', @')})',
+        '🔴 Changes Requested · Re-request '
+            '(@${pr.unrequestedActiveReviewers.join(', @')})',
       ReviewDecision.changesRequested
           when pr.requestedReviewers.isNotEmpty &&
               pr.unrequestedActiveReviewers.isEmpty =>
@@ -297,6 +320,9 @@ String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) =>
         '🔴 Changes Requested (Resolved)',
       ReviewDecision.changesRequested when pr.unresolvedReviewThreads > 0 =>
         '🔴 Changes Requested (${pr.unresolvedReviewThreads} open)',
+      ReviewDecision.changesRequested
+          when pr.changesRequestedReviewers.isNotEmpty =>
+        '🔴 Changes Requested (@${pr.changesRequestedReviewers.join(', @')})',
       ReviewDecision.changesRequested => '🔴 Changes Requested',
       ReviewDecision.reviewRequired when pr.needsReviewReRequest =>
         '🟠 Re-request Review (@${pr.unrequestedActiveReviewers.join(', @')})',
@@ -500,7 +526,10 @@ String _formatReviewBadgeTerminal(GhPr pr) {
       green.wrap('Approved (Conflicting)') ?? 'Approved (Conflicting)',
     ReviewDecision.approved => green.wrap('Approved') ?? 'Approved',
     ReviewDecision.changesRequested when pr.needsReviewReRequest =>
-      formatRequested('Re-request Review', pr.unrequestedActiveReviewers),
+      formatRequested(
+        'Changes Requested · Re-request',
+        pr.unrequestedActiveReviewers,
+      ),
     ReviewDecision.changesRequested
         when pr.requestedReviewers.isNotEmpty &&
             pr.unrequestedActiveReviewers.isEmpty =>
@@ -509,6 +538,12 @@ String _formatReviewBadgeTerminal(GhPr pr) {
         when pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0 =>
       yellow.wrap('Changes Requested (Resolved: Re-review Needed)') ??
           'Changes Requested (Resolved: Re-review Needed)',
+    ReviewDecision.changesRequested
+        when pr.changesRequestedReviewers.isNotEmpty =>
+      red.wrap(
+            'Changes Requested (@${pr.changesRequestedReviewers.join(', @')})',
+          ) ??
+          'Changes Requested (@${pr.changesRequestedReviewers.join(', @')})',
     ReviewDecision.changesRequested =>
       red.wrap('Changes Requested') ?? 'Changes Requested',
     ReviewDecision.reviewRequired when pr.needsReviewReRequest =>
@@ -550,8 +585,10 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'targetReviewers': pr.targetReviewers,
     'unrequestedActiveReviewers': pr.unrequestedActiveReviewers,
     'needsReviewReRequest': pr.needsReviewReRequest,
+    'hasAuthorRespondedSinceLastReview': pr.hasAuthorRespondedSinceLastReview,
     'isAlreadyPinged': pr.isAlreadyPinged,
     'lastAuthorCommentAt': pr.lastAuthorCommentAt?.toIso8601String(),
+    'lastCommitAt': pr.lastCommitAt?.toIso8601String(),
     'lastReviewerActivityAt': pr.lastReviewerActivityAt?.toIso8601String(),
     'totalReviewThreads': pr.totalReviewThreads,
     'unresolvedReviewThreads': pr.unresolvedReviewThreads,
