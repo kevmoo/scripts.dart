@@ -2,11 +2,32 @@ import 'package:io/ansi.dart';
 
 import '../gerrit_view.dart';
 
+String _formatClTriageLines(RemoteCL remote) {
+  final reviewerStr = remote.reviewers.isEmpty
+      ? 'None assigned'
+      : remote.reviewers.join(', ');
+  final votesStr = remote.crVotes.isEmpty
+      ? ''
+      : ' [Votes: ${remote.crVotes.join(', ')}]';
+  final t = remote.threads;
+  final resolved =
+      t.totalThreads - t.unresolvedReviewerLeaves - t.unresolvedAuthorLeaves;
+  final threadStr =
+      '$resolved/${t.totalThreads} resolved '
+      '(${t.unresolvedReviewerLeaves} reviewer open, '
+      '${t.unresolvedAuthorLeaves} author-replied open)';
+  return '    Reviewers:  $reviewerStr$votesStr\n'
+      '    CQ Status:  ${remote.cqStatus} | Threads: $threadStr\n'
+      '    Last Touch: ${remote.lastAuthorTouch} (by author)\n'
+      '    Next Step:  ${remote.nextAction}';
+}
+
 void _printSection1Aligned(
   Map<String, (RemoteCL, CommitDetails, AlignmentResult)> alignedBranches,
   String gerritHost,
   String gerritProject,
   String? currentBranch,
+  Map<String, String> worktreeBranches,
 ) {
   if (alignedBranches.isEmpty) return;
   print(styleBold.wrap('✅ ACTIVE & ALIGNED LOCAL BRANCHES')!);
@@ -21,12 +42,15 @@ void _printSection1Aligned(
           '    Local SHA:  ${details.sha}\n'
           '    Remote SHA: ${remote.currentRevision}';
     }
+    final wt = worktreeBranches[branch];
+    final wtLine = wt != null ? '    Worktree:   $wt\n' : '';
+    final triageLines = _formatClTriageLines(remote);
     print('''
   ${branch == currentBranch ? '⭐' : '•'} ${styleBold.wrap(branch)} ➔ CL ${remote.number} (${styleDim.wrap(remote.subject)})
     URL:        https://$gerritHost/c/$gerritProject/+/${remote.number}
-$shaLine
+$wtLine$shaLine
     Alignment:  ${alignment.display}
-    Last Touch: ${details.relativeDate}
+$triageLines
 ''');
   }
 }
@@ -44,10 +68,12 @@ void _printSection2RemoteOnly(
     )!,
   );
   for (final cl in remoteOnlyCLs.values) {
+    final triageLines = _formatClTriageLines(cl);
     print('''
   • CL ${cl.number}: ${cl.subject}
     URL:        https://$gerritHost/c/$gerritProject/+/${cl.number}
     Remote SHA: ${cl.currentRevision}
+$triageLines
 ''');
   }
 }
@@ -275,6 +301,7 @@ void _printSection4ClosedAndAbandoned(
   String actualRepoRoot,
   String defaultBranch,
   String? currentBranch,
+  Map<String, String> worktreeBranches,
 ) {
   if (closedClBranches.isEmpty) return;
 
@@ -290,7 +317,6 @@ void _printSection4ClosedAndAbandoned(
     )!,
   );
 
-  final worktreeBranches = getWorktreeBranches(actualRepoRoot);
   for (final entry in closedClBranches.entries) {
     _printClosedClBranch(
       entry.key,
@@ -322,6 +348,7 @@ void groupAndPrintReport({
   required Map<int, RemoteCL> remoteCLs,
   required Map<String, CommitDetails> branchDetails,
 }) {
+  final worktreeBranches = getWorktreeBranches(actualRepoRoot);
   print(
     '''\n======================================================================
 ${styleBold.wrap('🔍 GERRIT WORKSPACE OVERVIEW')}
@@ -334,6 +361,7 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
     gerritHost,
     gerritProject,
     currentBranch,
+    worktreeBranches,
   );
   _printSection2RemoteOnly(remoteOnlyCLs, gerritHost, gerritProject);
   _printSection3ConflatedAndMismatched(
@@ -353,5 +381,6 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
     actualRepoRoot,
     defaultBranch,
     currentBranch,
+    worktreeBranches,
   );
 }

@@ -61,7 +61,10 @@ parallel to build a unified view of `~/github`:
    kscripts gerrit-view -p ~/github/dart-sdk
    ```
    _(Automatically resolves `~/github/dart-sdk/core/main/sdk` on bare-clone
-   layouts and fetches Gerrit refs from `upstream` / `dart-googlesource`)._
+   layouts, matches worktrees and local branches via `Change-Id:` footers,
+   commit SHAs, and `branch.*.gerritissue`, reconstructs `in_reply_to` comment
+   chains so only leaf comments are evaluated for resolution, and outputs
+   reviewers, CQ dry run status, and next steps)._
 4. **Open Assigned GitHub Issues** _(optional — run when asked for broader
    backlog/next-steps triage)_:
    ```bash

@@ -22,6 +22,12 @@ typedef CommitDetails = ({
   String rawBody,
 });
 
+typedef ThreadSummary = ({
+  int totalThreads,
+  int unresolvedReviewerLeaves,
+  int unresolvedAuthorLeaves,
+});
+
 typedef RemoteCL = ({
   int number,
   String changeId,
@@ -29,6 +35,12 @@ typedef RemoteCL = ({
   String status,
   String currentRevision,
   int currentRevisionNumber,
+  String lastAuthorTouch,
+  List<String> reviewers,
+  List<String> crVotes,
+  String cqStatus,
+  ThreadSummary threads,
+  String nextAction,
 });
 
 enum AlignmentState { inSync, contentIdentical, diverged }
@@ -42,7 +54,7 @@ enum ClStatus {
   unknown('UNKNOWN');
 
   final String value;
-  new(this.value);
+  const new(this.value);
   static ClStatus parse(String raw) {
     final normalized = raw.toUpperCase();
     return ClStatus.values.firstWhere(
@@ -77,7 +89,6 @@ AlignmentResult calculateAlignment(
     );
   }
 
-  // Check if remote commit exists locally after batch fetch
   final remoteTreeResult = Process.runSync('git', [
     'rev-parse',
     '--verify',
@@ -94,13 +105,12 @@ AlignmentResult calculateAlignment(
     );
   }
 
-  // Read local tree hash
   final localTreeResult = Process.runSync('git', [
     'rev-parse',
     '$branchName^{tree}',
   ], workingDirectory: repoPath);
 
-  if (remoteTreeResult.exitCode == 0 && localTreeResult.exitCode == 0) {
+  if (localTreeResult.exitCode == 0) {
     final remoteTree = (remoteTreeResult.stdout as String).trim();
     final localTree = (localTreeResult.stdout as String).trim();
 
@@ -143,13 +153,10 @@ CleanupSafety checkCleanupSafety(
     return (isSafe: true, unmergedShas: <String>[]);
   }
 
-  final lines = output.split('\n');
-  final unmerged = <String>[];
-  for (final line in lines) {
-    if (line.startsWith('+ ')) {
-      unmerged.add(line.substring(2).trim());
-    }
-  }
+  final unmerged = <String>[
+    for (final line in output.split('\n'))
+      if (line.startsWith('+ ')) line.substring(2).trim(),
+  ];
 
   return (isSafe: unmerged.isEmpty, unmergedShas: unmerged);
 }
@@ -182,10 +189,9 @@ Map<String, String> getWorktreeBranches(String repoPath) {
   if (result.exitCode != 0) return {};
 
   final worktrees = <String, String>{};
-  final lines = (result.stdout as String).split('\n');
   String? currentWorktree;
 
-  for (final line in lines) {
+  for (final line in (result.stdout as String).split('\n')) {
     if (line.startsWith('worktree ')) {
       currentWorktree = line.substring('worktree '.length).trim();
     } else if (line.startsWith('branch refs/heads/')) {
@@ -335,10 +341,230 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
   return (gerritHost, gerritProject, isGerrit);
 }
 
+/// Reconstructs Gerrit `in_reply_to` comment chains and counts only leaf
+/// comments so resolved root comments are never miscounted as unresolved.
+ThreadSummary parseGerritCommentsJson(
+  Map<String, dynamic> commentsByFile,
+  int? ownerId,
+) {
+  final allComments = <Map<String, dynamic>>[];
+  final parentIds = <String>{};
+
+  for (final fileList in commentsByFile.values) {
+    if (fileList is! List) continue;
+    for (final item in fileList) {
+      if (item is! Map<String, dynamic>) continue;
+      allComments.add(item);
+      if (item['in_reply_to'] case final String parentId
+          when parentId.isNotEmpty) {
+        parentIds.add(parentId);
+      }
+    }
+  }
+
+  var totalThreads = 0;
+  var unresolvedReviewerLeaves = 0;
+  var unresolvedAuthorLeaves = 0;
+
+  for (final comment in allComments) {
+    final id = comment['id'] as String? ?? '';
+    if (parentIds.contains(id)) continue;
+    totalThreads++;
+    if (comment['unresolved'] != true) continue;
+
+    final authorMap = comment['author'] as Map<String, dynamic>?;
+    final authorId = authorMap?['_account_id'] as int?;
+    if (ownerId != null && authorId == ownerId) {
+      unresolvedAuthorLeaves++;
+    } else {
+      unresolvedReviewerLeaves++;
+    }
+  }
+
+  return (
+    totalThreads: totalThreads,
+    unresolvedReviewerLeaves: unresolvedReviewerLeaves,
+    unresolvedAuthorLeaves: unresolvedAuthorLeaves,
+  );
+}
+
+String computeGerritNextAction({
+  required List<String> reviewers,
+  required List<String> crVotes,
+  required String cqStatus,
+  required ThreadSummary threads,
+}) {
+  if (threads.unresolvedReviewerLeaves > 0) {
+    final count = threads.unresolvedReviewerLeaves;
+    return '❌ Address $count unresolved reviewer comment(s)';
+  }
+  if (cqStatus.startsWith('❌')) {
+    return '❌ Fix failing CQ tryjobs';
+  }
+  if (crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'))) {
+    return '🚀 Approved (${crVotes.join(', ')})';
+  }
+  if (reviewers.isEmpty) {
+    return '⚠️ Add Reviewer (0 assigned)';
+  }
+  if (threads.unresolvedAuthorLeaves > 0) {
+    return '🔔 Ping Reviewer (${reviewers.join(', ')}; author replied)';
+  }
+  return '⏳ Awaiting Review (${reviewers.join(', ')})';
+}
+
+List<String> _extractReviewers(Map<String, dynamic> item, int? ownerId) {
+  final reviewersMap = item['reviewers'] as Map<String, dynamic>?;
+  final list = reviewersMap?['REVIEWER'] as List<dynamic>? ?? const [];
+  final names = <String>[];
+  for (final r in list) {
+    if (r is! Map<String, dynamic>) continue;
+    if (ownerId != null && r['_account_id'] == ownerId) continue;
+    final name = (r['name'] ?? r['email'] ?? '').toString().trim();
+    if (name.isNotEmpty) names.add(name);
+  }
+  return names;
+}
+
+List<String> _extractCrVotes(Map<String, dynamic> item) {
+  final labels = item['labels'] as Map<String, dynamic>?;
+  final cr = labels?['Code-Review'] as Map<String, dynamic>?;
+  final all = cr?['all'] as List<dynamic>? ?? const [];
+  final votes = <String>[];
+  for (final v in all) {
+    if (v is! Map<String, dynamic>) continue;
+    final val = v['value'] as int? ?? 0;
+    if (val == 0) continue;
+    final name = (v['name'] ?? v['email'] ?? '?').toString().trim();
+    final sign = val > 0 ? '+$val' : '$val';
+    votes.add('$name:$sign');
+  }
+  return votes;
+}
+
+(String, String) _extractMessagesTelemetry(
+  Map<String, dynamic> item,
+  int? ownerId,
+) {
+  final created = (item['created'] as String? ?? '').split(' ').first;
+  var lastAuthorTouch = created;
+  var cqStatus = 'None';
+
+  final messages = item['messages'] as List<dynamic>? ?? const [];
+  for (final m in messages) {
+    if (m is! Map<String, dynamic>) continue;
+    final date = (m['date'] as String? ?? '').split(' ').first;
+    final author = m['author'] as Map<String, dynamic>?;
+    if (ownerId != null &&
+        author?['_account_id'] == ownerId &&
+        date.isNotEmpty) {
+      lastAuthorTouch = date;
+    }
+    final msg = (m['message'] as String? ?? '');
+    if (msg.contains('This CL has passed the run')) {
+      cqStatus = '✅ Passed ($date)';
+    } else if (msg.contains('This CL has failed the run')) {
+      cqStatus = '❌ Failed ($date)';
+    } else if (msg.contains('Dry run: CV is trying the patch')) {
+      cqStatus = '⏳ Running ($date)';
+    }
+  }
+  return (lastAuthorTouch, cqStatus);
+}
+
+ThreadSummary _fetchClCommentSummary(
+  String actualRepoRoot,
+  String gerritHost,
+  int clNumber,
+  int? ownerId,
+) {
+  final gobResult = Process.runSync('gob-curl', [
+    'https://$gerritHost/changes/$clNumber/comments',
+  ], workingDirectory: actualRepoRoot);
+  if (gobResult.exitCode != 0) {
+    return (
+      totalThreads: 0,
+      unresolvedReviewerLeaves: 0,
+      unresolvedAuthorLeaves: 0,
+    );
+  }
+  final cleaned = (gobResult.stdout as String)
+      .trim()
+      .replaceFirst(")]}'", '')
+      .trim();
+  try {
+    final decoded = jsonDecode(cleaned);
+    if (decoded is Map<String, dynamic>) {
+      return parseGerritCommentsJson(decoded, ownerId);
+    }
+  } catch (_) {}
+  return (
+    totalThreads: 0,
+    unresolvedReviewerLeaves: 0,
+    unresolvedAuthorLeaves: 0,
+  );
+}
+
+RemoteCL? _parseRemoteClItem(
+  Map<String, dynamic> item,
+  String actualRepoRoot,
+  String gerritHost,
+) {
+  if (item case {
+    '_number': final int number,
+    'change_id': final String changeId,
+    'subject': final String subject,
+    'status': final String status,
+    'current_revision': final String currentRevision,
+    'revisions': final Map<String, dynamic> revisions,
+  }) {
+    final currentRevisionNumber =
+        (revisions[currentRevision] as Map<String, dynamic>?)?['_number']
+            as int? ??
+        1;
+    final ownerMap = item['owner'] as Map<String, dynamic>?;
+    final ownerId = ownerMap?['_account_id'] as int?;
+    final reviewers = _extractReviewers(item, ownerId);
+    final crVotes = _extractCrVotes(item);
+    final (lastAuthorTouch, cqStatus) = _extractMessagesTelemetry(
+      item,
+      ownerId,
+    );
+    final threads = _fetchClCommentSummary(
+      actualRepoRoot,
+      gerritHost,
+      number,
+      ownerId,
+    );
+    final nextAction = computeGerritNextAction(
+      reviewers: reviewers,
+      crVotes: crVotes,
+      cqStatus: cqStatus,
+      threads: threads,
+    );
+    return (
+      number: number,
+      changeId: changeId,
+      subject: subject,
+      status: status,
+      currentRevision: currentRevision,
+      currentRevisionNumber: currentRevisionNumber,
+      lastAuthorTouch: lastAuthorTouch,
+      reviewers: reviewers,
+      crVotes: crVotes,
+      cqStatus: cqStatus,
+      threads: threads,
+      nextAction: nextAction,
+    );
+  }
+  return null;
+}
+
 Map<int, RemoteCL> _fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
   print(styleDim.wrap('Querying active CLs from Gerrit...')!);
   final gobResult = Process.runSync('gob-curl', [
-    'https://$gerritHost/changes/?q=owner:self+status:open&o=CURRENT_REVISION',
+    'https://$gerritHost/changes/?q=owner:self+status:open'
+        '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS&o=MESSAGES',
   ], workingDirectory: actualRepoRoot);
   if (gobResult.exitCode != 0) {
     throw GerritViewException(
@@ -363,48 +589,80 @@ Map<int, RemoteCL> _fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
 
   final remoteCLs = <int, RemoteCL>{};
   for (final item in clList) {
-    if (item case {
-      '_number': final int number,
-      'change_id': final String changeId,
-      'subject': final String subject,
-      'status': final String status,
-      'current_revision': final String currentRevision,
-      'revisions': final Map<String, dynamic> revisions,
-    }) {
-      final currentRevisionNumber =
-          (revisions[currentRevision] as Map<String, dynamic>?)?['_number']
-              as int? ??
-          1;
-      remoteCLs[number] = (
-        number: number,
-        changeId: changeId,
-        subject: subject,
-        status: status,
-        currentRevision: currentRevision,
-        currentRevisionNumber: currentRevisionNumber,
-      );
+    if (item is! Map<String, dynamic>) continue;
+    final parsed = _parseRemoteClItem(item, actualRepoRoot, gerritHost);
+    if (parsed != null) {
+      remoteCLs[parsed.number] = parsed;
     }
   }
   return remoteCLs;
 }
 
-Map<String, int> _fetchLocalBranchIssues(String actualRepoRoot) {
+List<String> _listAllLocalBranches(String actualRepoRoot) {
+  final res = Process.runSync('git', [
+    'for-each-ref',
+    '--format=%(refname:short)',
+    'refs/heads/',
+  ], workingDirectory: actualRepoRoot);
+  if (res.exitCode != 0) return const [];
+  return (res.stdout as String)
+      .split('\n')
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .toList();
+}
+
+(Map<String, int>, Map<String, CommitDetails>) _discoverLocalBranchIssues(
+  String actualRepoRoot,
+  Map<int, RemoteCL> remoteCLs,
+  String defaultBranch,
+) {
+  final localBranchIssues = <String, int>{};
+  final branchDetails = <String, CommitDetails>{};
+
   final configResult = Process.runSync('git', [
     'config',
     '--get-regexp',
     r'branch\..*\.gerritissue',
   ], workingDirectory: actualRepoRoot);
-  if (configResult.exitCode != 0) return {};
-
-  final localBranchIssues = <String, int>{};
-  final lines = (configResult.stdout as String).trim().split('\n');
-  for (final line in lines) {
-    final entry = _parseBranchIssueLine(line);
-    if (entry != null) {
-      localBranchIssues[entry.$1] = entry.$2;
+  if (configResult.exitCode == 0) {
+    final lines = (configResult.stdout as String).trim().split('\n');
+    for (final line in lines) {
+      final entry = _parseBranchIssueLine(line);
+      if (entry != null) {
+        localBranchIssues[entry.$1] = entry.$2;
+      }
     }
   }
-  return localBranchIssues;
+
+  final byChangeId = <String, int>{
+    for (final cl in remoteCLs.values)
+      if (cl.changeId.isNotEmpty) cl.changeId: cl.number,
+  };
+  final bySha = <String, int>{
+    for (final cl in remoteCLs.values) cl.currentRevision: cl.number,
+  };
+
+  final allBranches = <String>{
+    ...localBranchIssues.keys,
+    ..._listAllLocalBranches(actualRepoRoot),
+  };
+
+  for (final branch in allBranches) {
+    if (branch == defaultBranch) continue;
+    final details = _fetchCommitDetails(actualRepoRoot, branch);
+    if (details == null) continue;
+    branchDetails[branch] = details;
+
+    if (!localBranchIssues.containsKey(branch)) {
+      final matchedIssue = bySha[details.sha] ?? byChangeId[details.changeId];
+      if (matchedIssue != null) {
+        localBranchIssues[branch] = matchedIssue;
+      }
+    }
+  }
+
+  return (localBranchIssues, branchDetails);
 }
 
 final _branchIssueRegex = RegExp(r'^branch\.(.*)\.gerritissue$');
@@ -429,23 +687,21 @@ Map<int, List<String>> _identifyConflatedBranches(
     issueToBranches.putIfAbsent(entry.value, () => []).add(entry.key);
   }
 
-  final conflatedBranches = <int, List<String>>{};
-  for (final entry in issueToBranches.entries) {
-    if (entry.value.length > 1) conflatedBranches[entry.key] = entry.value;
-  }
-  return conflatedBranches;
+  return <int, List<String>>{
+    for (final entry in issueToBranches.entries)
+      if (entry.value.length > 1) entry.key: entry.value,
+  };
 }
 
 Map<int, RemoteCL> _findRemoteOnlyCLs(
   Map<int, RemoteCL> remoteCLs,
   Map<String, int> localBranchIssues,
 ) {
-  final remoteOnlyCLs = <int, RemoteCL>{};
   final mappedIssues = localBranchIssues.values.toSet();
-  for (final cl in remoteCLs.values) {
-    if (!mappedIssues.contains(cl.number)) remoteOnlyCLs[cl.number] = cl;
-  }
-  return remoteOnlyCLs;
+  return <int, RemoteCL>{
+    for (final cl in remoteCLs.values)
+      if (!mappedIssues.contains(cl.number)) cl.number: cl,
+  };
 }
 
 _BranchAnalysis _buildBranchGroups(
@@ -476,7 +732,7 @@ _BranchAnalysis _buildBranchGroups(
       continue;
     }
 
-    if (details.changeId != remote.changeId) {
+    if (details.changeId.isNotEmpty && details.changeId != remote.changeId) {
       mismatchedChangeIdBranches[branch] = (remote, details);
       continue;
     }
@@ -576,32 +832,11 @@ Map<int, ClStatus> _fetchRemoteCLStatuses(
   return statuses;
 }
 
-Future<void> runGerritView({String? gerritRepo}) async {
-  final actualRepoRoot = _resolveRepoInfo(gerritRepo);
-  final (gerritHost, gerritProject, _) = _resolveGerritDetails(actualRepoRoot);
-
-  final remoteCLs = _fetchRemoteCLs(actualRepoRoot, gerritHost);
-  final localBranchIssues = _fetchLocalBranchIssues(actualRepoRoot);
-
-  final branchDetails = <String, CommitDetails>{};
-  for (final branch in localBranchIssues.keys) {
-    final details = _fetchCommitDetails(actualRepoRoot, branch);
-    if (details != null) branchDetails[branch] = details;
-  }
-
-  final defaultBranch = _getDefaultBranch(actualRepoRoot);
-  final currentBranch = _getCurrentBranch(actualRepoRoot);
-
-  final closedIssues = localBranchIssues.values
-      .where((i) => !remoteCLs.containsKey(i))
-      .toSet()
-      .toList();
-  final closedStatuses = _fetchRemoteCLStatuses(
-    actualRepoRoot,
-    closedIssues,
-    gerritHost,
-  );
-
+List<String> _buildShadowFetchRefs(
+  Map<String, int> localBranchIssues,
+  Map<String, CommitDetails> branchDetails,
+  Map<int, RemoteCL> remoteCLs,
+) {
   final fetchRefs = <String>[];
   for (final branch in localBranchIssues.keys) {
     final issue = localBranchIssues[branch]!;
@@ -616,6 +851,37 @@ Future<void> runGerritView({String? gerritRepo}) async {
       );
     }
   }
+  return fetchRefs;
+}
+
+Future<void> runGerritView({String? gerritRepo}) async {
+  final actualRepoRoot = _resolveRepoInfo(gerritRepo);
+  final (gerritHost, gerritProject, _) = _resolveGerritDetails(actualRepoRoot);
+  final defaultBranch = _getDefaultBranch(actualRepoRoot);
+  final currentBranch = _getCurrentBranch(actualRepoRoot);
+
+  final remoteCLs = _fetchRemoteCLs(actualRepoRoot, gerritHost);
+  final (localBranchIssues, branchDetails) = _discoverLocalBranchIssues(
+    actualRepoRoot,
+    remoteCLs,
+    defaultBranch,
+  );
+
+  final closedIssues = localBranchIssues.values
+      .where((i) => !remoteCLs.containsKey(i))
+      .toSet()
+      .toList();
+  final closedStatuses = _fetchRemoteCLStatuses(
+    actualRepoRoot,
+    closedIssues,
+    gerritHost,
+  );
+
+  final fetchRefs = _buildShadowFetchRefs(
+    localBranchIssues,
+    branchDetails,
+    remoteCLs,
+  );
 
   if (fetchRefs.isNotEmpty) {
     final gerritRemote = _resolveGerritRemoteName(actualRepoRoot);
