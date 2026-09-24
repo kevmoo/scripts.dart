@@ -54,7 +54,7 @@ enum ClStatus {
   unknown('UNKNOWN');
 
   final String value;
-  const new(this.value);
+  new(this.value);
   static ClStatus parse(String raw) {
     final normalized = raw.toUpperCase();
     return ClStatus.values.firstWhere(
@@ -341,11 +341,8 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
   return (gerritHost, gerritProject, isGerrit);
 }
 
-/// Reconstructs Gerrit `in_reply_to` comment chains and counts only leaf
-/// comments so resolved root comments are never miscounted as unresolved.
-ThreadSummary parseGerritCommentsJson(
+(List<Map<String, dynamic>>, Set<String>) _collectGerritComments(
   Map<String, dynamic> commentsByFile,
-  int? ownerId,
 ) {
   final allComments = <Map<String, dynamic>>[];
   final parentIds = <String>{};
@@ -355,12 +352,22 @@ ThreadSummary parseGerritCommentsJson(
     for (final item in fileList) {
       if (item is! Map<String, dynamic>) continue;
       allComments.add(item);
-      if (item['in_reply_to'] case final String parentId
-          when parentId.isNotEmpty) {
+      final parentId = item['in_reply_to'] as String? ?? '';
+      if (parentId.isNotEmpty) {
         parentIds.add(parentId);
       }
     }
   }
+  return (allComments, parentIds);
+}
+
+/// Reconstructs Gerrit `in_reply_to` comment chains and counts only leaf
+/// comments so resolved root comments are never miscounted as unresolved.
+ThreadSummary parseGerritCommentsJson(
+  Map<String, dynamic> commentsByFile,
+  int? ownerId,
+) {
+  final (allComments, parentIds) = _collectGerritComments(commentsByFile);
 
   var totalThreads = 0;
   var unresolvedReviewerLeaves = 0;
@@ -460,7 +467,7 @@ List<String> _extractCrVotes(Map<String, dynamic> item) {
         date.isNotEmpty) {
       lastAuthorTouch = date;
     }
-    final msg = (m['message'] as String? ?? '');
+    final msg = m['message'] as String? ?? '';
     if (msg.contains('This CL has passed the run')) {
       cqStatus = '✅ Passed ($date)';
     } else if (msg.contains('This CL has failed the run')) {
@@ -560,11 +567,14 @@ RemoteCL? _parseRemoteClItem(
   return null;
 }
 
+const _changesQuerySuffix =
+    'changes/?q=owner:self+status:open'
+    '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS&o=MESSAGES';
+
 Map<int, RemoteCL> _fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
   print(styleDim.wrap('Querying active CLs from Gerrit...')!);
   final gobResult = Process.runSync('gob-curl', [
-    'https://$gerritHost/changes/?q=owner:self+status:open'
-        '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS&o=MESSAGES',
+    'https://$gerritHost/$_changesQuerySuffix',
   ], workingDirectory: actualRepoRoot);
   if (gobResult.exitCode != 0) {
     throw GerritViewException(
@@ -612,28 +622,32 @@ List<String> _listAllLocalBranches(String actualRepoRoot) {
       .toList();
 }
 
-(Map<String, int>, Map<String, CommitDetails>) _discoverLocalBranchIssues(
-  String actualRepoRoot,
-  Map<int, RemoteCL> remoteCLs,
-  String defaultBranch,
-) {
+Map<String, int> _readConfiguredBranchIssues(String actualRepoRoot) {
   final localBranchIssues = <String, int>{};
-  final branchDetails = <String, CommitDetails>{};
-
   final configResult = Process.runSync('git', [
     'config',
     '--get-regexp',
     r'branch\..*\.gerritissue',
   ], workingDirectory: actualRepoRoot);
-  if (configResult.exitCode == 0) {
-    final lines = (configResult.stdout as String).trim().split('\n');
-    for (final line in lines) {
-      final entry = _parseBranchIssueLine(line);
-      if (entry != null) {
-        localBranchIssues[entry.$1] = entry.$2;
-      }
+  if (configResult.exitCode != 0) return localBranchIssues;
+
+  final lines = (configResult.stdout as String).trim().split('\n');
+  for (final line in lines) {
+    final entry = _parseBranchIssueLine(line);
+    if (entry != null) {
+      localBranchIssues[entry.$1] = entry.$2;
     }
   }
+  return localBranchIssues;
+}
+
+(Map<String, int>, Map<String, CommitDetails>) _discoverLocalBranchIssues(
+  String actualRepoRoot,
+  Map<int, RemoteCL> remoteCLs,
+  String defaultBranch,
+) {
+  final localBranchIssues = _readConfiguredBranchIssues(actualRepoRoot);
+  final branchDetails = <String, CommitDetails>{};
 
   final byChangeId = <String, int>{
     for (final cl in remoteCLs.values)
@@ -654,11 +668,9 @@ List<String> _listAllLocalBranches(String actualRepoRoot) {
     if (details == null) continue;
     branchDetails[branch] = details;
 
-    if (!localBranchIssues.containsKey(branch)) {
-      final matchedIssue = bySha[details.sha] ?? byChangeId[details.changeId];
-      if (matchedIssue != null) {
-        localBranchIssues[branch] = matchedIssue;
-      }
+    final matchedIssue = bySha[details.sha] ?? byChangeId[details.changeId];
+    if (matchedIssue != null) {
+      localBranchIssues.putIfAbsent(branch, () => matchedIssue);
     }
   }
 

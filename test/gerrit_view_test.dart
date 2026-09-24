@@ -6,7 +6,7 @@ import 'package:test/test.dart';
 
 void main() {
   group('parseGerritCommentsJson', () {
-    test('ignores unresolved:true on root comments when leaf reply resolves thread', () {
+    test('ignores unresolved:true on root when leaf reply resolves', () {
       final commentsByFile = <String, dynamic>{
         'sdk/lib/_http/http_impl.dart': [
           {
