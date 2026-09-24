@@ -23,46 +23,36 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
     ..writeln('---')
     ..writeln()
     ..writeln('## 📊 High-Level Summary')
+    ..writeln()
+    ..writeln('<!-- mdformat off(prevent table wrapping) -->')
+    ..writeln('| Metric | Count | Status Description |')
+    ..writeln('| :--- | :---: | :--- |')
+    ..writeln(
+      '| **Total Open PRs** | **${prs.length}** | '
+      'Active pull requests across all GitHub organizations |',
+    )
+    ..writeln(
+      '| 🚀 **Ready to Merge** | **${categorized.readyToMerge.length}** | '
+      'Approved by reviewers, passing all CI checks, and mergeable |',
+    )
+    ..writeln(
+      '| ⚠️ **Action Needed** | **${categorized.actionNeeded.length}** | '
+      'Blocked by failing CI, changes requested, or merge conflicts |',
+    )
+    ..writeln(
+      '| 🟡 **In Review Queue** | **${categorized.inReview.length}** | '
+      'Active non-draft PRs with green/pending CI awaiting review |',
+    )
+    ..writeln(
+      '| ⚪ **Drafts & WIP** | **${categorized.drafts.length}** | '
+      'Work-in-progress draft pull requests |',
+    )
+    ..writeln(
+      '| 📦 **Archived Repositories** | **${categorized.archived.length}** | '
+      'Pull requests in archived/read-only repositories |',
+    )
+    ..writeln('<!-- mdformat on -->')
     ..writeln();
-
-  writeMarkdownTable(
-    buffer,
-    headers: const ['Metric', 'Count', 'Status Description'],
-    alignments: const [MdAlign.left, MdAlign.center, MdAlign.left],
-    rows: [
-      [
-        '**Total Open PRs**',
-        '**${prs.length}**',
-        'Active pull requests across all GitHub organizations',
-      ],
-      [
-        '🚀 **Ready to Merge**',
-        '**${categorized.readyToMerge.length}**',
-        'Approved by reviewers, passing all CI checks, and mergeable',
-      ],
-      [
-        '⚠️ **Action Needed**',
-        '**${categorized.actionNeeded.length}**',
-        'Blocked by failing CI, changes requested, or merge conflicts',
-      ],
-      [
-        '🟡 **In Review Queue**',
-        '**${categorized.inReview.length}**',
-        'Active non-draft PRs with green/pending CI awaiting review',
-      ],
-      [
-        '⚪ **Drafts & WIP**',
-        '**${categorized.drafts.length}**',
-        'Work-in-progress draft pull requests',
-      ],
-      [
-        '📦 **Archived Repositories**',
-        '**${categorized.archived.length}**',
-        'Pull requests in archived/read-only repositories',
-      ],
-    ],
-  );
-  buffer.writeln();
 
   if (prs.isEmpty) {
     buffer.writeln('No open pull requests found. 🎉\n');
@@ -119,53 +109,53 @@ void _writeMarkdownSection(
   required DateTime now,
 }) {
   if (prs.isEmpty) return;
+  const tableHeader = '''
+<!-- mdformat off(prevent table wrapping) -->
+| PR & Repository | Branch & Local Mapping | Review & CI Status | Last Touched | Action / Ping Status |
+| :--- | :--- | :--- | :--- | :--- |''';
+
   buffer
     ..writeln(title)
+    ..writeln()
+    ..writeln(tableHeader);
+  for (final pr in prs) {
+    _writeMarkdownPrRow(buffer, pr, now);
+  }
+  buffer
+    ..writeln('<!-- mdformat on -->')
     ..writeln();
-  writeMarkdownTable(
-    buffer,
-    headers: const [
-      'PR & Repository',
-      'Branch & Local Mapping',
-      'Review & CI Status',
-      'Last Touched',
-      'Action / Ping Status',
-    ],
-    rows: prs.map((pr) => _buildMarkdownPrRow(pr, now)),
-  );
-  buffer.writeln();
 }
 
-List<String> _buildMarkdownPrRow(GhPr pr, DateTime now) {
+void _writeMarkdownPrRow(StringBuffer buffer, GhPr pr, DateTime now) {
   final repoUrl = pr.repoUrl.isNotEmpty
       ? pr.repoUrl
       : 'https://github.com/${pr.repository}';
   final queuePrefix = pr.isInMergeQueue ? '`[🔀 Merge Queue]` ' : '';
   final sanitizedTitle = sanitizeMarkdownCell(pr.title);
 
-  final prCell = formatMarkdownCellLines([
+  final prLines = <String>[
     if (pr.context != null && pr.context!.trim().isNotEmpty) ...[
-      pr.context!.trim(),
+      sanitizeMarkdownCell(pr.context!, newlinesToBr: true),
       '',
     ],
     '[#${pr.number}](${pr.url}) $queuePrefix$sanitizedTitle',
     '[${pr.repository}]($repoUrl)',
-  ]);
+  ];
 
-  final branchCell = formatMarkdownCellLines([
+  final branchLines = <String>[
     '`${pr.headRefName}`',
     _formatLocalMappingMarkdown(pr.localStatus),
-  ]);
+  ];
 
   final areThreadsResolved =
       pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0;
   final isReady = isReadyToMerge(pr);
 
-  final statusCell = formatMarkdownCellLines([
+  final statusLines = <String>[
     'Review: ${_formatReviewBadgeMarkdown(pr, areThreadsResolved)}',
     'CI: ${_formatCiBadgeMarkdown(pr.ciStatus)}',
     'Merge: ${_formatMergeableBadgeMarkdown(pr)}',
-  ], nbsp: true);
+  ];
 
   final touched = formatTouchedMarkdown(pr.updatedAt, currentTime: now);
   final actionItem = _resolveActionItemMarkdown(
@@ -175,7 +165,15 @@ List<String> _buildMarkdownPrRow(GhPr pr, DateTime now) {
     now: now,
   );
 
-  return [prCell, branchCell, statusCell, touched, actionItem];
+  final prCell = prLines.join('<br>');
+  final branchCell = branchLines.join('<br>');
+  final statusCell = statusLines
+      .map((line) => line.replaceAll(' ', '&nbsp;'))
+      .join('<br>');
+
+  buffer.writeln(
+    '| $prCell | $branchCell | $statusCell | $touched | $actionItem |',
+  );
 }
 
 String _resolveActionItemMarkdown(

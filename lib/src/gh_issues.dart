@@ -458,31 +458,24 @@ String renderMarkdownReport(
 
   buffer
     ..writeln('# 📋 Open Assigned Issues')
+    ..writeln()
+    ..writeln('<!-- mdformat off(prevent table wrapping) -->')
+    ..writeln('| Metric | Count | Description |')
+    ..writeln('| :--- | :---: | :--- |')
+    ..writeln(
+      '| **Total Open Issues** | **${summary.total}** | '
+      'Open issues assigned to ${options.user} |',
+    )
+    ..writeln(
+      '| 🔗 **With Linked PRs** | **${summary.withPrs}** | '
+      'Issues with linked or referenced pull requests |',
+    )
+    ..writeln(
+      '| ⏳ **Updated < 7 Days** | **${summary.recent}** | '
+      'Issues updated within the last week |',
+    )
+    ..writeln('<!-- mdformat on -->')
     ..writeln();
-
-  writeMarkdownTable(
-    buffer,
-    headers: const ['Metric', 'Count', 'Description'],
-    alignments: const [MdAlign.left, MdAlign.center, MdAlign.left],
-    rows: [
-      [
-        '**Total Open Issues**',
-        '**${summary.total}**',
-        'Open issues assigned to ${options.user}',
-      ],
-      [
-        '🔗 **With Linked PRs**',
-        '**${summary.withPrs}**',
-        'Issues with linked or referenced pull requests',
-      ],
-      [
-        '⏳ **Updated < 7 Days**',
-        '**${summary.recent}**',
-        'Issues updated within the last week',
-      ],
-    ],
-  );
-  buffer.writeln();
 
   if (issues.isEmpty) {
     buffer.writeln('No open assigned issues found. 🎉\n');
@@ -491,33 +484,33 @@ String renderMarkdownReport(
 
   buffer
     ..writeln('### 📋 Issues Breakdown')
-    ..writeln();
+    ..writeln()
+    ..writeln('<!-- mdformat off(prevent table wrapping) -->')
+    ..writeln(
+      '| Issue & Repository | Title | Labels | Last Updated | Linked PR(s) |',
+    )
+    ..writeln('| :--- | :--- | :--- | :--- | :--- |');
 
-  writeMarkdownTable(
-    buffer,
-    headers: const [
-      'Issue & Repository',
-      'Title',
-      'Labels',
-      'Last Updated',
-      'Linked PR(s)',
-    ],
-    rows: issues.map((issue) {
-      final repoUrl = issue.repoUrl.isNotEmpty
-          ? issue.repoUrl
-          : 'https://github.com/${issue.repository}';
-      final issueCell = formatMarkdownCellLines([
-        '[#${issue.number}](${issue.url})',
-        '[${issue.repository}]($repoUrl)',
-      ]);
-      final labelStr = _formatLabels(issue.labels);
-      final touched = formatTouchedMarkdown(issue.updatedAt, currentTime: now);
-      final prCell = _formatLinkedPrsMarkdown(issue);
-      return [issueCell, issue.title, labelStr, touched, prCell];
-    }),
-  );
+  for (final issue in issues) {
+    final repoUrl = issue.repoUrl.isNotEmpty
+        ? issue.repoUrl
+        : 'https://github.com/${issue.repository}';
+    final issueCell =
+        '[#${issue.number}](${issue.url})<br>[${issue.repository}]($repoUrl)';
+
+    final sanitizedTitle = sanitizeMarkdownCell(issue.title);
+
+    final labelStr = _formatLabels(issue.labels);
+    final touched = formatTouchedMarkdown(issue.updatedAt, currentTime: now);
+    final prCell = _formatLinkedPrsMarkdown(issue);
+
+    buffer.writeln(
+      '| $issueCell | $sanitizedTitle | $labelStr | $touched | $prCell |',
+    );
+  }
 
   buffer
+    ..writeln('<!-- mdformat on -->')
     ..writeln()
     ..writeln('*PR Legend: 🟢 Open | 🟣 Merged | 🔴 Closed*');
 

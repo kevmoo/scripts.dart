@@ -5,7 +5,6 @@ import 'package:collection/collection.dart';
 import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
 
-import '../shared/markdown_table.dart';
 import 'canonical_templates.dart';
 import 'models.dart';
 import 'repo_align_scanner.dart';
@@ -52,53 +51,32 @@ class RepoAlignRunner {
   }
 
   void _printSummaryTable(List<RepoAlignmentStatus> activeResults) {
-    final table = formatMarkdownTable(
-      headers: const [
-        'Repository',
-        'Kind',
-        'Strict Mode',
-        'Lower Bound',
-        'CogComp',
-        'Autosubmit',
-        'Dependabot',
-        'Auto-Merge',
-        'Status',
-      ],
-      alignments: const [
-        MdAlign.left,
-        MdAlign.left,
-        MdAlign.center,
-        MdAlign.center,
-        MdAlign.center,
-        MdAlign.center,
-        MdAlign.center,
-        MdAlign.center,
-        MdAlign.left,
-      ],
-      rows: activeResults.map((r) {
-        final strictIcon = _strictModeIcon(r);
-        final lbIcon = _lowerBoundIcon(r);
-        final ccIcon = _complexityIcon(r);
-        final asIcon = r.hasAutosubmit ? '✅' : '❌';
-        final dbIcon = r.hasDependabot ? '✅' : '❌';
-        final amIcon = r.autoMergeAllowed ? '✅' : '❌';
-        final status = r.isAligned
-            ? '🟢 Aligned'
-            : '🔴 ${r.issues.length} Drift(s)';
-        return [
-          '**`${r.name}`**',
-          r.kind.name,
-          strictIcon,
-          lbIcon,
-          ccIcon,
-          asIcon,
-          dbIcon,
-          amIcon,
-          status,
-        ];
-      }),
+    print('<!-- mdformat off(prevent table wrapping) -->');
+    print(
+      '| Repository | Kind | Strict Mode | Lower Bound | CogComp | '
+      'Autosubmit | Dependabot | Auto-Merge | Status |',
     );
-    print('$table\n');
+    print(
+      '| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |',
+    );
+
+    for (final r in activeResults) {
+      final strictIcon = _strictModeIcon(r);
+      final lbIcon = _lowerBoundIcon(r);
+      final ccIcon = _complexityIcon(r);
+      final asIcon = r.hasAutosubmit ? '✅' : '❌';
+      final dbIcon = r.hasDependabot ? '✅' : '❌';
+      final amIcon = r.autoMergeAllowed ? '✅' : '❌';
+      final status = r.isAligned
+          ? '🟢 Aligned'
+          : '🔴 ${r.issues.length} Drift(s)';
+
+      final line =
+          '| **`${r.name}`** | ${r.kind.name} | $strictIcon | $lbIcon | '
+          '$ccIcon | $asIcon | $dbIcon | $amIcon | $status |';
+      print(line);
+    }
+    print('<!-- mdformat on -->\n');
   }
 
   String _strictModeIcon(RepoAlignmentStatus r) {
