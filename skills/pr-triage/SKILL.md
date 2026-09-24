@@ -23,6 +23,9 @@ kscripts pr-triage --dir /path/to/target-repository --pr 123
 
 # Reply to a comment and resolve a review thread:
 kscripts pr-triage resolve --dir /path/to/target-repository <thread_id> <comment_id> "<reply_body>"
+
+# Re-request review so the PR re-enters the reviewer's GitHub Review Queue:
+gh pr edit 123 -R <owner/repo> --add-reviewer <reviewer_login>
 ```
 
 ## When to use this skill
@@ -220,21 +223,23 @@ kscripts pr-triage resolve --dir /path/to/target-repository <thread_id> <comment
    - **Present Completion Options (`ask_question`)**: Use `ask_question` to
      present a unified completion menu based on the working tree state:
      - **If uncommitted changes or unpushed commits exist**, offer:
-       1. `(Recommended) Commit fixes, push branch, reply to comments, and resolve threads`
+       1. `(Recommended) Commit fixes, push branch, reply/resolve threads, and re-request review`
        2. `Commit fixes and push branch only`
        3. `Commit fixes locally only`
        4. `Do nothing`
      - **If working tree is clean and all commits are pushed**, offer:
-       1. `(Recommended) Reply to comments and resolve threads`
+       1. `(Recommended) Reply/resolve threads and re-request review`
        2. `Do nothing`
    - **Execute Selected Actions**:
      - If committing is selected, stage all modified and new files and create a
        descriptive commit.
      - If pushing is selected, run `git push`.
      - If replying and resolving is selected, execute the
-       `kscripts pr-triage resolve` commands below.
+       `kscripts pr-triage resolve` commands below, and then **re-request
+       review** (`gh pr edit <pr> -R <owner/repo> --add-reviewer <login>`) for
+       every active human reviewer who was dropped from `reviewRequests`.
 
-## Replying and Resolving Comments
+## Replying, Resolving Threads, and Re-Requesting Review
 
 For every addressed review thread, you MUST execute thread resolution (thread
 resolution is explicit, mandatory, and un-skippable).
@@ -253,6 +258,22 @@ kscripts pr-triage resolve --dir <path-to-target-repository> <thread_graphql_id>
 _Note: `<thread_graphql_id>` is the GraphQL node ID (e.g., `PRRT_...`) and
 `<comment_database_id>` is the numeric database ID (e.g., `3438780787`), exactly
 as output in `raw_triage_output.md`._
+
+### Mandatory GitHub Review Queue Re-Request (`--add-reviewer`)
+
+When a human reviewer submits any review (`COMMENTED`, `CHANGES_REQUESTED`, or
+an `APPROVED` review that is later `DISMISSED` by new commits), GitHub
+automatically removes that reviewer from `reviewRequests`. Simply posting an
+`@reviewer PTAL` comment or resolving threads does **not** put the PR back into
+their GitHub Review Queue (`is:open is:pr review-requested:@me`).
+
+Whenever `kscripts pr-triage` flags `Reviewer Dropped from Queue` (or after
+pushing fixes and resolving threads for a human reviewer), you MUST re-request
+their review:
+
+```bash
+gh pr edit <pr_number> -R <owner/repo> --add-reviewer <reviewer_login>
+```
 
 ## Constraints
 

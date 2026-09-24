@@ -573,7 +573,7 @@ void main() {
     });
 
     test('renders Awaiting @... (pinged X ago) when author commented '
-        'after last reviewer activity', () {
+        'after last reviewer activity and reviewers are in queue', () {
       final now = DateTime.parse('2026-09-14T20:00:00Z');
       final pr = GhPr(
         number: 2448,
@@ -583,7 +583,12 @@ void main() {
         isDraft: false,
         state: 'OPEN',
         reviewDecision: ReviewDecision.reviewRequired,
-        requestedReviewers: ['dart-native-runtime-team', 'dart-ecosystem-team'],
+        requestedReviewers: [
+          'liamappelbe',
+          'natebosch',
+          'dart-native-runtime-team',
+          'dart-ecosystem-team',
+        ],
         activeReviewers: ['liamappelbe', 'natebosch'],
         totalReviewThreads: 16,
         unresolvedReviewThreads: 0,
@@ -608,6 +613,48 @@ void main() {
       check(md).contains(
         'Review:&nbsp;🟡&nbsp;Review&nbsp;Required&nbsp;'
         '(@liamappelbe,&nbsp;@natebosch)',
+      );
+    });
+
+    test('renders Re-request Review when active reviewer was dropped from '
+        'requestedReviewers even after author PTAL comment', () {
+      final now = DateTime.parse('2026-09-23T22:45:00Z');
+      final pr = GhPr(
+        number: 193187,
+        title: 'Clean up suite runner',
+        url: 'https://github.com/flutter/flutter/pull/193187',
+        author: 'kevmoo',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: ReviewDecision.reviewRequired,
+        requestedReviewers: const [],
+        activeReviewers: const ['harryterkelsen'],
+        totalReviewThreads: 4,
+        unresolvedReviewThreads: 0,
+        lastAuthorCommentAt: DateTime.parse('2026-09-23T20:10:00Z'),
+        lastReviewerActivityAt: DateTime.parse('2026-09-23T18:00:00Z'),
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.clean,
+        isInMergeQueue: false,
+        headRefName: 'clean-suite-runner',
+        headRefOid: 'abcdef1234567890',
+        baseRefName: 'master',
+        repository: 'flutter/flutter',
+        repoUrl: 'https://github.com/flutter/flutter',
+        isRepoArchived: false,
+        ciStatus: CiStatus.success,
+        updatedAt: DateTime.parse('2026-09-23T20:10:00Z'),
+      );
+
+      check(pr.unrequestedActiveReviewers).deepEquals(['harryterkelsen']);
+      check(pr.needsReviewReRequest).isTrue();
+      final categorized = categorizePullRequests([pr]);
+      check(categorized.actionNeeded.map((p) => p.number)).deepEquals([193187]);
+
+      final md = renderMarkdownReport([pr], currentTime: now);
+      check(md).contains('🔄 **Re-request Review** (@harryterkelsen)');
+      check(md).contains(
+        'Review:&nbsp;🟠&nbsp;Re-request&nbsp;Review&nbsp;(@harryterkelsen)',
       );
     });
 

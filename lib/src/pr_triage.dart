@@ -5,6 +5,7 @@ import 'package:args/args.dart';
 import 'package:io/io.dart';
 
 import 'pr_triage/github_cli.dart';
+import 'shared/graphql_utils.dart' show isBotLogin;
 import 'testable_print.dart';
 
 export 'pr_triage/github_cli.dart';
@@ -160,8 +161,8 @@ typedef TriageData = ({
 });
 
 const _prViewFields =
-    'number,title,state,reviewDecision,mergeable,mergeStateStatus,'
-    'baseRefName,headRefName,headRefOid,url';
+    'number,title,state,author,reviewDecision,reviewRequests,mergeable,'
+    'mergeStateStatus,baseRefName,headRefName,headRefOid,url';
 
 Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
   PrContext context,
@@ -211,6 +212,24 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
   final generalComments = graphData.comments
       .where((c) => c.body.trim().isNotEmpty)
       .toList();
+
+  final prAuthor = switch (prData['author']) {
+    {'login': final String login} => login,
+    final String login => login,
+    _ => '',
+  };
+  final humanReviewers = <String>{
+    for (final r in graphData.reviews)
+      if (r.author.isNotEmpty && r.author != prAuthor && !isBotLogin(r.author))
+        r.author,
+    for (final t in graphData.reviewThreads)
+      for (final c in t.comments)
+        if (c.author.isNotEmpty &&
+            c.author != prAuthor &&
+            !isBotLogin(c.author))
+          c.author,
+  };
+  prData['humanReviewers'] = humanReviewers.toList();
 
   print('Fetching check runs...');
   final checks = await fetchPrChecks(context);
@@ -279,6 +298,56 @@ String _formatMergeableBadge(
         : '`${prData['mergeable']}`',
 };
 
+({List<String> requested, List<String> unrequestedHumans})
+_extractTriageReviewerQueue(TriageData data) {
+  final prData = data.prData;
+  if (!prData.containsKey('reviewRequests') &&
+      !prData.containsKey('humanReviewers')) {
+    return (requested: const [], unrequestedHumans: const []);
+  }
+
+  final prAuthor = switch (prData['author']) {
+    {'login': final String login} => login,
+    final String login => login,
+    _ => '',
+  };
+
+  final requested = <String>[];
+  final rawRequests = prData['reviewRequests'];
+  if (rawRequests is List) {
+    for (final item in rawRequests) {
+      final id = switch (item) {
+        final String s => s,
+        {'login': final String s} => s,
+        {'slug': final String s} => s,
+        {'name': final String s} => s,
+        _ => null,
+      };
+      if (id != null && id.isNotEmpty) requested.add(id);
+    }
+  }
+
+  final humanReviewers = <String>{
+    if (prData['humanReviewers'] case final List<dynamic> list)
+      ...list.map((e) => e.toString()),
+    for (final r in data.reviewComments)
+      if (r.author.isNotEmpty && r.author != prAuthor && !isBotLogin(r.author))
+        r.author,
+    for (final t in data.unresolvedThreads)
+      for (final c in t.comments)
+        if (c.author.isNotEmpty &&
+            c.author != prAuthor &&
+            !isBotLogin(c.author))
+          c.author,
+  };
+
+  final isApproved = prData['reviewDecision']?.toString() == 'APPROVED';
+  final unrequestedHumans = isApproved
+      ? const <String>[]
+      : humanReviewers.where((r) => !requested.contains(r)).toList();
+  return (requested: requested, unrequestedHumans: unrequestedHumans);
+}
+
 String buildTriageReport(
   TriageData data, {
   PrConflictAnalysis? conflictAnalysis,
@@ -286,6 +355,7 @@ String buildTriageReport(
   final prData = data.prData;
   final syncStatus = data.syncStatus;
   final conflict = conflictAnalysis ?? _defaultConflictAnalysis(prData);
+  final reviewerQueue = _extractTriageReviewerQueue(data);
   final syncWarningBlock = syncStatus.warning != null
       ? '> [!WARNING]\n> ${syncStatus.warning}\n\n'
       : '';
@@ -297,10 +367,33 @@ String buildTriageReport(
             '${conflict.mergeStateStatus}`) and cannot be merged until '
             'resolved.\n\n'
       : '';
+  final unrequested = reviewerQueue.unrequestedHumans;
+  final reviewerQueueWarningBlock = unrequested.isNotEmpty
+      ? '> [!IMPORTANT]\n'
+            '> **Reviewer Dropped from Queue**: '
+            '${unrequested.map((r) => '@$r').join(', ')} previously reviewed '
+            'this PR and ${unrequested.length == 1 ? 'was' : 'were'} removed '
+            'from `reviewRequests`. Posting a comment (`PTAL`) will NOT put '
+            'this PR back into their GitHub Review Queue '
+            '(`review-requested:@me`). After pushing fixes and resolving '
+            'threads, re-request review via:\n'
+            '> `gh pr edit ${prData['number']} --add-reviewer '
+            '${unrequested.join(',')}`\n\n'
+      : '';
   final localCommit = syncStatus.localHeadSha.isEmpty
       ? 'N/A'
       : syncStatus.localHeadSha;
   final mergeableBadge = _formatMergeableBadge(conflict, prData);
+  final requestedLabel = reviewerQueue.requested.isEmpty
+      ? 'None (`[]`)'
+      : reviewerQueue.requested.map((r) => '@$r').join(', ');
+  final missingSuffix = unrequested.isNotEmpty
+      ? ' ⚠️ (Missing active reviewer: '
+            '${unrequested.map((r) => '@$r').join(', ')})'
+      : '';
+  final reviewRequestsLine = prData.containsKey('reviewRequests')
+      ? '**Review Requests**: $requestedLabel$missingSuffix\n'
+      : '';
 
   final report = StringBuffer('''
 # PR Triage Report: #${prData['number']} - ${prData['title']}
@@ -311,9 +404,9 @@ String buildTriageReport(
 **Local Commit**: `$localCommit`
 **Sync Status**: `${syncStatus.syncState}`${syncStatus.isSynced ? ' ✅' : ' ⚠️'}
 **Review Decision**: `${prData['reviewDecision']}`
-**Mergeable**: $mergeableBadge
+$reviewRequestsLine**Mergeable**: $mergeableBadge
 
-$syncWarningBlock$conflictWarningBlock''');
+$syncWarningBlock$conflictWarningBlock$reviewerQueueWarningBlock''');
 
   if (conflict.isConflicting) {
     _writeMergeConflictsSection(report, conflict);

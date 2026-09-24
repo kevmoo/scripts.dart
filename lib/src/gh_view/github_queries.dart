@@ -43,7 +43,7 @@ query($q: String!, $limit: Int!, $cursor: String) {
             isResolved
           }
         }
-        reviews(last: 10) {
+        reviews(last: 25) {
           nodes {
             author {
               login

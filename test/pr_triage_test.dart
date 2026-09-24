@@ -443,6 +443,53 @@ void _registerTriageReportTests() {
       },
     );
 
+    test('buildTriageReport warns when human reviewers were dropped from '
+        'reviewRequests', () {
+      final data = (
+        prData: <String, dynamic>{
+          'number': 193187,
+          'title': 'Clean up suite runner',
+          'url': 'https://github.com/flutter/flutter/pull/193187',
+          'author': {'login': 'kevmoo'},
+          'headRefName': 'clean-suite-runner',
+          'headRefOid': 'abc1234',
+          'reviewDecision': 'REVIEW_REQUIRED',
+          'reviewRequests': const <Object>[],
+          'humanReviewers': const ['harryterkelsen'],
+          'mergeable': 'MERGEABLE',
+        },
+        syncStatus: (
+          localBranch: 'clean-suite-runner',
+          remoteBranch: 'clean-suite-runner',
+          localHeadSha: 'abc1234',
+          remoteHeadSha: 'abc1234',
+          isSynced: true,
+          syncState: 'in_sync',
+          warning: null,
+        ),
+        unresolvedThreads: const <PrReviewThread>[],
+        reviewComments: const <PrReview>[],
+        generalComments: const <PrComment>[],
+        failedChecks: const <PrCheckRun>[],
+        pendingChecks: const <PrCheckRun>[],
+        checkLogs: const <String, String>{},
+      );
+
+      final report = buildTriageReport(data);
+      expect(
+        report,
+        contains(
+          '**Review Requests**: None (`[]`) ⚠️ '
+          '(Missing active reviewer: @harryterkelsen)',
+        ),
+      );
+      expect(report, contains('**Reviewer Dropped from Queue**'));
+      expect(
+        report,
+        contains('gh pr edit 193187 --add-reviewer harryterkelsen'),
+      );
+    });
+
     test(
       'buildTriageReport and parseMergeTreeConflictOutput surface conflicts',
       () {
