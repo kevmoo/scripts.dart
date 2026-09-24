@@ -59,12 +59,14 @@ doing any work:
    a **Pull Request**?
 2. **Target Repository**: Which exact GitHub repository (`owner/repo`)?
 
-> [!IMPORTANT] **STOP. DON'T GUESS.** If the user's intent is ambiguous (e.g.
-> _"create a post for this"_ without specifying Issue vs. PR), or if the target
-> repository cannot be deterministically resolved from the current git checkout,
-> or if multiple remotes/forks exist: **The agent MUST STOP and explicitly ask
-> the user for clarification** using `ask_question` or chat before proceeding.
-> Never guess or fabricate targets.
+> [!IMPORTANT]
+>
+> **STOP. DON'T GUESS.** If the user's intent is ambiguous (e.g. _"create a post
+> for this"_ without specifying Issue vs. PR), or if the target repository
+> cannot be deterministically resolved from the current git checkout, or if
+> multiple remotes/forks exist: **The agent MUST STOP and explicitly ask the
+> user for clarification** using `ask_question` or chat before proceeding. Never
+> guess or fabricate targets.
 
 ---
 
@@ -191,8 +193,6 @@ Use concise, imperative titles (≤70 characters):
   `fix(scope): ...`, `refactor(scope): ...`) unless the repository explicitly
   mandates an alternative format.
 
-<!-- mdformat off(prevent table wrapping) -->
-
 | Post Type   | Format Pattern                      | High-Signal Example                                               | Slop Example to Avoid                            |
 | :---------- | :---------------------------------- | :---------------------------------------------------------------- | :----------------------------------------------- |
 | **Bug**     | `[subsystem] Failure on condition`  | `[analyzer] Crash with NullPointer when config.json is empty`     | `Bug in analyzer` or `[CRITICAL] System failure` |
@@ -200,8 +200,6 @@ Use concise, imperative titles (≤70 characters):
 | **Feature** | `[subsystem] Imperative capability` | `[auth] Support PKCE flow in OAuth2 authentication client`        | `Feature request: make authentication better`    |
 | **Feature** | `request: Imperative capability`    | `request: avoid cascading releases when constraints allow update` | `Feature idea for melos`                         |
 | **PR**      | `type(scope): imperative summary`   | `feat(orient): add remote repo support and bot filter`            | `Updates and fixes`                              |
-
-<!-- mdformat on -->
 
 ---
 
@@ -276,8 +274,6 @@ issue body is rendered as sequential H3 markdown sections matching each form
 element's `label:` attribute. Map conceptual anti-slop sections to the form's
 specific fields:
 
-<!-- mdformat off(prevent table wrapping) -->
-
 | Conceptual Section     | Common YAML Field IDs               | Rendered Form Heading                                   |
 | :--------------------- | :---------------------------------- | :------------------------------------------------------ |
 | **Trigger Command**    | `command`, `repro_command`          | `### Command`                                           |
@@ -285,5 +281,3 @@ specific fields:
 | **Reasoning / Impact** | `reasoning`, `motivation`           | `### Reasoning`                                         |
 | **Proposed Solution**  | `solution`, `proposal`, `idea`      | `### Proposed Solution`                                 |
 | **Additional Context** | `additional_context`, `comments`    | `### Additional Context` (put Acceptance Criteria here) |
-
-<!-- mdformat on -->

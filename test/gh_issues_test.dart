@@ -183,8 +183,7 @@ void main() {
       check(output).contains(
         '🟣 [other-org/other-repo#55](https://github.com/other-org/other-repo/pull/55)',
       );
-      check(output).contains('<!-- mdformat off(prevent table wrapping) -->');
-      check(output).contains('<!-- mdformat on -->');
+      check(output).not((it) => it.contains('<!-- mdformat'));
     });
   });
 

@@ -51,7 +51,6 @@ class RepoAlignRunner {
   }
 
   void _printSummaryTable(List<RepoAlignmentStatus> activeResults) {
-    print('<!-- mdformat off(prevent table wrapping) -->');
     print(
       '| Repository | Kind | Strict Mode | Lower Bound | CogComp | '
       'Autosubmit | Dependabot | Auto-Merge | Status |',
@@ -76,7 +75,7 @@ class RepoAlignRunner {
           '$ccIcon | $asIcon | $dbIcon | $amIcon | $status |';
       print(line);
     }
-    print('<!-- mdformat on -->\n');
+    print('');
   }
 
   String _strictModeIcon(RepoAlignmentStatus r) {

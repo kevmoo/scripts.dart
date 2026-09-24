@@ -459,7 +459,6 @@ String renderMarkdownReport(
   buffer
     ..writeln('# 📋 Open Assigned Issues')
     ..writeln()
-    ..writeln('<!-- mdformat off(prevent table wrapping) -->')
     ..writeln('| Metric | Count | Description |')
     ..writeln('| :--- | :---: | :--- |')
     ..writeln(
@@ -474,7 +473,6 @@ String renderMarkdownReport(
       '| ⏳ **Updated < 7 Days** | **${summary.recent}** | '
       'Issues updated within the last week |',
     )
-    ..writeln('<!-- mdformat on -->')
     ..writeln();
 
   if (issues.isEmpty) {
@@ -485,7 +483,6 @@ String renderMarkdownReport(
   buffer
     ..writeln('### 📋 Issues Breakdown')
     ..writeln()
-    ..writeln('<!-- mdformat off(prevent table wrapping) -->')
     ..writeln(
       '| Issue & Repository | Title | Labels | Last Updated | Linked PR(s) |',
     )
@@ -510,7 +507,6 @@ String renderMarkdownReport(
   }
 
   buffer
-    ..writeln('<!-- mdformat on -->')
     ..writeln()
     ..writeln('*PR Legend: 🟢 Open | 🟣 Merged | 🔴 Closed*');
 

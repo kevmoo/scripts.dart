@@ -24,7 +24,6 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
     ..writeln()
     ..writeln('## 📊 High-Level Summary')
     ..writeln()
-    ..writeln('<!-- mdformat off(prevent table wrapping) -->')
     ..writeln('| Metric | Count | Status Description |')
     ..writeln('| :--- | :---: | :--- |')
     ..writeln(
@@ -51,7 +50,6 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
       '| 📦 **Archived Repositories** | **${categorized.archived.length}** | '
       'Pull requests in archived/read-only repositories |',
     )
-    ..writeln('<!-- mdformat on -->')
     ..writeln();
 
   if (prs.isEmpty) {
@@ -110,7 +108,6 @@ void _writeMarkdownSection(
 }) {
   if (prs.isEmpty) return;
   const tableHeader = '''
-<!-- mdformat off(prevent table wrapping) -->
 | PR & Repository | Branch & Local Mapping | Review & CI Status | Last Touched | Action / Ping Status |
 | :--- | :--- | :--- | :--- | :--- |''';
 
@@ -121,9 +118,7 @@ void _writeMarkdownSection(
   for (final pr in prs) {
     _writeMarkdownPrRow(buffer, pr, now);
   }
-  buffer
-    ..writeln('<!-- mdformat on -->')
-    ..writeln();
+  buffer.writeln();
 }
 
 void _writeMarkdownPrRow(StringBuffer buffer, GhPr pr, DateTime now) {

@@ -422,6 +422,7 @@ String _extractRepoFlag(Map<String, dynamic> prData) {
   final warningBlock = unrequested.isEmpty
       ? ''
       : '> [!IMPORTANT]\n'
+            '>\n'
             '> **Reviewer Dropped from Queue**: $unrequestedMentions '
             'previously reviewed this PR and '
             '${unrequested.length == 1 ? 'was' : 'were'} removed from '
@@ -459,10 +460,11 @@ String buildTriageReport(
     prData,
   );
   final syncWarningBlock = syncStatus.warning != null
-      ? '> [!WARNING]\n> ${syncStatus.warning}\n\n'
+      ? '> [!WARNING]\n>\n> ${syncStatus.warning}\n\n'
       : '';
   final conflictWarningBlock = conflict.isConflicting
       ? '> [!WARNING]\n'
+            '>\n'
             '> **MERGE CONFLICT BLOCKER**: This PR has merge conflicts with '
             '`origin/${conflict.baseRefName}` (`mergeable: '
             '${conflict.mergeable}`, `mergeStateStatus: '
