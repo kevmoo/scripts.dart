@@ -75,6 +75,7 @@ class GhPr extends GhPrRef {
   final ReviewDecision reviewDecision;
   final List<String> requestedReviewers;
   final List<String> activeReviewers;
+  final List<String> approvedReviewers;
   final int totalReviewThreads;
   final int unresolvedReviewThreads;
   final DateTime? lastAuthorCommentAt;
@@ -98,6 +99,7 @@ class GhPr extends GhPrRef {
     required this.reviewDecision,
     required this.requestedReviewers,
     this.activeReviewers = const [],
+    this.approvedReviewers = const [],
     required this.totalReviewThreads,
     required this.unresolvedReviewThreads,
     this.lastAuthorCommentAt,
@@ -142,6 +144,32 @@ extension GhPrStatus on GhPr {
   /// include CODEOWNERS teams).
   List<String> get targetReviewers =>
       activeReviewers.isNotEmpty ? activeReviewers : requestedReviewers;
+
+  /// Active human reviewers who are NOT currently in [requestedReviewers]
+  /// (`reviewRequests`) and have NOT already approved the PR
+  /// ([approvedReviewers]).
+  ///
+  /// When a reviewer submits a non-approving review (`COMMENTED`,
+  /// `CHANGES_REQUESTED`, or an `APPROVED` review later `DISMISSED`), GitHub
+  /// removes them from `reviewRequests`, dropping the PR from their GitHub
+  /// Review Queue (`review-requested:@me`) until re-requested via
+  /// `gh pr edit --add-reviewer`.
+  List<String> get unrequestedActiveReviewers => activeReviewers
+      .where(
+        (r) =>
+            !requestedReviewers.contains(r) && !approvedReviewers.contains(r),
+      )
+      .toList();
+
+  /// True when the PR is open, not a draft, not approved, has no unresolved
+  /// review threads, and at least one active human reviewer has been dropped
+  /// from [requestedReviewers].
+  bool get needsReviewReRequest =>
+      !isRepoArchived &&
+      !isDraft &&
+      !isApproved &&
+      unresolvedReviewThreads == 0 &&
+      unrequestedActiveReviewers.isNotEmpty;
 
   /// True when the PR author has posted a top-level comment more recently than
   /// the latest reviewer activity.
@@ -264,11 +292,13 @@ bool isReadyToMerge(GhPr pr) {
 bool _isActionNeeded(GhPr pr) {
   final isChangesRequested =
       pr.reviewDecision == ReviewDecision.changesRequested &&
-      pr.requestedReviewers.isEmpty;
+      (pr.requestedReviewers.isEmpty ||
+          pr.unrequestedActiveReviewers.isNotEmpty);
   final isCiFailure =
       pr.ciStatus == CiStatus.failure || pr.ciStatus == CiStatus.actionRequired;
   final isConflicting = pr.mergeable == MergeableState.conflicting;
   return isChangesRequested ||
+      pr.needsReviewReRequest ||
       isCiFailure ||
       isConflicting ||
       pr.isBlockedByProtection;

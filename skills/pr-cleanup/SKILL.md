@@ -112,7 +112,14 @@ sweeps) divided into 3 buckets:
   Worktrees)**:
   - List open PRs from `kscripts gh-view` and active Gerrit CLs from
     `kscripts gerrit-view` with their CI status, reviewer state (`⏳ Awaiting`
-    vs `🔔 Ping Reviewer` vs `❌ Action Needed`), and local worktree mapping.
+    vs `🔔 Ping Reviewer` vs `🔄 Re-request Review` vs `❌ Action Needed`), and
+    local worktree mapping.
+  - When `kscripts gh-view` flags `🔄 **Re-request Review** (@reviewer)`, that
+    human reviewer previously submitted a review (`COMMENTED`,
+    `CHANGES_REQUESTED`, or `DISMISSED`) and was dropped from GitHub's
+    `reviewRequests`. Even if an `@reviewer PTAL` comment was posted, the PR is
+    not in their GitHub Review Queue (`review-requested:@me`) until re-requested
+    via `gh pr edit <PR> -R <owner/repo> --add-reviewer <login>`.
 - **Bucket B — `✅ Safe to Prune Immediately` (Merged PRs/CLs & Clean
   Worktrees)**:
   - Clean worktrees (`git worktree remove`), merged local feature branches
@@ -147,9 +154,10 @@ Once approved:
      `git -C <parent_repo> branch -D <branch>`.
 3. **Message Waiting Sister Sessions (`agentapi send-message`)**:
    - Do **not** directly mark a waiting sister session `--done` from the
-     `pr-cleanup` orchestrator. Instead, send a message
-     (`agentapi send-message --title="PR Landed & Cleaned Up" <conversation_id> "..."`)
-     informing the sister session that its PR landed and its local/remote
-     worktree and branch were pruned, and instructing that session to
-     double-check any needed follow-up, documentation/memory updates, or PM-OS
-     tasks (`pm-work complete`) and then mark itself `--done`.
+     `pr-cleanup` orchestrator. Instead, send a message using
+     `env -u ANTIGRAVITY_PROJECT_ID agentapi send-message --title="PR Landed & Cleaned Up" <conversation_id> "..."`
+     (unsetting `ANTIGRAVITY_PROJECT_ID` avoids `project_id mismatch` across
+     different workspaces), informing the sister session that its PR landed and
+     its local/remote worktree and branch were pruned, and instructing that
+     session to double-check any needed follow-up, documentation/memory updates,
+     or PM-OS tasks (`pm-work complete`) and then mark itself `--done`.

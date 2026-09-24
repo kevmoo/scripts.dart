@@ -43,7 +43,7 @@ query($q: String!, $limit: Int!, $cursor: String) {
             isResolved
           }
         }
-        reviews(last: 10) {
+        reviews(last: 25) {
           nodes {
             author {
               login
@@ -194,6 +194,11 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     isAlreadyPinged: isAlreadyPinged,
   );
 
+  final approvedReviewers = _extractApprovedReviewers(
+    node['reviews'] as Map<String, dynamic>?,
+    prAuthor,
+  );
+
   final threads = _extractReviewThreads(
     node['reviewThreads'] as Map<String, dynamic>?,
   );
@@ -214,6 +219,7 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     ),
     requestedReviewers: requested.allReviewers,
     activeReviewers: activeReviewers,
+    approvedReviewers: approvedReviewers,
     totalReviewThreads: threads.total,
     unresolvedReviewThreads: threads.unresolved,
     lastAuthorCommentAt: lastAuthorCommentAt,
@@ -341,6 +347,26 @@ List<String> _extractMentionedUsers(String body, String prAuthor) {
 
 final _mentionRegex = RegExp('@([a-zA-Z0-9-]+)');
 
+List<String> _extractApprovedReviewers(
+  Map<String, dynamic>? reviewsObj,
+  String prAuthor,
+) {
+  final latestStateByReviewer = <String, String>{};
+  final nodes = reviewsObj?['nodes'] as List<dynamic>? ?? const [];
+  for (final item in nodes.whereType<Map<String, dynamic>>()) {
+    final login = _extractNodeLogin(item);
+    if (!_isHumanReviewer(login, prAuthor)) continue;
+    final state = item['state'] as String? ?? '';
+    if (state.isNotEmpty) {
+      latestStateByReviewer[login!] = state;
+    }
+  }
+  return latestStateByReviewer.entries
+      .where((e) => e.value == 'APPROVED')
+      .map((e) => e.key)
+      .toList();
+}
+
 List<String> _resolveActiveReviewers({
   required List<String> humanRequested,
   required List<String> humanParticipants,
@@ -348,7 +374,11 @@ List<String> _resolveActiveReviewers({
   required bool isAlreadyPinged,
 }) {
   if (isAlreadyPinged && mentionedUsers.isNotEmpty) {
-    return {...mentionedUsers, ...humanRequested}.toList();
+    return {
+      ...mentionedUsers,
+      ...humanRequested,
+      ...humanParticipants,
+    }.toList();
   }
   return {...humanRequested, ...humanParticipants}.toList();
 }

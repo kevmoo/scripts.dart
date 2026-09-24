@@ -5,6 +5,7 @@ import 'package:args/args.dart';
 import 'package:io/io.dart';
 
 import 'pr_triage/github_cli.dart';
+import 'shared/graphql_utils.dart' show isBotLogin;
 import 'testable_print.dart';
 
 export 'pr_triage/github_cli.dart';
@@ -160,8 +161,8 @@ typedef TriageData = ({
 });
 
 const _prViewFields =
-    'number,title,state,reviewDecision,mergeable,mergeStateStatus,'
-    'baseRefName,headRefName,headRefOid,url';
+    'number,title,state,author,reviewDecision,reviewRequests,mergeable,'
+    'mergeStateStatus,baseRefName,headRefName,headRefOid,url';
 
 Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
   PrContext context,
@@ -212,6 +213,12 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
       .where((c) => c.body.trim().isNotEmpty)
       .toList();
 
+  final prAuthor = _extractPrAuthorLogin(prData);
+  prData['humanReviewers'] = _collectHumanReviewersFromGraphData(
+    graphData,
+    prAuthor,
+  );
+
   print('Fetching check runs...');
   final checks = await fetchPrChecks(context);
   final failedChecks = checks.where((c) => c.isFail).toList();
@@ -233,6 +240,51 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
     ),
     conflictAnalysis,
   );
+}
+
+String _extractPrAuthorLogin(Map<String, dynamic> prData) =>
+    switch (prData['author']) {
+      {'login': final String login} => login,
+      final String login => login,
+      _ => '',
+    };
+
+bool _isNonAuthorHumanReviewer(String login, String prAuthor) =>
+    login.isNotEmpty && login != prAuthor && !isBotLogin(login);
+
+Set<String> _collectApprovedReviewers(
+  Iterable<PrReview> reviews,
+  String prAuthor,
+) {
+  final latestStateByReviewer = <String, String>{};
+  for (final review in reviews) {
+    if (!_isNonAuthorHumanReviewer(review.author, prAuthor)) continue;
+    if (review.state.isNotEmpty) {
+      latestStateByReviewer[review.author] = review.state;
+    }
+  }
+  return latestStateByReviewer.entries
+      .where((e) => e.value == 'APPROVED')
+      .map((e) => e.key)
+      .toSet();
+}
+
+List<String> _collectHumanReviewersFromGraphData(
+  PrGraphData graphData,
+  String prAuthor,
+) {
+  final approved = _collectApprovedReviewers(graphData.reviews, prAuthor);
+  final authors = <String>{
+    ...graphData.reviews.map((r) => r.author),
+    ...graphData.reviewThreads.expand((t) => t.comments.map((c) => c.author)),
+  };
+  return authors
+      .where(
+        (login) =>
+            _isNonAuthorHumanReviewer(login, prAuthor) &&
+            !approved.contains(login),
+      )
+      .toList();
 }
 
 Future<Map<String, String>> _fetchFailedCheckLogs(
@@ -285,6 +337,104 @@ String _formatMergeableBadge(
         : '`${prData['mergeable']}`',
 };
 
+String? _extractRequestId(Object? item) => switch (item) {
+  final String s => s,
+  {'login': final String s} => s,
+  {'slug': final String s} => s,
+  {'name': final String s} => s,
+  _ => null,
+};
+
+List<String> _parseRequestedReviewerIds(Object? rawRequests) {
+  if (rawRequests is! List) return const [];
+  return rawRequests
+      .map(_extractRequestId)
+      .whereType<String>()
+      .where((s) => s.isNotEmpty)
+      .toList();
+}
+
+Set<String> _collectTriageHumanReviewers(TriageData data, String prAuthor) {
+  final explicitList = _prDataList(data.prData['humanReviewers']);
+  final approved = _collectApprovedReviewers(data.reviewComments, prAuthor);
+  final candidateAuthors = <String>{
+    ...explicitList,
+    ...data.reviewComments.map((r) => r.author),
+    ...data.unresolvedThreads.expand((t) => t.comments.map((c) => c.author)),
+  };
+  return candidateAuthors
+      .where(
+        (login) =>
+            _isNonAuthorHumanReviewer(login, prAuthor) &&
+            !approved.contains(login),
+      )
+      .toSet();
+}
+
+List<String> _prDataList(Object? value) =>
+    value is List ? value.map((e) => e.toString()).toList() : const [];
+
+({List<String> requested, List<String> unrequestedHumans})
+_extractTriageReviewerQueue(TriageData data) {
+  final prData = data.prData;
+  if (!prData.containsKey('reviewRequests') &&
+      !prData.containsKey('humanReviewers')) {
+    return (requested: const [], unrequestedHumans: const []);
+  }
+
+  final prAuthor = _extractPrAuthorLogin(prData);
+  final requested = _parseRequestedReviewerIds(prData['reviewRequests']);
+  final humanReviewers = _collectTriageHumanReviewers(data, prAuthor);
+  final isApproved = prData['reviewDecision']?.toString() == 'APPROVED';
+  final unrequestedHumans = isApproved
+      ? const <String>[]
+      : humanReviewers.where((r) => !requested.contains(r)).toList();
+  return (requested: requested, unrequestedHumans: unrequestedHumans);
+}
+
+final _prUrlRepoRegex = RegExp(r'github\.com/([^/]+/[^/]+)/pull/\d+');
+
+String _extractRepoFlag(Map<String, dynamic> prData) {
+  final url = prData['url']?.toString() ?? '';
+  final match = _prUrlRepoRegex.firstMatch(url);
+  return match != null ? ' -R ${match.group(1)}' : '';
+}
+
+({String line, String warningBlock}) _formatReviewerQueueSection(
+  ({List<String> requested, List<String> unrequestedHumans}) queue,
+  Map<String, dynamic> prData,
+) {
+  final unrequested = queue.unrequestedHumans;
+  final unrequestedMentions = unrequested.map((r) => '@$r').join(', ');
+  final repoFlag = _extractRepoFlag(prData);
+  final warningBlock = unrequested.isEmpty
+      ? ''
+      : '> [!IMPORTANT]\n'
+            '> **Reviewer Dropped from Queue**: $unrequestedMentions '
+            'previously reviewed this PR and '
+            '${unrequested.length == 1 ? 'was' : 'were'} removed from '
+            '`reviewRequests`. Posting a comment (`PTAL`) will NOT put this '
+            'PR back into their GitHub Review Queue (`review-requested:@me`). '
+            'After pushing fixes and resolving threads, re-request review '
+            'via:\n'
+            '> `gh pr edit ${prData['number']}$repoFlag --add-reviewer '
+            '${unrequested.join(',')}`\n\n';
+
+  if (!prData.containsKey('reviewRequests')) {
+    return (line: '', warningBlock: warningBlock);
+  }
+  final requestedLabel = queue.requested.isEmpty
+      ? 'None (`[]`)'
+      : queue.requested.map((r) => '@$r').join(', ');
+  final missingSuffix = unrequested.isEmpty
+      ? ''
+      : ' ⚠️ (Missing active reviewer: $unrequestedMentions)';
+  return (
+    line: '**Review Requests**: $requestedLabel$missingSuffix\n',
+    warningBlock: warningBlock,
+  );
+}
+
 String buildTriageReport(
   TriageData data, {
   PrConflictAnalysis? conflictAnalysis,
@@ -292,6 +442,10 @@ String buildTriageReport(
   final prData = data.prData;
   final syncStatus = data.syncStatus;
   final conflict = conflictAnalysis ?? _defaultConflictAnalysis(prData);
+  final queueSection = _formatReviewerQueueSection(
+    _extractTriageReviewerQueue(data),
+    prData,
+  );
   final syncWarningBlock = syncStatus.warning != null
       ? '> [!WARNING]\n> ${syncStatus.warning}\n\n'
       : '';
@@ -307,6 +461,8 @@ String buildTriageReport(
       ? 'N/A'
       : syncStatus.localHeadSha;
   final mergeableBadge = _formatMergeableBadge(conflict, prData);
+  final reviewRequestsLine = queueSection.line;
+  final reviewerQueueWarningBlock = queueSection.warningBlock;
 
   final report = StringBuffer('''
 # PR Triage Report: #${prData['number']} - ${prData['title']}
@@ -317,9 +473,9 @@ String buildTriageReport(
 **Local Commit**: `$localCommit`
 **Sync Status**: `${syncStatus.syncState}`${syncStatus.isSynced ? ' ✅' : ' ⚠️'}
 **Review Decision**: `${prData['reviewDecision']}`
-**Mergeable**: $mergeableBadge
+$reviewRequestsLine**Mergeable**: $mergeableBadge
 
-$syncWarningBlock$conflictWarningBlock''');
+$syncWarningBlock$conflictWarningBlock$reviewerQueueWarningBlock''');
 
   if (conflict.isConflicting) {
     _writeMergeConflictsSection(report, conflict);
