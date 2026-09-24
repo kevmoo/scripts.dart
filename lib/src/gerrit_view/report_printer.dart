@@ -238,6 +238,8 @@ void _printClosedClBranch(
   Map<String, String> worktreeBranches,
 ) {
   final safety = checkCleanupSafety(actualRepoRoot, branch, defaultBranch);
+  final gerritRemote = resolveGerritRemoteName(actualRepoRoot);
+  final baseRef = '$gerritRemote/$defaultBranch';
   final String safetyStatus;
   final String actionText;
   final worktreePath = worktreeBranches[branch];
@@ -250,7 +252,7 @@ void _printClosedClBranch(
         '    Archive:    git config --unset branch.$branch.gerritissue';
   } else if (safety.isSafe) {
     safetyStatus = green.wrap(
-      '✅ Safe to delete (All changes exist in origin/$defaultBranch)',
+      '✅ Safe to delete (All changes exist in $baseRef)',
     )!;
     if (worktreePath != null) {
       actionText =
@@ -262,17 +264,17 @@ void _printClosedClBranch(
   } else {
     final count = safety.unmergedShas.length;
     safetyStatus = red.wrap(
-      '⚠️  Warning: Has $count unmerged commit(s) not in origin/$defaultBranch!',
+      '⚠️  Warning: Has $count unmerged commit(s) not in $baseRef!',
     )!;
     if (worktreePath != null) {
       actionText =
-          '    Inspect:    git diff origin/$defaultBranch..$branch\n'
+          '    Inspect:    git diff $baseRef..$branch\n'
           '    Run:        git worktree remove $worktreePath --force '
           '&& git branch -D $branch\n'
           '    Archive:    git config --unset branch.$branch.gerritissue';
     } else {
       actionText =
-          '    Inspect:    git diff origin/$defaultBranch..$branch\n'
+          '    Inspect:    git diff $baseRef..$branch\n'
           '    Run:        git branch -D $branch (Force discard)\n'
           '    Archive:    git config --unset branch.$branch.gerritissue';
     }

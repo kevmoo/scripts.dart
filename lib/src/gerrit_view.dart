@@ -138,9 +138,10 @@ CleanupSafety checkCleanupSafety(
   String branchName,
   String defaultBranch,
 ) {
+  final gerritRemote = resolveGerritRemoteName(repoPath);
   final result = Process.runSync('git', [
     'cherry',
-    'origin/$defaultBranch',
+    '$gerritRemote/$defaultBranch',
     branchName,
   ], workingDirectory: repoPath);
 
@@ -240,7 +241,7 @@ String? _getGitConfig(String key, String repoPath) {
   return null;
 }
 
-String _resolveGerritRemoteName(String actualRepoRoot) {
+String resolveGerritRemoteName(String actualRepoRoot) {
   for (final remote in const ['upstream', 'dart-googlesource', 'origin']) {
     final url = _getGitConfig('remote.$remote.url', actualRepoRoot);
     if (url != null &&
@@ -271,7 +272,7 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
 }
 
 (String, String?)? _parseRemoteOrigin(String actualRepoRoot) {
-  final remoteName = _resolveGerritRemoteName(actualRepoRoot);
+  final remoteName = resolveGerritRemoteName(actualRepoRoot);
   final remoteUrl = _getGitConfig('remote.$remoteName.url', actualRepoRoot);
   if (remoteUrl == null) return null;
   if (remoteUrl.startsWith('sso://')) {
@@ -990,7 +991,7 @@ Future<void> runGerritView({String? gerritRepo}) async {
   );
 
   if (fetchRefs.isNotEmpty) {
-    final gerritRemote = _resolveGerritRemoteName(actualRepoRoot);
+    final gerritRemote = resolveGerritRemoteName(actualRepoRoot);
     print(
       styleDim.wrap('Fetching remote changes from Gerrit ($gerritRemote)...')!,
     );
