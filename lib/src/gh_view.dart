@@ -48,11 +48,23 @@ extension type const MergeStateStatus(String value) implements String {
 extension type const CiStatus(String value) implements String {
   static const success = CiStatus('SUCCESS');
   static const failure = CiStatus('FAILURE');
+  static const error = CiStatus('ERROR');
+  static const timedOut = CiStatus('TIMED_OUT');
+  static const cancelled = CiStatus('CANCELLED');
+  static const startupFailure = CiStatus('STARTUP_FAILURE');
   static const pending = CiStatus('PENDING');
   static const treeBroken = CiStatus('TREE_BROKEN');
+  static const actionRequired = CiStatus('ACTION_REQUIRED');
   static const none = CiStatus('NONE');
 
   bool get isPassing => this == success || this == treeBroken;
+
+  bool get isFailureConclusion =>
+      this == failure ||
+      this == error ||
+      this == timedOut ||
+      this == cancelled ||
+      this == startupFailure;
 }
 
 /// Representation of an open GitHub Pull Request.
@@ -253,7 +265,8 @@ bool _isActionNeeded(GhPr pr) {
   final isChangesRequested =
       pr.reviewDecision == ReviewDecision.changesRequested &&
       pr.requestedReviewers.isEmpty;
-  final isCiFailure = pr.ciStatus == CiStatus.failure;
+  final isCiFailure =
+      pr.ciStatus == CiStatus.failure || pr.ciStatus == CiStatus.actionRequired;
   final isConflicting = pr.mergeable == MergeableState.conflicting;
   return isChangesRequested ||
       isCiFailure ||
@@ -336,14 +349,37 @@ CiStatus extractCiStatus(String repository, Map<String, dynamic>? commits) {
   final statusRollup = commitObj?['statusCheckRollup'] as Map<String, dynamic>?;
   final rawState = statusRollup?['state'] as String? ?? CiStatus.none;
 
-  if (repository.toLowerCase() == 'flutter/flutter' &&
-      rawState == CiStatus.failure) {
-    if (_isFlutterTreeStatusOnlyFailure(statusRollup)) {
+  if (rawState == CiStatus.failure) {
+    if (repository.toLowerCase() == 'flutter/flutter' &&
+        _isFlutterTreeStatusOnlyFailure(statusRollup)) {
       return CiStatus.treeBroken;
+    }
+    if (_isActionRequiredOnlyFailure(statusRollup)) {
+      return CiStatus.actionRequired;
     }
   }
 
   return CiStatus(rawState);
+}
+
+bool _isActionRequiredOnlyFailure(Map<String, dynamic>? statusRollup) {
+  final contexts = statusRollup?['contexts'] as Map<String, dynamic>?;
+  final contextNodes = contexts?['nodes'] as List<dynamic>? ?? [];
+
+  var hasActionRequired = false;
+  var hasRealFailure = false;
+
+  for (final ctx in contextNodes.whereType<Map<String, dynamic>>()) {
+    final raw = (ctx['state'] ?? ctx['conclusion']) as String? ?? '';
+    final status = CiStatus(raw);
+    if (status == CiStatus.actionRequired) {
+      hasActionRequired = true;
+    } else if (status.isFailureConclusion) {
+      hasRealFailure = true;
+    }
+  }
+
+  return hasActionRequired && !hasRealFailure;
 }
 
 bool _isFlutterTreeStatusOnlyFailure(Map<String, dynamic>? statusRollup) {
@@ -370,7 +406,7 @@ enum _FlutterContextStatus { ok, treeStatusFailure, realFailure }
 _FlutterContextStatus _evaluateFlutterContext(Map<String, dynamic> ctx) =>
     switch (ctx['__typename']) {
       'StatusContext' => switch (ctx['state']) {
-        CiStatus.failure || 'ERROR' =>
+        CiStatus.failure || CiStatus.error =>
           ctx['context'] == 'tree-status'
               ? _FlutterContextStatus.treeStatusFailure
               : _FlutterContextStatus.realFailure,
@@ -378,8 +414,10 @@ _FlutterContextStatus _evaluateFlutterContext(Map<String, dynamic> ctx) =>
       },
       'CheckRun' => switch (ctx['conclusion']) {
         CiStatus.failure ||
-        'TIMED_OUT' ||
-        'CANCELLED' => _FlutterContextStatus.realFailure,
+        CiStatus.actionRequired ||
+        CiStatus.timedOut ||
+        CiStatus.cancelled ||
+        CiStatus.startupFailure => _FlutterContextStatus.realFailure,
         _ => _FlutterContextStatus.ok,
       },
       _ => _FlutterContextStatus.ok,

@@ -217,7 +217,8 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
   final failedChecks = checks.where((c) => c.isFail).toList();
   final pendingChecks = checks.where((c) => c.isPending).toList();
 
-  final checkLogs = await _fetchFailedCheckLogs(context, failedChecks);
+  final headSha = prData['headRefOid']?.toString() ?? '';
+  final checkLogs = await _fetchFailedCheckLogs(context, failedChecks, headSha);
 
   return (
     (
@@ -237,13 +238,18 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
 Future<Map<String, String>> _fetchFailedCheckLogs(
   PrContext context,
   List<PrCheckRun> failedChecks,
+  String headSha,
 ) async {
   final checkLogs = <String, String>{};
   for (final check in failedChecks) {
     final checkName = check.name;
     print('Fetching failed logs for check "$checkName"...');
     try {
-      final logOutput = await fetchFailedCheckLog(context, check);
+      final logOutput = await fetchFailedCheckLog(
+        context,
+        check,
+        headSha: headSha,
+      );
       checkLogs[checkName] = truncateLog(logOutput);
     } catch (e) {
       checkLogs[checkName] = 'Failed to fetch logs: $e';
@@ -493,8 +499,10 @@ void _writeFailedChecks(
   }
 
   for (final check in failedChecks) {
+    final icon = check.isActionRequired ? '⚠️' : '❌';
+    final suffix = check.isActionRequired ? ' (ACTION_REQUIRED)' : '';
     report.write('''
-### ❌ ${check.name}
+### $icon ${check.name}$suffix
 Link: ${check.link}
 
 ```text
