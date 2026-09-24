@@ -515,9 +515,10 @@ String _nextCqStatus(
   for (final m in messages) {
     if (m is! Map<String, dynamic>) continue;
     final date = (m['date'] as String? ?? '').split(' ').first;
-    final author = m['author'] as Map<String, dynamic>?;
+    final effectiveAuthor =
+        (m['real_author'] ?? m['author']) as Map<String, dynamic>?;
     if (ownerId != null &&
-        author?['_account_id'] == ownerId &&
+        effectiveAuthor?['_account_id'] == ownerId &&
         date.isNotEmpty) {
       lastAuthorTouch = date;
     }
@@ -748,9 +749,11 @@ final _branchIssueRegex = RegExp(r'^branch\.(.*)\.gerritissue$');
 
 Map<int, List<String>> _identifyConflatedBranches(
   Map<String, int> localBranchIssues,
+  Map<int, RemoteCL> remoteCLs,
 ) {
   final issueToBranches = <int, List<String>>{};
   for (final entry in localBranchIssues.entries) {
+    if (!remoteCLs.containsKey(entry.value)) continue;
     issueToBranches.putIfAbsent(entry.value, () => []).add(entry.key);
   }
 
@@ -782,7 +785,10 @@ _BranchAnalysis _buildBranchGroups(
       <String, (RemoteCL, CommitDetails, AlignmentResult)>{};
   final closedClBranches = <String, (int, CommitDetails, ClStatus)>{};
   final mismatchedChangeIdBranches = <String, (RemoteCL, CommitDetails)>{};
-  final conflatedBranches = _identifyConflatedBranches(localBranchIssues);
+  final conflatedBranches = _identifyConflatedBranches(
+    localBranchIssues,
+    remoteCLs,
+  );
 
   for (final branch in localBranchIssues.keys) {
     final issue = localBranchIssues[branch]!;
@@ -864,38 +870,72 @@ CommitDetails? _fetchCommitDetails(String repoPath, String branchName) {
   return null;
 }
 
-Map<int, ClStatus> _fetchRemoteCLStatuses(
+String? _buildClosedClQuery(List<int> clNumbers, Set<String> changeIds) {
+  final issueTerms = clNumbers.map((n) => 'change:$n').join('+OR+');
+  final cidTerms = changeIds.map((c) => 'change:$c').join('+OR+');
+  if (issueTerms.isNotEmpty && cidTerms.isNotEmpty) {
+    return '($issueTerms)+OR+(owner:self+($cidTerms))';
+  }
+  if (cidTerms.isNotEmpty) return 'owner:self+($cidTerms)';
+  if (issueTerms.isNotEmpty) return issueTerms;
+  return null;
+}
+
+Map<int, ClStatus> _resolveClosedAndUnmappedCLs(
   String repoPath,
-  List<int> clNumbers,
+  Map<String, int> localBranchIssues,
+  Map<String, CommitDetails> branchDetails,
+  Map<int, RemoteCL> remoteCLs,
+  String defaultBranch,
   String gerritHost,
 ) {
-  final statuses = <int, ClStatus>{};
-  if (clNumbers.isEmpty) return statuses;
+  final closedIssues = localBranchIssues.values
+      .where((i) => !remoteCLs.containsKey(i))
+      .toSet()
+      .toList();
+  final unmappedChangeIds = <String>{
+    for (final entry in branchDetails.entries)
+      if (entry.key != defaultBranch &&
+          !localBranchIssues.containsKey(entry.key) &&
+          entry.value.changeId.isNotEmpty)
+        entry.value.changeId,
+  };
 
-  final query = clNumbers.map((n) => 'change:$n').join('+OR+');
+  final statuses = <int, ClStatus>{};
+  final query = _buildClosedClQuery(closedIssues, unmappedChangeIds);
+  if (query == null) return statuses;
+
   final result = Process.runSync('gob-curl', [
     'https://$gerritHost/changes/?q=$query',
   ], workingDirectory: repoPath);
-
   if (result.exitCode != 0) return statuses;
 
-  final rawJson = (result.stdout as String).trim();
-  final cleanedJson = rawJson.replaceFirst(")]}'", '').trim();
-
+  final cleanedJson = (result.stdout as String)
+      .trim()
+      .replaceFirst(")]}'", '')
+      .trim();
+  final issueByChangeId = <String, int>{};
   try {
     final list = jsonDecode(cleanedJson) as List<dynamic>;
     for (final item in list) {
       if (item case {
         '_number': final int number,
         'status': final String status,
+        'change_id': final String changeId,
       }) {
         statuses[number] = ClStatus.parse(status);
+        issueByChangeId[changeId] = number;
       }
     }
-  } catch (_) {
-    // Fallback
-  }
+  } catch (_) {}
 
+  for (final entry in branchDetails.entries) {
+    if (entry.key == defaultBranch) continue;
+    final matchedIssue = issueByChangeId[entry.value.changeId];
+    if (matchedIssue != null) {
+      localBranchIssues.putIfAbsent(entry.key, () => matchedIssue);
+    }
+  }
   return statuses;
 }
 
@@ -934,13 +974,12 @@ Future<void> runGerritView({String? gerritRepo}) async {
     defaultBranch,
   );
 
-  final closedIssues = localBranchIssues.values
-      .where((i) => !remoteCLs.containsKey(i))
-      .toSet()
-      .toList();
-  final closedStatuses = _fetchRemoteCLStatuses(
+  final closedStatuses = _resolveClosedAndUnmappedCLs(
     actualRepoRoot,
-    closedIssues,
+    localBranchIssues,
+    branchDetails,
+    remoteCLs,
+    defaultBranch,
     gerritHost,
   );
 
