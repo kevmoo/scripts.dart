@@ -158,10 +158,19 @@ extension GhPrStatus on GhPr {
 
   /// Returns human reviewers (from `activeReviewers` or human
   /// `requestedReviewers`) who have not already approved the PR (unless
-  /// explicitly re-requested in [requestedReviewers]), falling back to
+  /// explicitly re-requested in [requestedReviewers]), excluding drive-by
+  /// issue commenters when [reviewAuthors] is populated, and falling back to
   /// `requestedReviewers` (which may include CODEOWNERS teams).
   List<String> get targetReviewers {
-    final pendingActive = activeReviewers
+    final candidates =
+        reviewAuthors != null &&
+            (requestedReviewers.isNotEmpty || reviewAuthors!.isNotEmpty)
+        ? <String>{
+            ...activeReviewers.where(requestedReviewers.contains),
+            ...reviewAuthors!,
+          }
+        : activeReviewers;
+    final pendingActive = candidates
         .where(
           (r) =>
               requestedReviewers.contains(r) || !approvedReviewers.contains(r),

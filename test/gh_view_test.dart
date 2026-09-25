@@ -554,7 +554,8 @@ void main() {
         state: 'OPEN',
         reviewDecision: ReviewDecision.changesRequested,
         requestedReviewers: ['flutter-zl'],
-        activeReviewers: ['flutter-zl'],
+        activeReviewers: ['flutter-zl', 'chunhtai', 'bystander'],
+        reviewAuthors: ['flutter-zl', 'chunhtai'],
         approvedReviewers: ['chunhtai'],
         totalReviewThreads: 1,
         unresolvedReviewThreads: 0,
@@ -571,6 +572,7 @@ void main() {
         updatedAt: now.subtract(const Duration(minutes: 30)),
       );
 
+      check(pr.targetReviewers).deepEquals(['flutter-zl']);
       final md = renderMarkdownReport([pr], currentTime: now);
       check(md).contains(
         '🟡 **Approved (@chunhtai)** · Awaiting @flutter-zl '
@@ -580,6 +582,15 @@ void main() {
         'Review:&nbsp;🟡&nbsp;Re-review&nbsp;Requested&nbsp;(@flutter-zl)&nbsp;'
         '·&nbsp;🟢&nbsp;Approved&nbsp;(@chunhtai)',
       );
+      final term = renderTerminalReport([pr], currentTime: now);
+      check(term).contains('Re-review Requested (@flutter-zl)');
+      check(term).contains('Approved (@chunhtai)');
+      final jsonMap = jsonDecode(
+        renderJsonOutput([pr], currentTime: now),
+      ) as Map<String, dynamic>;
+      final inReviewList = jsonMap['inReview'] as List<dynamic>;
+      check((inReviewList.single as Map<String, dynamic>)['approvedReviewers'])
+          .deepEquals(['chunhtai']);
     });
 
     test('renders Ping Reviewer when review required and threads resolved', () {
