@@ -589,7 +589,8 @@ void main() {
         renderJsonOutput([pr], currentTime: now),
       ) as Map<String, dynamic>;
       final inReviewList = jsonMap['inReview'] as List<dynamic>;
-      check((inReviewList.single as Map<String, dynamic>)['approvedReviewers'])
+      final inReviewPr = inReviewList.single as Map<String, dynamic>;
+      check(inReviewPr['approvedReviewers'] as List<dynamic>)
           .deepEquals(['chunhtai']);
     });
 
