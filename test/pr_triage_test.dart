@@ -742,6 +742,70 @@ CONFLICT (content): Merge conflict in lib/src/git_extensions.dart
         expect(parsed.messages, hasLength(2));
       },
     );
+
+    test('annotates queued CHANGES_REQUESTED decision, Approved By, and '
+        're-requested top-level reviews', () {
+      final report = buildTriageReport((
+        prData: <String, dynamic>{
+          'number': 192964,
+          'title': '[web] Propagate aria-label to inner slider input',
+          'url': 'https://github.com/flutter/flutter/pull/192964',
+          'author': {'login': 'kevmoo'},
+          'headRefName': 'web-a11y-pr2-input-aria-label',
+          'headRefOid': 'e76b483',
+          'reviewDecision': 'CHANGES_REQUESTED',
+          'mergeable': 'MERGEABLE',
+          'reviewRequests': [
+            {'login': 'flutter-zl'},
+          ],
+          'humanReviewers': ['flutter-zl'],
+          'approvedReviewers': ['chunhtai'],
+        },
+        syncStatus: (
+          localBranch: 'web-a11y-pr2-input-aria-label',
+          remoteBranch: 'web-a11y-pr2-input-aria-label',
+          localHeadSha: 'e76b483',
+          remoteHeadSha: 'e76b483',
+          isSynced: true,
+          syncState: 'in_sync',
+          warning: null,
+        ),
+        unresolvedThreads: const <PrReviewThread>[],
+        reviewComments: <PrReview>[
+          (
+            id: 'PRR_kwDOAeUeuM8AAAABPF0FOQ',
+            databaseId: '5307696441',
+            state: 'CHANGES_REQUESTED',
+            body: 'Land the slider changes first.',
+            author: 'flutter-zl',
+            submittedAt: '2026-09-24T17:10:47Z',
+            url: 'https://github.com/flutter/flutter/pull/192964#pullrequestreview-5307696441',
+          ),
+        ],
+        generalComments: const <PrComment>[],
+        failedChecks: const <PrCheckRun>[],
+        pendingChecks: const <PrCheckRun>[],
+        checkLogs: const <String, String>{},
+      ));
+
+      expect(
+        report,
+        contains(
+          '**Review Decision**: `CHANGES_REQUESTED` '
+          '(🟡 Re-review already requested in queue; awaiting reviewer '
+          'sign-off)',
+        ),
+      );
+      expect(report, contains('**Approved By**: @chunhtai ✅'));
+      expect(
+        report,
+        contains(
+          '`CHANGES_REQUESTED` by @flutter-zl '
+          '[🟡 Re-review Requested in Queue]',
+        ),
+      );
+      expect(report, isNot(contains('**Reviewer Dropped from Queue**')));
+    });
   });
 }
 

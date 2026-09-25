@@ -448,6 +448,30 @@ String _extractRepoFlag(Map<String, dynamic> prData) {
   );
 }
 
+String _formatReviewDecisionSection(
+  TriageData data,
+  ({List<String> requested, List<String> unrequestedHumans}) queue,
+) {
+  final prData = data.prData;
+  final rawDecision = prData['reviewDecision'];
+  final prAuthor = _extractPrAuthorLogin(prData);
+  final approved = <String>{
+    ..._prDataList(prData['approvedReviewers']),
+    ..._collectApprovedReviewers(data.reviewComments, prAuthor),
+  };
+  final isReReviewQueued =
+      rawDecision == 'CHANGES_REQUESTED' &&
+      queue.unrequestedHumans.isEmpty &&
+      queue.requested.isNotEmpty;
+  final suffix = isReReviewQueued
+      ? ' (🟡 Re-review already requested in queue; awaiting reviewer sign-off)'
+      : '';
+  final approvedLine = approved.isEmpty
+      ? ''
+      : '**Approved By**: ${approved.map((r) => '@$r').join(', ')} ✅\n';
+  return '**Review Decision**: `$rawDecision`$suffix\n$approvedLine';
+}
+
 String buildTriageReport(
   TriageData data, {
   PrConflictAnalysis? conflictAnalysis,
@@ -455,10 +479,9 @@ String buildTriageReport(
   final prData = data.prData;
   final syncStatus = data.syncStatus;
   final conflict = conflictAnalysis ?? _defaultConflictAnalysis(prData);
-  final queueSection = _formatReviewerQueueSection(
-    _extractTriageReviewerQueue(data),
-    prData,
-  );
+  final queue = _extractTriageReviewerQueue(data);
+  final queueSection = _formatReviewerQueueSection(queue, prData);
+  final reviewDecisionSection = _formatReviewDecisionSection(data, queue);
   final syncWarningBlock = syncStatus.warning != null
       ? '> [!WARNING]\n>\n> ${syncStatus.warning}\n\n'
       : '';
@@ -486,8 +509,7 @@ String buildTriageReport(
 **Remote Commit**: `${prData['headRefOid']}`
 **Local Commit**: `$localCommit`
 **Sync Status**: `${syncStatus.syncState}`${syncStatus.isSynced ? ' ✅' : ' ⚠️'}
-**Review Decision**: `${prData['reviewDecision']}`
-$reviewRequestsLine**Mergeable**: $mergeableBadge
+$reviewDecisionSection$reviewRequestsLine**Mergeable**: $mergeableBadge
 
 $syncWarningBlock$conflictWarningBlock$reviewerQueueWarningBlock''');
 
@@ -495,7 +517,11 @@ $syncWarningBlock$conflictWarningBlock$reviewerQueueWarningBlock''');
     _writeMergeConflictsSection(report, conflict);
   }
   _writeUnresolvedThreads(report, data.unresolvedThreads);
-  _writeReviewComments(report, data.reviewComments);
+  _writeReviewComments(
+    report,
+    data.reviewComments,
+    requestedReviewers: queue.requested.toSet(),
+  );
   _writeConversationComments(report, data.generalComments);
   _writeFailedChecks(
     report,
@@ -604,17 +630,28 @@ void _writeUnresolvedThreads(
   }
 }
 
-void _writeReviewComments(StringBuffer report, List<PrReview> reviewComments) {
+void _writeReviewComments(
+  StringBuffer report,
+  List<PrReview> reviewComments, {
+  Set<String> requestedReviewers = const {},
+}) {
   if (reviewComments.isEmpty) return;
 
   report.write('## Top-Level Review Comments (${reviewComments.length})\n\n');
   for (var i = 0; i < reviewComments.length; i++) {
     final review = reviewComments[i];
+    final isReRequested =
+        requestedReviewers.contains(review.author) &&
+        review.state != 'APPROVED';
+    final queueBadge = isReRequested
+        ? ' [🟡 Re-review Requested in Queue]'
+        : '';
     _writeMarkdownItem(
       report,
       header:
           'Review #${i + 1} (Review `${review.id}`, Database ID '
-          '`${review.databaseId}`): `${review.state}` by @${review.author}',
+          '`${review.databaseId}`): `${review.state}` by '
+          '@${review.author}$queueBadge',
       url: review.url,
       bodyMarkdown: _formatBlockquoteComment(
         review.author,
