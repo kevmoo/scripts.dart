@@ -366,9 +366,11 @@ List<String> _parseRequestedReviewerIds(Object? rawRequests) {
 Set<String> _resolveApprovedReviewers(TriageData data, String prAuthor) {
   final explicitApproved = _prDataList(data.prData['approvedReviewers'])
       .toSet();
-  final explicitUnapproved = _prDataList(data.prData['humanReviewers'])
-      .where((r) => !explicitApproved.contains(r))
-      .toSet();
+  final explicitUnapproved = data.prData.containsKey('approvedReviewers')
+      ? _prDataList(data.prData['humanReviewers'])
+            .where((r) => !explicitApproved.contains(r))
+            .toSet()
+      : const <String>{};
   return <String>{
     ...explicitApproved,
     ..._collectApprovedReviewers(
