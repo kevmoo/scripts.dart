@@ -554,7 +554,7 @@ void main() {
         state: 'OPEN',
         reviewDecision: ReviewDecision.changesRequested,
         requestedReviewers: ['flutter-zl'],
-        activeReviewers: ['flutter-zl', 'chunhtai', 'bystander'],
+        activeReviewers: ['flutter-zl', 'chunhtai'],
         reviewAuthors: ['flutter-zl', 'chunhtai'],
         approvedReviewers: ['chunhtai'],
         totalReviewThreads: 1,

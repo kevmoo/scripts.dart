@@ -363,10 +363,20 @@ List<String> _parseRequestedReviewerIds(Object? rawRequests) {
       .toList();
 }
 
-Set<String> _resolveApprovedReviewers(TriageData data, String prAuthor) =>
-    data.prData.containsKey('approvedReviewers')
-    ? _prDataList(data.prData['approvedReviewers']).toSet()
-    : _collectApprovedReviewers(data.reviewComments, prAuthor);
+Set<String> _resolveApprovedReviewers(TriageData data, String prAuthor) {
+  final explicitApproved = _prDataList(data.prData['approvedReviewers'])
+      .toSet();
+  final explicitUnapproved = _prDataList(data.prData['humanReviewers'])
+      .where((r) => !explicitApproved.contains(r))
+      .toSet();
+  return <String>{
+    ...explicitApproved,
+    ..._collectApprovedReviewers(
+      data.reviewComments,
+      prAuthor,
+    ).where((r) => !explicitUnapproved.contains(r)),
+  };
+}
 
 Set<String> _collectTriageHumanReviewers(TriageData data, String prAuthor) {
   final explicitList = _prDataList(data.prData['humanReviewers']);
