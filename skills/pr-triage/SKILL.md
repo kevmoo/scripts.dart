@@ -24,8 +24,8 @@ kscripts pr-triage --dir /path/to/target-repository --pr 123
 # Reply to a comment and resolve a review thread:
 kscripts pr-triage resolve --dir /path/to/target-repository <thread_id> <comment_id> "<reply_body>"
 
-# Re-request review so the PR re-enters the reviewer's GitHub Review Queue:
-gh pr edit 123 -R <owner/repo> --add-reviewer <reviewer_login>
+# Post an optional top-level reply, optionally dismiss a stale CHANGES_REQUESTED review, and re-request review:
+kscripts pr-triage re-request --dir /path/to/target-repository <reviewer_login> [--comment "<reply_body>"] [--dismiss <review_database_id> -m "<reason>"]
 ```
 
 ## When to use this skill
@@ -88,8 +88,10 @@ gh pr edit 123 -R <owner/repo> --add-reviewer <reviewer_login>
    kscripts pr-triage --dir <path-to-target-repository> --pr <pr-number-or-url>
    ```
 
-   **Save the raw stdout of this command** as a new markdown artifact named
-   `raw_triage_output.md` in the artifacts directory (using `write_to_file`).
+   **Save the exact, untruncated stdout of this command** as a new markdown
+   artifact named `raw_triage_output.md` in the artifacts directory (preserving
+   the `> [!IMPORTANT] Reviewer Dropped from Queue` block and all review/thread
+   IDs).
 
 2. **Verify Workspace State**:
    - The output shows the PR URL, title, branch, Remote Commit SHA, Local Commit
@@ -174,9 +176,10 @@ gh pr edit 123 -R <owner/repo> --add-reviewer <reviewer_login>
        `[Review #1 by @reviewer_username](#)`).
      - **Thread & Comment/Review Identifiers (For Comments)**: Explicitly
        preserve the `Thread ID` (e.g. `PRRT_...`), `Comment ID` (e.g.
-       `3438780787`), or `Review ID` (e.g. `PRR_...`) from the header in
-       `raw_triage_output.md` under each action item so the resolution step has
-       immediate access to the identifiers without extra API lookups.
+       `3438780787`), or `Review ID` (e.g. `PRR_...`) and numeric `Database ID`
+       from the header in `raw_triage_output.md` under each action item so the
+       resolution step has immediate access to the identifiers without extra API
+       lookups.
      - **Agent Assessment (For Comments)**:
        - **Agreement Level**: A short indicator of your agreement using one of
          these categories:
@@ -232,113 +235,100 @@ gh pr edit 123 -R <owner/repo> --add-reviewer <reviewer_login>
    - **Check Git Status first**: Run `git status -s --untracked=no` to check
      whether uncommitted fixes or unpushed commits exist.
    - **Present Completion Options (`ask_question`)**: Use `ask_question` to
-     present a unified completion menu based on the working tree state:
+     present a unified completion menu based on the working tree and review
+     state (include the `"dismiss stale CHANGES_REQUESTED review"` option
+     whenever an open `CHANGES_REQUESTED` review was fully addressed by code
+     fixes; promote it to `(Recommended)` when another maintainer has already
+     `APPROVED` the PR):
      - **If uncommitted changes or unpushed commits exist**, offer:
-       1. `(Recommended) Commit fixes, push branch, reply/resolve threads, and re-request review if needed`
-       2. `Commit fixes and push branch only`
-       3. `Commit fixes locally only`
-       4. `Do nothing`
+       1. `(Recommended) Commit fixes, push branch, reply/resolve, and re-request review if needed`
+       2. `Commit fixes, push branch, reply/resolve, dismiss stale CHANGES_REQUESTED review, and re-request review`
+          _(include when an addressed `CHANGES_REQUESTED` review exists)_
+       3. `Commit fixes and push branch only`
+       4. `Commit fixes locally only`
+       5. `Do nothing`
      - **If working tree is clean and all commits are pushed**, offer:
-       1. `(Recommended) Reply/resolve threads and re-request review if needed`
-       2. `Do nothing`
+       1. `(Recommended) Reply/resolve and re-request review if needed`
+       2. `Reply/resolve, dismiss stale CHANGES_REQUESTED review, and re-request review`
+          _(include when an addressed `CHANGES_REQUESTED` review exists)_
+       3. `Do nothing`
    - **Execute Selected Actions**:
      - If committing is selected, stage all modified and new files and create a
        descriptive commit.
      - If pushing is selected, run `git push`.
-     - If replying and resolving is selected, execute the
-       `kscripts pr-triage resolve` commands below, then check post-push review
-       state
-       (`gh pr view <pr> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests`)
-       and **re-request review ONLY if needed** (see criteria below).
+     - If replying, resolving, or re-requesting is selected, execute the
+       `kscripts pr-triage resolve` and `kscripts pr-triage re-request` commands
+       below.
 
 ## Replying, Resolving Threads, and Re-Requesting Review
 
-For every addressed review thread, you MUST execute thread resolution (thread
-resolution is explicit, mandatory, and un-skippable).
-
-Use the `resolve` subcommand in `kscripts pr-triage` to programmatically reply
-to comments and resolve threads without shell-escaping issues:
+For every addressed inline review thread, execute thread resolution via
+`kscripts pr-triage resolve`:
 
 ```bash
-# Reply to a comment and resolve its thread (pass --dir if outside target repo):
+# Reply to an inline comment and resolve its thread:
 kscripts pr-triage resolve --dir <path-to-target-repository> <thread_graphql_id> <comment_database_id> "<your reply body>"
 
-# Or resolve a thread without posting a reply:
+# Or resolve an inline thread without posting a reply:
 kscripts pr-triage resolve --dir <path-to-target-repository> <thread_graphql_id>
 ```
 
-_Note: `<thread_graphql_id>` is the GraphQL node ID (e.g., `PRRT_...`) and
-`<comment_database_id>` is the numeric database ID (e.g., `3438780787`), exactly
-as output in `raw_triage_output.md`._
-
-### Conditional GitHub Review Queue Re-Request (`--add-reviewer` ONLY When Needed)
+### Re-Requesting Review & Dismissing Addressed `CHANGES_REQUESTED` Reviews (`kscripts pr-triage re-request`)
 
 When a human reviewer submits any review (`COMMENTED`, `CHANGES_REQUESTED`, or
-an `APPROVED` review that is later `DISMISSED` by new commits), GitHub
-automatically removes that reviewer from `reviewRequests`. Simply posting an
-`@reviewer PTAL` comment or resolving threads does **not** put the PR back into
-their GitHub Review Queue (`is:open is:pr review-requested:@me`).
+an `APPROVED` review that is later `DISMISSED` by new commits), GitHub removes
+that reviewer from `reviewRequests`. Posting a comment or dismissing a review
+alone does **not** put the PR back into their GitHub Review Queue
+(`is:open is:pr review-requested:@me`).
 
-However, you MUST NOT blindly run `--add-reviewer` for every reviewer. If a
-reviewer's latest state is still `APPROVED` (e.g., when no new commits were
-pushed, or in repositories where `dismiss_stale_reviews` is `false`), running
-`--add-reviewer` **revokes their active approval** and resets the PR to
-`REVIEW_REQUIRED`.
+However, you MUST NOT run `re-request` (`--add-reviewer`) when a reviewer's
+latest state is still `APPROVED` (e.g., when no new commits were pushed, or in
+repositories where `dismiss_stale_reviews` is `false`), as `--add-reviewer`
+revokes their active approval.
 
-Check whether `--add-reviewer` is needed without wasting API calls:
+Check whether re-requesting review is needed:
 
 - **If no new commits were pushed in Step 8**: Rely directly on the
   `**Review Requests**` line and `> [!IMPORTANT] Reviewer Dropped from Queue`
   banner in `raw_triage_output.md` (do **not** make an extra `gh pr view` call).
-- **If new commits were pushed in Step 8**: Inspect the live post-push review
-  state (in case `dismiss_stale_reviews` dismissed a prior approval):
+- **If new commits were pushed in Step 8**: Inspect the post-push review state
+  (in case `dismiss_stale_reviews` dismissed a prior approval):
   ```bash
   gh pr view <pr_number> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests
   ```
 
-Run `--add-reviewer` **ONLY when ALL conditions hold**:
+Run `kscripts pr-triage re-request` **ONLY when ALL conditions hold**:
 
 1. The human reviewer is **not** currently listed in `reviewRequests`, **AND**
 2. Their latest review state in `latestReviews` is **NOT** `"APPROVED"` (i.e.
-   their state is `COMMENTED`, `CHANGES_REQUESTED`, or `DISMISSED` because a new
-   `git push` triggered stale-review dismissal), **AND**
+   `COMMENTED`, `CHANGES_REQUESTED`, or `DISMISSED`), **AND**
 3. You have pushed commits or posted a reply addressing their feedback since
    their review was submitted.
 
 ```bash
-gh pr edit <pr_number> -R <owner/repo> --add-reviewer <reviewer_login>
+# Re-request review (with optional top-level reply comment):
+kscripts pr-triage re-request --dir <path-to-target-repository> <reviewer_login> \
+  [--comment "<top_level_reply_body>"]
+
+# Dismiss an addressed CHANGES_REQUESTED review AND re-request review atomically
+# (when selected by the user in Step 8):
+kscripts pr-triage re-request --dir <path-to-target-repository> <reviewer_login> \
+  [--comment "<top_level_reply_body>"] \
+  --dismiss <review_database_id> \
+  -m "Addressed in <short_sha> (<concise summary>); re-requesting review from @<reviewer_login>."
 ```
 
-### Dismissing Stale `CHANGES_REQUESTED` Reviews vs. Waiting for Re-Review
-
-- **GitHub State-Machine Quirk (`reviewDecision` vs. `latestReviews`)**: Calling
-  `gh pr edit --add-reviewer <login>` adds `<login>` back to `reviewRequests`
-  and **hides `<login>` from `latestReviews`**, but `reviewDecision` **remains
-  `"CHANGES_REQUESTED"`** until `<login>` submits `APPROVED` or their review is
-  explicitly dismissed.
-  - If `<login>` is already in `reviewRequests` and all their feedback is
-    addressed on the latest commit, **STOP** — the PR is already in their GitHub
-    Review Queue (`🟡 Re-review Requested`). Never re-run `--add-reviewer` and
-    never re-triage their addressed top-level review.
-- **Default — Wait for Reviewer (`0` Active Approvals)**: **Never** dismiss a
-  coworker's `CHANGES_REQUESTED` review merely to flip `reviewDecision` from
-  `CHANGES_REQUESTED` to `REVIEW_REQUIRED`. When no other maintainer has
-  `APPROVED` the PR yet, dismissing a review does **not** make the PR mergeable,
-  generates noisy timeline events (`dismissed @reviewer's stale review`), and
-  violates peer-review etiquette.
-- **Exception — Stale Veto Blocking an Already-Approved PR (`ask_question`
-  Gate)**: When **another maintainer has already `APPROVED` the PR**
-  (`approvedReviewers` is non-empty) AND the `CHANGES_REQUESTED` review was
-  submitted on an **older commit** (`commit.oid != headRefOid`) whose requested
-  changes/split have been pushed (e.g., reviewer wrote _"land X first and rework
-  Y separately"_ or is OOO), the stale `CHANGES_REQUESTED` review acts as a hard
-  veto keeping `reviewDecision: "CHANGES_REQUESTED"`. In this scenario only,
-  offer an option in `ask_question` to dismiss the stale review with a polite
-  audit message:
-  ```bash
-  gh api -X PUT repos/<owner>/<repo>/pulls/<pr_number>/reviews/<review_database_id>/dismissals \
-    -f message="Addressed in <short_sha> (<concise summary>); approved by @<approver_login>."
-  ```
+- **GitHub State-Machine Quirk (`reviewDecision` vs. `latestReviews`)**:
+  Re-requesting review without `--dismiss` adds `<login>` back to
+  `reviewRequests` (`🟡 Re-review Requested`) and hides `<login>` from
+  `latestReviews`, while `reviewDecision` remains `"CHANGES_REQUESTED"` until
+  `<login>` approves or the review is dismissed. Conversely, dismissing a review
+  without `--add-reviewer` drops `<login>` from `reviewRequests`. Using
+  `kscripts pr-triage re-request <login> --dismiss <id>` guarantees both run
+  together.
+- **Stop When Already Queued**: If `<login>` is already in `reviewRequests` and
+  all their feedback is addressed on the latest commit, **STOP** — never re-run
+  `re-request` and never re-triage their addressed top-level review.
 
 ## Constraints
 
