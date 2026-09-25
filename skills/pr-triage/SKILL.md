@@ -311,29 +311,30 @@ gh pr edit <pr_number> -R <owner/repo> --add-reviewer <reviewer_login>
 
 ### Dismissing Stale `CHANGES_REQUESTED` Reviews vs. Waiting for Re-Review
 
-- **GitHub State-Machine Quirk (`reviewDecision` vs. `latestReviews`)**:
-  Calling `gh pr edit --add-reviewer <login>` adds `<login>` back to
-  `reviewRequests` and **hides `<login>` from `latestReviews`**, but
-  `reviewDecision` **remains `"CHANGES_REQUESTED"`** until `<login>` submits
-  `APPROVED` or their review is explicitly dismissed.
+- **GitHub State-Machine Quirk (`reviewDecision` vs. `latestReviews`)**: Calling
+  `gh pr edit --add-reviewer <login>` adds `<login>` back to `reviewRequests`
+  and **hides `<login>` from `latestReviews`**, but `reviewDecision` **remains
+  `"CHANGES_REQUESTED"`** until `<login>` submits `APPROVED` or their review is
+  explicitly dismissed.
   - If `<login>` is already in `reviewRequests` and all their feedback is
-    addressed on the latest commit, **STOP** — the PR is already in their
-    GitHub Review Queue (`🟡 Re-review Requested`). Never re-run
-    `--add-reviewer` and never re-triage their addressed top-level review.
-- **Default — Wait for Reviewer (`0` Active Approvals)**:
-  **Never** dismiss a coworker's `CHANGES_REQUESTED` review merely to flip
-  `reviewDecision` from `CHANGES_REQUESTED` to `REVIEW_REQUIRED`. When no other
-  maintainer has `APPROVED` the PR yet, dismissing a review does **not** make
-  the PR mergeable, generates noisy timeline events (`dismissed @reviewer's
-  stale review`), and violates peer-review etiquette.
-- **Exception — Stale Veto Blocking an Already-Approved PR (`ask_question` Gate)**:
-  When **another maintainer has already `APPROVED` the PR** (`approvedReviewers`
-  is non-empty) AND the `CHANGES_REQUESTED` review was submitted on an **older
-  commit** (`commit.oid != headRefOid`) whose requested changes/split have been
-  pushed (e.g., reviewer wrote *"land X first and rework Y separately"* or is
-  OOO), the stale `CHANGES_REQUESTED` review acts as a hard veto keeping
-  `reviewDecision: "CHANGES_REQUESTED"`. In this scenario only, offer an option
-  in `ask_question` to dismiss the stale review with a polite audit message:
+    addressed on the latest commit, **STOP** — the PR is already in their GitHub
+    Review Queue (`🟡 Re-review Requested`). Never re-run `--add-reviewer` and
+    never re-triage their addressed top-level review.
+- **Default — Wait for Reviewer (`0` Active Approvals)**: **Never** dismiss a
+  coworker's `CHANGES_REQUESTED` review merely to flip `reviewDecision` from
+  `CHANGES_REQUESTED` to `REVIEW_REQUIRED`. When no other maintainer has
+  `APPROVED` the PR yet, dismissing a review does **not** make the PR mergeable,
+  generates noisy timeline events (`dismissed @reviewer's stale review`), and
+  violates peer-review etiquette.
+- **Exception — Stale Veto Blocking an Already-Approved PR (`ask_question`
+  Gate)**: When **another maintainer has already `APPROVED` the PR**
+  (`approvedReviewers` is non-empty) AND the `CHANGES_REQUESTED` review was
+  submitted on an **older commit** (`commit.oid != headRefOid`) whose requested
+  changes/split have been pushed (e.g., reviewer wrote _"land X first and rework
+  Y separately"_ or is OOO), the stale `CHANGES_REQUESTED` review acts as a hard
+  veto keeping `reviewDecision: "CHANGES_REQUESTED"`. In this scenario only,
+  offer an option in `ask_question` to dismiss the stale review with a polite
+  audit message:
   ```bash
   gh api -X PUT repos/<owner>/<repo>/pulls/<pr_number>/reviews/<review_database_id>/dismissals \
     -f message="Addressed in <short_sha> (<concise summary>); approved by @<approver_login>."
