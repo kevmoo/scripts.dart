@@ -210,7 +210,6 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     humanRequested: requested.humanReviewers,
     humanParticipants: reviewerActivity.humanParticipants,
     mentionedUsers: authorComment.mentionedUsers,
-    approvedReviewers: approvedReviewers,
     isAlreadyPinged: isAlreadyPinged,
   );
 
@@ -465,23 +464,16 @@ List<String> _resolveActiveReviewers({
   required List<String> humanRequested,
   required List<String> humanParticipants,
   required List<String> mentionedUsers,
-  required List<String> approvedReviewers,
   required bool isAlreadyPinged,
 }) {
-  final unapprovedParticipants = humanParticipants.where(
-    (r) => !approvedReviewers.contains(r),
-  );
   if (isAlreadyPinged && mentionedUsers.isNotEmpty) {
-    final unapprovedMentioned = mentionedUsers.where(
-      (r) => !approvedReviewers.contains(r),
-    );
     return {
-      ...unapprovedMentioned,
+      ...mentionedUsers,
       ...humanRequested,
-      ...unapprovedParticipants,
+      ...humanParticipants,
     }.toList();
   }
-  return {...humanRequested, ...unapprovedParticipants}.toList();
+  return {...humanRequested, ...humanParticipants}.toList();
 }
 
 ({int total, int unresolved}) _extractReviewThreads(

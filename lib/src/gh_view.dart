@@ -157,10 +157,18 @@ extension GhPrStatus on GhPr {
       isBlockedMergeState && isApproved && isCiPassing;
 
   /// Returns human reviewers (from `activeReviewers` or human
-  /// `requestedReviewers`), falling back to `requestedReviewers` (which may
-  /// include CODEOWNERS teams).
-  List<String> get targetReviewers =>
-      activeReviewers.isNotEmpty ? activeReviewers : requestedReviewers;
+  /// `requestedReviewers`) who have not already approved the PR (unless
+  /// explicitly re-requested in [requestedReviewers]), falling back to
+  /// `requestedReviewers` (which may include CODEOWNERS teams).
+  List<String> get targetReviewers {
+    final pendingActive = activeReviewers
+        .where(
+          (r) =>
+              requestedReviewers.contains(r) || !approvedReviewers.contains(r),
+        )
+        .toList();
+    return pendingActive.isNotEmpty ? pendingActive : requestedReviewers;
+  }
 
   /// Human reviewers who actually submitted a `PullRequestReview`
   /// ([reviewAuthors], or [activeReviewers] when [reviewAuthors] is omitted)
