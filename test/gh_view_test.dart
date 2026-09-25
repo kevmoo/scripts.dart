@@ -543,6 +543,57 @@ void main() {
       check(md).contains('🟡 **Re-review Requested** (@harryterkelsen)');
     });
 
+    test('renders Approved + Awaiting re-review when approved by one '
+        'maintainer while another has a queued CHANGES_REQUESTED review', () {
+      final now = DateTime.parse('2026-09-25T04:00:00Z');
+      final pr = GhPr(
+        number: 192964,
+        title: '[web] Propagate aria-label to inner slider input',
+        url: 'https://github.com/flutter/flutter/pull/192964',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: ReviewDecision.changesRequested,
+        requestedReviewers: ['flutter-zl'],
+        activeReviewers: ['flutter-zl', 'chunhtai'],
+        reviewAuthors: ['flutter-zl', 'chunhtai'],
+        approvedReviewers: ['chunhtai'],
+        totalReviewThreads: 1,
+        unresolvedReviewThreads: 0,
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.blocked,
+        isInMergeQueue: false,
+        headRefName: 'web-a11y-pr2-input-aria-label',
+        headRefOid: 'e76b483',
+        baseRefName: 'master',
+        repository: 'flutter/flutter',
+        repoUrl: 'https://github.com/flutter/flutter',
+        isRepoArchived: false,
+        ciStatus: CiStatus.success,
+        updatedAt: now.subtract(const Duration(minutes: 30)),
+      );
+
+      check(pr.targetReviewers).deepEquals(['flutter-zl']);
+      final md = renderMarkdownReport([pr], currentTime: now);
+      check(md).contains(
+        '🟡 **Approved (@chunhtai)** · Awaiting @flutter-zl '
+        '(or dismiss stale CR)',
+      );
+      check(md).contains(
+        'Review:&nbsp;🟡&nbsp;Re-review&nbsp;Requested&nbsp;(@flutter-zl)&nbsp;'
+        '·&nbsp;🟢&nbsp;Approved&nbsp;(@chunhtai)',
+      );
+      final term = renderTerminalReport([pr], currentTime: now);
+      check(term).contains('Re-review Requested (@flutter-zl)');
+      check(term).contains('Approved (@chunhtai)');
+      final jsonMap = jsonDecode(
+        renderJsonOutput([pr], currentTime: now),
+      ) as Map<String, dynamic>;
+      final inReviewList = jsonMap['inReview'] as List<dynamic>;
+      final inReviewPr = inReviewList.single as Map<String, dynamic>;
+      check(inReviewPr['approvedReviewers'] as List<dynamic>)
+          .deepEquals(['chunhtai']);
+    });
+
     test('renders Ping Reviewer when review required and threads resolved', () {
       final now = DateTime.parse('2026-08-13T20:00:00Z');
       final pr = GhPr(

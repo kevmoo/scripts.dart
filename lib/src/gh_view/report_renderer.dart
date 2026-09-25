@@ -250,6 +250,15 @@ String? _sanitizeMarkdownCellDetail(String? detail) {
   return cleaned.isEmpty ? null : cleaned;
 }
 
+String _formatQueuedChangesRequestedAction(GhPr pr, String reviewersText) {
+  if (pr.approvedReviewers.isEmpty) {
+    return '🟡 **Re-review Requested** ($reviewersText)';
+  }
+  final approvers = '@${pr.approvedReviewers.join(', @')}';
+  return '🟡 **Approved ($approvers)** · Awaiting $reviewersText '
+      '(or dismiss stale CR)';
+}
+
 String _formatChangesRequestedActionMarkdown(
   GhPr pr, {
   required String reviewersText,
@@ -261,7 +270,7 @@ String _formatChangesRequestedActionMarkdown(
         '(@${pr.unrequestedActiveReviewers.join(', @')})';
   }
   if (hasRequestedReviewers) {
-    return '🟡 **Re-review Requested** ($reviewersText)';
+    return _formatQueuedChangesRequestedAction(pr, reviewersText);
   }
   if (areThreadsResolved && pr.hasAuthorRespondedSinceLastReview) {
     return '🔄 **Re-review Needed** (threads resolved)';
@@ -326,6 +335,12 @@ String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) =>
       ReviewDecision.changesRequested when pr.needsReviewReRequest =>
         '🔴 Changes Requested · Re-request '
             '(@${pr.unrequestedActiveReviewers.join(', @')})',
+      ReviewDecision.changesRequested
+          when pr.requestedReviewers.isNotEmpty &&
+              pr.unrequestedActiveReviewers.isEmpty &&
+              pr.approvedReviewers.isNotEmpty =>
+        '🟡 Re-review Requested (@${pr.targetReviewers.join(', @')}) · '
+            '🟢 Approved (@${pr.approvedReviewers.join(', @')})',
       ReviewDecision.changesRequested
           when pr.requestedReviewers.isNotEmpty &&
               pr.unrequestedActiveReviewers.isEmpty =>
@@ -531,6 +546,18 @@ void _writePrItem(StringBuffer buffer, GhPr pr, DateTime now) {
   }
 }
 
+String _formatTerminalQueuedChangesRequestedBadge(
+  GhPr pr,
+  String Function(String, [List<String>?]) formatRequested,
+) {
+  final reReviewText = formatRequested('Re-review Requested');
+  if (pr.approvedReviewers.isEmpty) return reReviewText;
+  final approvers = '@${pr.approvedReviewers.join(', @')}';
+  final approvedText =
+      green.wrap('Approved ($approvers)') ?? 'Approved ($approvers)';
+  return '$reReviewText · $approvedText';
+}
+
 String _formatReviewBadgeTerminal(GhPr pr) {
   String formatRequested(String label, [List<String>? list]) {
     final targets = list ?? pr.targetReviewers;
@@ -552,7 +579,7 @@ String _formatReviewBadgeTerminal(GhPr pr) {
     ReviewDecision.changesRequested
         when pr.requestedReviewers.isNotEmpty &&
             pr.unrequestedActiveReviewers.isEmpty =>
-      formatRequested('Re-review Requested'),
+      _formatTerminalQueuedChangesRequestedBadge(pr, formatRequested),
     ReviewDecision.changesRequested
         when pr.totalReviewThreads > 0 &&
             pr.unresolvedReviewThreads == 0 &&
@@ -603,6 +630,7 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'reviewDecision': pr.reviewDecision,
     'requestedReviewers': pr.requestedReviewers,
     'activeReviewers': pr.activeReviewers,
+    'approvedReviewers': pr.approvedReviewers,
     'targetReviewers': pr.targetReviewers,
     'unrequestedActiveReviewers': pr.unrequestedActiveReviewers,
     'needsReviewReRequest': pr.needsReviewReRequest,

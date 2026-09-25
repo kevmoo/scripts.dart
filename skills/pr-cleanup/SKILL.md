@@ -120,6 +120,19 @@ sweeps) divided into 3 buckets:
     `reviewRequests`. Even if an `@reviewer PTAL` comment was posted, the PR is
     not in their GitHub Review Queue (`review-requested:@me`) until re-requested
     via `gh pr edit <PR> -R <owner/repo> --add-reviewer <login>`.
+  - **Three-State `CHANGES_REQUESTED` Disambiguation (Zero Extra `gh` Calls)**:
+    1. `🔴 **Changes Requested** (@reviewer)`: Author has **not** yet pushed a
+       fix or replied since the review (`⚠️ Action Needed` — author's ball).
+    2. `🔄 **Re-request Review** (@reviewer)`: Author pushed a fix or replied
+       after the review and resolved threads, but `@reviewer` was dropped from
+       `reviewRequests` (`⚠️ Action Needed` — run `--add-reviewer <login>`).
+    3. `🟡 **Re-review Requested** (@reviewer)`: `@reviewer` is **already in
+       `reviewRequests`** (`🟡 In Review Queue` — reviewer's ball). Even though
+       GitHub's raw `reviewDecision` remains `CHANGES_REQUESTED`, do **not**
+       re-run `--add-reviewer` or run `pr-triage`. Only if another maintainer
+       has already `APPROVED` (`🟢 Approved (@approver)`) and the prior
+       `CHANGES_REQUESTED` review is a stale veto on an older commit, surface
+       the option (gated via `ask_question`) to dismiss the stale review.
 - **Bucket B — `✅ Safe to Prune Immediately` (Merged PRs/CLs & Clean
   Worktrees)**:
   - Clean worktrees (`git worktree remove`), merged local feature branches

@@ -742,6 +742,136 @@ CONFLICT (content): Merge conflict in lib/src/git_extensions.dart
         expect(parsed.messages, hasLength(2));
       },
     );
+
+    test('annotates queued CHANGES_REQUESTED decision, Approved By, '
+        're-requested top-level reviews, and superseded reviews', () {
+      final report = buildTriageReport((
+        prData: <String, dynamic>{
+          'number': 192964,
+          'title': '[web] Propagate aria-label to inner slider input',
+          'url': 'https://github.com/flutter/flutter/pull/192964',
+          'author': {'login': 'kevmoo'},
+          'headRefName': 'web-a11y-pr2-input-aria-label',
+          'headRefOid': 'e76b483',
+          'reviewDecision': 'CHANGES_REQUESTED',
+          'mergeable': 'MERGEABLE',
+          'reviewRequests': [
+            {'login': 'flutter-zl'},
+          ],
+          'humanReviewers': ['flutter-zl'],
+          'approvedReviewers': ['chunhtai'],
+        },
+        syncStatus: (
+          localBranch: 'web-a11y-pr2-input-aria-label',
+          remoteBranch: 'web-a11y-pr2-input-aria-label',
+          localHeadSha: 'e76b483',
+          remoteHeadSha: 'e76b483',
+          isSynced: true,
+          syncState: 'in_sync',
+          warning: null,
+        ),
+        unresolvedThreads: const <PrReviewThread>[],
+        reviewComments: <PrReview>[
+          (
+            id: 'PRR_kwDOAeUeuM8AAAABPF0FOQ',
+            databaseId: '5307696441',
+            state: 'CHANGES_REQUESTED',
+            body: 'Land the slider changes first.',
+            author: 'flutter-zl',
+            submittedAt: '2026-09-24T17:10:47Z',
+            url: 'https://github.com/flutter/flutter/pull/192964#pullrequestreview-5307696441',
+          ),
+          (
+            id: 'PRR_early',
+            databaseId: '5300000001',
+            state: 'CHANGES_REQUESTED',
+            body: 'Earlier feedback before approving.',
+            author: 'chunhtai',
+            submittedAt: '2026-09-23T12:00:00Z',
+            url: 'https://github.com/flutter/flutter/pull/192964#pullrequestreview-5300000001',
+          ),
+        ],
+        generalComments: const <PrComment>[],
+        failedChecks: const <PrCheckRun>[],
+        pendingChecks: const <PrCheckRun>[],
+        checkLogs: const <String, String>{},
+      ));
+
+      expect(
+        report,
+        contains(
+          '**Review Decision**: `CHANGES_REQUESTED` '
+          '(🟡 Re-review already requested in queue; awaiting reviewer '
+          'sign-off)',
+        ),
+      );
+      expect(report, contains('**Approved By**: @chunhtai ✅'));
+      expect(
+        report,
+        contains(
+          '`CHANGES_REQUESTED` by @flutter-zl '
+          '[🟡 Re-review Requested in Queue]',
+        ),
+      );
+      expect(
+        report,
+        contains(
+          '`CHANGES_REQUESTED` by @chunhtai '
+          '[✅ Superseded by Approval]',
+        ),
+      );
+      expect(report, isNot(contains('**Reviewer Dropped from Queue**')));
+    });
+
+    test('does not resurrect revoked approval when subsequent '
+        'CHANGES_REQUESTED review had an empty top-level body', () {
+      final report = buildTriageReport((
+        prData: <String, dynamic>{
+          'number': 500,
+          'title': 'Revoked approval test',
+          'url': 'https://github.com/flutter/flutter/pull/500',
+          'author': {'login': 'kevmoo'},
+          'headRefName': 'revoked-approval',
+          'headRefOid': 'abc1234',
+          'reviewDecision': 'CHANGES_REQUESTED',
+          'mergeable': 'MERGEABLE',
+          'reviewRequests': const <Object>[],
+          'humanReviewers': ['alice'],
+          'approvedReviewers': const <String>[],
+        },
+        syncStatus: (
+          localBranch: 'revoked-approval',
+          remoteBranch: 'revoked-approval',
+          localHeadSha: 'abc1234',
+          remoteHeadSha: 'abc1234',
+          isSynced: true,
+          syncState: 'in_sync',
+          warning: null,
+        ),
+        unresolvedThreads: const <PrReviewThread>[],
+        reviewComments: <PrReview>[
+          (
+            id: 'PRR_old_approve',
+            databaseId: '100',
+            state: 'APPROVED',
+            body: 'LGTM on initial commit',
+            author: 'alice',
+            submittedAt: '2026-09-20T00:00:00Z',
+            url: 'https://github.com/flutter/flutter/pull/500#r100',
+          ),
+        ],
+        generalComments: const <PrComment>[],
+        failedChecks: const <PrCheckRun>[],
+        pendingChecks: const <PrCheckRun>[],
+        checkLogs: const <String, String>{},
+      ));
+
+      expect(report, isNot(contains('**Approved By**: @alice')));
+      expect(
+        report,
+        contains('gh pr edit 500 -R flutter/flutter --add-reviewer alice'),
+      );
+    });
   });
 }
 
