@@ -292,8 +292,9 @@ Landed PR #113 on kevmoo/scripts.dart.
         lastCommentCreatedAt: '2026-09-19T21:56:45Z',
       );
 
-      // 3. Open issue #11 where peer posted State: DONE (ready for us to verify
-      // & close).
+      // 3. Open issue #11 where peer posted a bare State: DONE comment (no
+      // checklist in comment) while opener had an unchecked item (ready for us
+      // to verify against opener's checklist & close).
       const peerSettlingDone = RelayIssueRaw(
         number: 11,
         title: 'Peer DONE thread',
@@ -302,10 +303,16 @@ Landed PR #113 on kevmoo/scripts.dart.
         createdAt: '2026-09-26T03:00:00Z',
         url: 'https://github.com/kevmoo/agent-relay/issues/11',
         body: '''
+### ☁️🐧⚡ Enterprise Rodete → 🐧🛠️🐳 Bluefin-DX
+> **State**: `HANDOFF` | **Time**: `2026-09-25 20:00 PT`
+- [ ] Verify benchmark numbers
+''',
+        commentBodies: <String>[
+          '''
 ### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
 > **State**: `DONE` | **Time**: `2026-09-25 21:00 PT`
 ''',
-        commentBodies: <String>[],
+        ],
       );
 
       // 4. Open issue #12 where WE posted State: DONE and it was already
@@ -324,12 +331,37 @@ Landed PR #113 on kevmoo/scripts.dart.
         commentBodies: <String>[],
       );
 
+      // 5. Open issue #13 where peer posted State: DONE with all checklist
+      // items explicitly checked off (- [x]), which should NOT resurrect
+      // opener's unchecked - [ ] items.
+      const peerSettlingDoneAllChecked = RelayIssueRaw(
+        number: 13,
+        title: 'Peer DONE thread all checked',
+        state: 'OPEN',
+        updatedAt: '2026-09-26T04:01:00Z',
+        createdAt: '2026-09-26T03:00:00Z',
+        url: 'https://github.com/kevmoo/agent-relay/issues/13',
+        body: '''
+### ☁️🐧⚡ Enterprise Rodete → 🐧🛠️🐳 Bluefin-DX
+> **State**: `HANDOFF` | **Time**: `2026-09-25 20:00 PT`
+- [ ] Checked off item
+''',
+        commentBodies: <String>[
+          '''
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+> **State**: `DONE` | **Time**: `2026-09-25 21:01 PT`
+- [x] Checked off item
+''',
+        ],
+      );
+
       final ossEnriched =
           [
                 closedWithPostCloseReply,
                 historicalClosedAcked,
                 peerSettlingDone,
                 ownSettledDone,
+                peerSettlingDoneAllChecked,
               ]
               .map(
                 (r) => EnrichedRelayIssue.fromRaw(
@@ -340,6 +372,9 @@ Landed PR #113 on kevmoo/scripts.dart.
                 ),
               )
               .toList();
+
+      expect(ossEnriched[2].activeTodos, ['Verify benchmark numbers']);
+      expect(ossEnriched[4].activeTodos, isEmpty);
 
       final prevState = <String, Object?>{
         'last_sync_utc': '2026-09-26T03:03:30Z',
@@ -411,6 +446,8 @@ Landed PR #113 on kevmoo/scripts.dart.
           '🔴 [🌐 kevmoo/agent-relay] #11 🟢 [SETTLING — Verify DONE & Close]',
         ),
       );
+      expect(built.report, contains('• [ ] Verify benchmark numbers'));
+      expect(built.report, isNot(contains('• [ ] Checked off item')));
       expect(
         built.report,
         contains(
