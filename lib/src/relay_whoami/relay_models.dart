@@ -36,29 +36,7 @@ final class RelayEnvelope {
 RelayEnvelope parseRelayEnvelope(String? text, String fallbackTitle) {
   final raw = text ?? '';
   final lines = raw.split('\n');
-
-  String? headerLine;
-  for (final line in lines) {
-    if (line.startsWith('### ') &&
-        (line.contains('→') || line.contains('->'))) {
-      headerLine = line;
-      break;
-    }
-  }
-
-  String from;
-  String to;
-  if (headerLine != null) {
-    final stripped = headerLine.replaceFirst(RegExp(r'^###\s+'), '');
-    final parts = stripped.split(_headerSplitArrow);
-    from = parts.isNotEmpty ? parts[0].trim() : '';
-    to = parts.length > 1 ? parts[1].trim() : '';
-  } else {
-    final fromMatch = _fromLinePattern.firstMatch(raw);
-    final toMatch = _toLinePattern.firstMatch(raw);
-    from = fromMatch?.group(1)?.trim() ?? 'unknown';
-    to = toMatch?.group(1)?.trim() ?? fallbackTitle;
-  }
+  final fromTo = _parseFromAndTo(raw, lines, fallbackTitle);
 
   final stateMatch = _statePattern.firstMatch(raw);
   final stateTag = stateMatch?.group(1)?.trim() ?? 'OPEN';
@@ -66,25 +44,43 @@ RelayEnvelope parseRelayEnvelope(String? text, String fallbackTitle) {
   final timeMatch = _timePattern.firstMatch(raw);
   final timePt = timeMatch?.group(1)?.trim() ?? '';
 
-  final todos = <String>[];
-  var hasChecklist = false;
-  for (final line in lines) {
-    if (_anyTodoLinePattern.hasMatch(line)) {
-      hasChecklist = true;
-    }
-    final match = _todoLinePattern.firstMatch(line);
-    if (match != null) {
-      todos.add(match.group(1)!.trim());
-    }
-  }
+  final todos = <String>[
+    for (final line in lines)
+      if (_todoLinePattern.firstMatch(line) case final match?)
+        match.group(1)!.trim(),
+  ];
 
   return RelayEnvelope(
-    from: from,
-    to: to,
+    from: fromTo.from,
+    to: fromTo.to,
     stateTag: stateTag,
     timePt: timePt,
     todos: todos,
-    hasChecklist: hasChecklist,
+    hasChecklist: lines.any(_anyTodoLinePattern.hasMatch),
+  );
+}
+
+({String from, String to}) _parseFromAndTo(
+  String raw,
+  List<String> lines,
+  String fallbackTitle,
+) {
+  for (final line in lines) {
+    if (line.startsWith('### ') &&
+        (line.contains('→') || line.contains('->'))) {
+      final stripped = line.replaceFirst(RegExp(r'^###\s+'), '');
+      final parts = stripped.split(_headerSplitArrow);
+      return (
+        from: parts.isNotEmpty ? parts[0].trim() : '',
+        to: parts.length > 1 ? parts[1].trim() : '',
+      );
+    }
+  }
+  final fromMatch = _fromLinePattern.firstMatch(raw);
+  final toMatch = _toLinePattern.firstMatch(raw);
+  return (
+    from: fromMatch?.group(1)?.trim() ?? 'unknown',
+    to: toMatch?.group(1)?.trim() ?? fallbackTitle,
   );
 }
 
