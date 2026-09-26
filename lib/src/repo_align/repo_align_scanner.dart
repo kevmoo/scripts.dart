@@ -186,7 +186,12 @@ class RepoAlignScanner {
   _PubspecInfo _scanPubspec(Directory dir) {
     final pubspecFile = File(p.join(dir.path, 'pubspec.yaml'));
     if (!pubspecFile.existsSync()) {
-      return _scanSubdirPubspecs(dir);
+      return (
+        hasPubspec: false,
+        sdkConstraint: null,
+        isWorkspace: false,
+        packageNames: <String>[],
+      );
     }
 
     String? sdkConstraint;
@@ -219,21 +224,6 @@ class RepoAlignScanner {
     );
   }
 
-  _PubspecInfo _scanSubdirPubspecs(Directory dir) {
-    final packageNames = <String>[];
-    String? subSdkConstraint;
-    for (final sub in dir.listSync().whereType<Directory>()) {
-      if (p.basename(sub.path).startsWith('.')) continue;
-      subSdkConstraint ??= _readSubPubspec(sub, packageNames);
-    }
-    return (
-      hasPubspec: packageNames.isNotEmpty,
-      sdkConstraint: subSdkConstraint,
-      isWorkspace: false,
-      packageNames: packageNames,
-    );
-  }
-
   bool _scanWorkspaceMembers(
     Directory dir,
     Object? workspace,
@@ -260,9 +250,9 @@ class RepoAlignScanner {
     }
   }
 
-  String? _readSubPubspec(Directory sub, List<String> packageNames) {
+  void _readSubPubspec(Directory sub, List<String> packageNames) {
     final subPub = File(p.join(sub.path, 'pubspec.yaml'));
-    if (!subPub.existsSync()) return null;
+    if (!subPub.existsSync()) return;
     try {
       final doc = loadYaml(subPub.readAsStringSync());
       if (doc is YamlMap) {
@@ -270,13 +260,8 @@ class RepoAlignScanner {
         if (name != null && !packageNames.contains(name)) {
           packageNames.add(name);
         }
-        final env = doc['environment'];
-        if (env is YamlMap && env['sdk'] != null) {
-          return env['sdk'].toString();
-        }
       }
     } catch (_) {}
-    return null;
   }
 
   RepoKind _determineKind(String name, _PubspecInfo pub) {

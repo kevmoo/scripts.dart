@@ -13,7 +13,7 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
   final categorized = categorizePullRequests(prs);
 
   final home = Platform.environment['HOME'] ?? '/usr/local/google/home/kevmoo';
-  final link = 'file://$home/github/kevmoo/scripts/bin/gh_view.dart';
+  final link = 'file://$home/github/kevmoo/scripts.dart/bin/gh_view.dart';
   final buffer = StringBuffer()
     ..writeln('# 🐙 GitHub Pull Request Overview Dashboard')
     ..writeln()
