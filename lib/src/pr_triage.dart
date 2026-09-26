@@ -175,6 +175,7 @@ Future<void> _handleResolveCommand(
     prInput: prInput,
     targetDir: targetDir,
     onFail: _failTriage,
+    requireLocalRepo: false,
   );
 
   if (parsed.commentId != null && parsed.bodyText != null) {
@@ -254,18 +255,17 @@ Future<void> _handleReRequestCommand(
     prInput: prInput,
     targetDir: targetDir,
     onFail: _failTriage,
+    requireLocalRepo: false,
   );
 
+  final mentions = formatReviewerMentions(parsed.reviewerLogins);
   if (parsed.comment != null) {
     print('Posting top-level comment on PR #${context.prNumber}...');
   }
   if (parsed.dismissReviewId != null) {
     print('Dismissing stale review ${parsed.dismissReviewId}...');
   }
-  print(
-    'Re-requesting review from @${parsed.reviewerLogins} on '
-    'PR #${context.prNumber}...',
-  );
+  print('Re-requesting review from $mentions on PR #${context.prNumber}...');
 
   await reRequestPrReview(
     context,
@@ -274,7 +274,7 @@ Future<void> _handleReRequestCommand(
     dismissReviewId: parsed.dismissReviewId,
     dismissMessage: parsed.dismissMessage,
   );
-  print('Successfully re-requested review from @${parsed.reviewerLogins}.');
+  print('Successfully re-requested review from $mentions.');
 }
 
 typedef TriageData = ({

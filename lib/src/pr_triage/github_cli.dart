@@ -66,6 +66,7 @@ Future<PrContext> resolvePrContextFromArgs({
   String? prInput,
   String? targetDir,
   required Never Function(String message) onFail,
+  bool requireLocalRepo = true,
   CommandRunner runCommand = runCommand,
 }) async {
   final workingDir = targetDir != null
@@ -76,6 +77,19 @@ Future<PrContext> resolvePrContextFromArgs({
   }
 
   final (owner, repo, parsedPrNumber) = _parsePrInput(prInput, onFail);
+  if (!requireLocalRepo &&
+      targetDir == null &&
+      owner != null &&
+      repo != null &&
+      parsedPrNumber != null) {
+    return PrContext(
+      workingDir: workingDir,
+      prNumber: parsedPrNumber,
+      owner: owner,
+      repo: repo,
+    );
+  }
+
   final prNumber =
       parsedPrNumber ??
       await _detectPrNumberFromBranch(workingDir, onFail, runCommand);
@@ -685,6 +699,14 @@ String normalizeReviewerLogins(String rawLogins) => rawLogins
     .toSet()
     .join(',');
 
+/// Formats a normalized comma-separated list of reviewer logins as `@login`
+/// mentions separated by `, `.
+String formatReviewerMentions(String normalizedLogins) => normalizedLogins
+    .split(',')
+    .where((s) => s.isNotEmpty)
+    .map((r) => '@$r')
+    .join(', ');
+
 Future<void> _dismissPullRequestReview(
   PrContext context, {
   required String reviewId,
@@ -753,10 +775,10 @@ Future<void> reRequestPrReview(
   }
 
   if (cleanDismissId.isNotEmpty) {
+    final mentions = formatReviewerMentions(normalizedLogins);
     final msg = (dismissMessage != null && dismissMessage.trim().isNotEmpty)
         ? dismissMessage.trim()
-        : 'Addressed review feedback; re-requesting review from '
-              '@$normalizedLogins.';
+        : 'Addressed review feedback; re-requesting review from $mentions.';
     await _dismissPullRequestReview(
       context,
       reviewId: cleanDismissId,

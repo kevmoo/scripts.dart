@@ -975,7 +975,30 @@ void _registerReRequestCliTests() {
         normalizeReviewerLogins(' @mdebbar , @flutter-zl, mdebbar '),
         equals('mdebbar,flutter-zl'),
       );
+      expect(
+        formatReviewerMentions('mdebbar,flutter-zl'),
+        equals('@mdebbar, @flutter-zl'),
+      );
       expect(normalizeReviewerLogins('   '), isEmpty);
+    });
+
+    test('resolvePrContextFromArgs skips local repo check when '
+        'requireLocalRepo is false and full PR URL is given', () async {
+      final calls = <String>[];
+      final resolved = await resolvePrContextFromArgs(
+        prInput: 'https://github.com/flutter/flutter/pull/193271',
+        requireLocalRepo: false,
+        onFail: (msg) => throw StateError(msg),
+        runCommand: (exe, args, {workingDirectory}) async {
+          calls.add('$exe ${args.join(' ')}');
+          return '';
+        },
+      );
+
+      expect(resolved.owner, equals('flutter'));
+      expect(resolved.repo, equals('flutter'));
+      expect(resolved.prNumber, equals('193271'));
+      expect(calls, isEmpty);
     });
 
     test('reRequestPrReview executes comment, dismiss, and add-reviewer in '
@@ -1021,7 +1044,7 @@ void _registerReRequestCliTests() {
       final warnings = <String>[];
       await reRequestPrReview(
         context,
-        reviewerLogins: 'mdebbar',
+        reviewerLogins: 'mdebbar,flutter-zl',
         dismissReviewId: '5321392541',
         onWarning: warnings.add,
         runCommand: (exe, args, {workingDirectory}) async {
@@ -1035,6 +1058,13 @@ void _registerReRequestCliTests() {
       );
 
       expect(calls, hasLength(2));
+      expect(
+        calls[0],
+        contains(
+          'message=Addressed review feedback; re-requesting review from '
+          '@mdebbar, @flutter-zl.',
+        ),
+      );
       expect(warnings, hasLength(1));
       expect(
         warnings.single,
@@ -1042,7 +1072,10 @@ void _registerReRequestCliTests() {
       );
       expect(
         calls[1],
-        equals('gh pr edit 193271 -R flutter/flutter --add-reviewer mdebbar'),
+        equals(
+          'gh pr edit 193271 -R flutter/flutter '
+          '--add-reviewer mdebbar,flutter-zl',
+        ),
       );
     });
 
@@ -1090,15 +1123,16 @@ void _registerReRequestCliTests() {
         contains('Error: --comment body cannot be empty.'),
       );
 
-      final dismissHint = await _capturePrTriage(['dismiss', '5321392541']);
-      expect(dismissHint.exitCode, equals(ExitCode.usage.code));
-      expect(
-        dismissHint.lines.join('\n'),
-        contains(
-          'Did you mean "kscripts pr-triage re-request <reviewer_login> '
-          '--dismiss <review_database_id>"?',
-        ),
-      );
+      for (final (cmd, expectedHint) in [
+        ('dismiss', 're-request <reviewer_login> --dismiss'),
+        ('rerequest', 're-request <reviewer_login>'),
+        ('re_request', 're-request <reviewer_login>'),
+        ('reply', 'resolve <thread_id> <comment_id>'),
+      ]) {
+        final hintRes = await _capturePrTriage([cmd, '123']);
+        expect(hintRes.exitCode, equals(ExitCode.usage.code));
+        expect(hintRes.lines.join('\n'), contains(expectedHint));
+      }
     });
   });
 }
