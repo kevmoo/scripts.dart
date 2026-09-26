@@ -456,6 +456,78 @@ workspace:
       check(status.issues).contains('Missing complexity.yml');
     });
 
+    test('resolves defaultBaseDirPath from HOME environment variable', () {
+      final scanner = RepoAlignScanner(queryGitHubApi: false);
+      final home = Platform.environment['HOME'];
+      if (home != null) {
+        check(scanner.baseDirPath).equals(p.join(home, 'github', 'kevmoo'));
+      }
+    });
+
+    test('discovers workspace member pubspecs in vote.dart layout', () {
+      final tempDir = Directory.systemTemp.createTempSync('repo_align_vote_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final voteRepo = Directory(p.join(tempDir.path, 'vote_workspace_repo'))
+        ..createSync();
+      File(p.join(voteRepo.path, '.git')).writeAsStringSync('gitdir: ...');
+      File(p.join(voteRepo.path, 'pubspec.yaml')).writeAsStringSync('''
+name: _vote_workspace
+environment:
+  sdk: ^3.7.0
+workspace:
+  - vote
+''');
+      final voteSub = Directory(p.join(voteRepo.path, 'vote'))..createSync();
+      File(p.join(voteSub.path, 'pubspec.yaml')).writeAsStringSync('''
+name: vote
+environment:
+  sdk: ^3.7.0
+resolution: workspace
+''');
+
+      final scanner = RepoAlignScanner(
+        baseDirPath: tempDir.path,
+        queryGitHubApi: false,
+      );
+      final status = scanner.scanSingleRepo(voteRepo);
+
+      check(status.kind).equals(RepoKind.publishedPackage);
+      check(status.hasPubspec).isTrue();
+      check(status.packageNames).contains('vote');
+    });
+
+    test(
+      'ignores subdirectory pubspecs when repo has no root pubspec.yaml',
+      () {
+        final tempDir = Directory.systemTemp.createTempSync(
+          'repo_align_noroot_',
+        );
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+
+        final mixedRepo = Directory(p.join(tempDir.path, 'mixed_repo'))
+          ..createSync();
+        File(p.join(mixedRepo.path, '.git')).writeAsStringSync('gitdir: ...');
+        final subPkg = Directory(p.join(mixedRepo.path, 'profile'))
+          ..createSync();
+        File(p.join(subPkg.path, 'pubspec.yaml')).writeAsStringSync('''
+name: profile
+environment:
+  sdk: ^3.7.0
+''');
+
+        final scanner = RepoAlignScanner(
+          baseDirPath: tempDir.path,
+          queryGitHubApi: false,
+        );
+        final status = scanner.scanSingleRepo(mixedRepo);
+
+        check(status.hasPubspec).isFalse();
+        check(status.issues)
+            .not((it) => it.contains('Missing analysis_options.yaml'));
+      },
+    );
+
     test('flags missing complexity.yml on monorepoWorkspace and toolOrApp', () {
       for (final kind in [RepoKind.monorepoWorkspace, RepoKind.toolOrApp]) {
         final status = RepoAlignmentStatus(

@@ -440,6 +440,7 @@ void main() {
 
       final md = renderMarkdownReport([pr], currentTime: now);
       check(md).contains('# 🐙 GitHub Pull Request Overview Dashboard');
+      check(md).contains('/github/kevmoo/scripts.dart/bin/gh_view.dart)');
       check(md).contains(
         '| PR & Repository | Branch & Local Mapping | Review & CI Status | '
         'Last Touched | Action / Ping Status |',

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
@@ -11,8 +12,8 @@ String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {
   final now = currentTime ?? DateTime.now();
   final categorized = categorizePullRequests(prs);
 
-  const link =
-      'file:///usr/local/google/home/kevmoo/github/kevmoo/scripts.dart/bin/gh_view.dart';
+  final home = Platform.environment['HOME'] ?? '/usr/local/google/home/kevmoo';
+  final link = 'file://$home/github/kevmoo/scripts.dart/bin/gh_view.dart';
   final buffer = StringBuffer()
     ..writeln('# 🐙 GitHub Pull Request Overview Dashboard')
     ..writeln()
