@@ -21,8 +21,27 @@ class _PrTriageFailure implements Exception {
 
 Never _failTriage(String message) => throw _PrTriageFailure(message);
 
-ArgParser buildPrTriageArgParser() =>
-    buildPrContextArgParser()..addCommand('resolve', buildPrContextArgParser());
+ArgParser _buildReRequestArgParser() => buildPrContextArgParser()
+  ..addOption(
+    'dismiss',
+    help:
+        'Numeric database ID of a stale CHANGES_REQUESTED review to dismiss '
+        'before re-requesting review.',
+  )
+  ..addOption(
+    'message',
+    abbr: 'm',
+    help: 'Audit message when dismissing a review via --dismiss.',
+  )
+  ..addOption(
+    'comment',
+    abbr: 'c',
+    help: 'Optional top-level PR comment to post before re-requesting review.',
+  );
+
+ArgParser buildPrTriageArgParser() => buildPrContextArgParser()
+  ..addCommand('resolve', buildPrContextArgParser())
+  ..addCommand('re-request', _buildReRequestArgParser());
 
 void _printPrTriageUsage(ArgParser parser) {
   print(prTriageDescription);
@@ -32,10 +51,22 @@ void _printPrTriageUsage(ArgParser parser) {
   print(
     '  kscripts pr-triage resolve <thread_id> [<comment_id> "<body_text>"]',
   );
+  print(
+    '  kscripts pr-triage re-request <reviewer_login> '
+    '[--comment "<reply_body>"] '
+    '[--dismiss <review_database_id> -m "<message>"]',
+  );
   print('');
   print('Options:');
   print(parser.usage);
 }
+
+const _commonPrTriageSubcommandMistakes = <String, String>{
+  'dismiss': 're-request <reviewer_login> --dismiss <review_database_id>',
+  'rerequest': 're-request <reviewer_login>',
+  're_request': 're-request <reviewer_login>',
+  'reply': 'resolve <thread_id> <comment_id> "<body_text>"',
+};
 
 Future<void> runPrTriageCli(List<String> args) async {
   final parser = buildPrTriageArgParser();
@@ -69,10 +100,25 @@ Future<void> runPrTriageCli(List<String> args) async {
 }
 
 Future<void> _runTriage(ArgResults results) async {
-  final resolveCmd = results.command;
-  if (resolveCmd != null && resolveCmd.name == 'resolve') {
-    await _handleResolveCommand(results, resolveCmd);
+  final subCmd = results.command;
+  if (subCmd != null && subCmd.name == 'resolve') {
+    await _handleResolveCommand(results, subCmd);
     return;
+  }
+  if (subCmd != null && subCmd.name == 're-request') {
+    await _handleReRequestCommand(results, subCmd);
+    return;
+  }
+
+  if (results.rest.isNotEmpty) {
+    final firstArg = results.rest.first.trim().toLowerCase();
+    final suggestion = _commonPrTriageSubcommandMistakes[firstArg];
+    if (suggestion != null) {
+      _failTriage(
+        'Unknown pr-triage subcommand "${results.rest.first}". '
+        'Did you mean "kscripts pr-triage $suggestion"?',
+      );
+    }
   }
 
   final targetDir = results.option('dir');
@@ -129,6 +175,7 @@ Future<void> _handleResolveCommand(
     prInput: prInput,
     targetDir: targetDir,
     onFail: _failTriage,
+    requireLocalRepo: false,
   );
 
   if (parsed.commentId != null && parsed.bodyText != null) {
@@ -147,6 +194,87 @@ Future<void> _handleResolveCommand(
     body: parsed.bodyText,
   );
   print('Successfully resolved thread ${parsed.threadId}.');
+}
+
+({
+  String reviewerLogins,
+  String? dismissReviewId,
+  String? dismissMessage,
+  String? comment,
+})
+_parseReRequestArgs(ArgResults reRequestCmd) {
+  if (reRequestCmd.rest.length != 1) {
+    _failTriage(
+      'Invalid arguments for re-request subcommand.\n'
+      'Usage:\n'
+      '  kscripts pr-triage re-request <reviewer_login> '
+      '[--comment "<reply_body>"] '
+      '[--dismiss <review_database_id> -m "<message>"]',
+    );
+  }
+  final normalizedLogins = normalizeReviewerLogins(reRequestCmd.rest.single);
+  if (normalizedLogins.isEmpty) {
+    _failTriage('<reviewer_login> cannot be empty.');
+  }
+
+  final dismissId = reRequestCmd.option('dismiss')?.trim();
+  final dismissMessage = reRequestCmd.option('message');
+  final comment = reRequestCmd.option('comment');
+
+  if (dismissId != null &&
+      dismissId.isNotEmpty &&
+      !RegExp(r'^\d+$').hasMatch(dismissId)) {
+    _failTriage('<review_database_id> must be a numeric database ID.');
+  }
+  if (dismissMessage != null && (dismissId == null || dismissId.isEmpty)) {
+    _failTriage('--message requires --dismiss <review_database_id>.');
+  }
+  if (comment != null && comment.trim().isEmpty) {
+    _failTriage('--comment body cannot be empty.');
+  }
+
+  return (
+    reviewerLogins: normalizedLogins,
+    dismissReviewId: (dismissId != null && dismissId.isNotEmpty)
+        ? dismissId
+        : null,
+    dismissMessage: dismissMessage,
+    comment: comment,
+  );
+}
+
+Future<void> _handleReRequestCommand(
+  ArgResults results,
+  ArgResults reRequestCmd,
+) async {
+  final parsed = _parseReRequestArgs(reRequestCmd);
+  final targetDir = reRequestCmd.option('dir') ?? results.option('dir');
+  final prInput = reRequestCmd.option('pr') ?? results.option('pr');
+
+  final context = await resolvePrContextFromArgs(
+    prInput: prInput,
+    targetDir: targetDir,
+    onFail: _failTriage,
+    requireLocalRepo: false,
+  );
+
+  final mentions = formatReviewerMentions(parsed.reviewerLogins);
+  if (parsed.comment != null) {
+    print('Posting top-level comment on PR #${context.prNumber}...');
+  }
+  if (parsed.dismissReviewId != null) {
+    print('Dismissing stale review ${parsed.dismissReviewId}...');
+  }
+  print('Re-requesting review from $mentions on PR #${context.prNumber}...');
+
+  await reRequestPrReview(
+    context,
+    reviewerLogins: parsed.reviewerLogins,
+    comment: parsed.comment,
+    dismissReviewId: parsed.dismissReviewId,
+    dismissMessage: parsed.dismissMessage,
+  );
+  print('Successfully re-requested review from $mentions.');
 }
 
 typedef TriageData = ({
@@ -444,8 +572,11 @@ String _extractRepoFlag(Map<String, dynamic> prData) {
             'PR back into their GitHub Review Queue (`review-requested:@me`). '
             'After pushing fixes and resolving threads, re-request review '
             'via:\n'
-            '> `gh pr edit ${prData['number']}$repoFlag --add-reviewer '
-            '${unrequested.join(',')}`\n\n';
+            '> `kscripts pr-triage re-request ${unrequested.join(',')} '
+            '[--comment "<reply>"] '
+            '[--dismiss <review_database_id> -m "<reason>"]`\n'
+            '> (or `gh pr edit ${prData['number']}$repoFlag --add-reviewer '
+            '${unrequested.join(',')}`)\n\n';
 
   if (!prData.containsKey('reviewRequests')) {
     return (line: '', warningBlock: warningBlock);

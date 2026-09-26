@@ -66,6 +66,7 @@ Future<PrContext> resolvePrContextFromArgs({
   String? prInput,
   String? targetDir,
   required Never Function(String message) onFail,
+  bool requireLocalRepo = true,
   CommandRunner runCommand = runCommand,
 }) async {
   final workingDir = targetDir != null
@@ -76,6 +77,19 @@ Future<PrContext> resolvePrContextFromArgs({
   }
 
   final (owner, repo, parsedPrNumber) = _parsePrInput(prInput, onFail);
+  if (!requireLocalRepo &&
+      targetDir == null &&
+      owner != null &&
+      repo != null &&
+      parsedPrNumber != null) {
+    return PrContext(
+      workingDir: workingDir,
+      prNumber: parsedPrNumber,
+      owner: owner,
+      repo: repo,
+    );
+  }
+
   final prNumber =
       parsedPrNumber ??
       await _detectPrNumberFromBranch(workingDir, onFail, runCommand);
@@ -674,6 +688,115 @@ Future<void> replyAndResolveThread(
     threadId: threadId,
     runCommand: runCommand,
   );
+}
+
+/// Normalizes a comma-separated list of reviewer logins by stripping leading
+/// `@` prefixes and whitespace.
+String normalizeReviewerLogins(String rawLogins) => rawLogins
+    .split(',')
+    .map((s) => s.trim().replaceFirst(RegExp('^@+'), '').trim())
+    .where((s) => s.isNotEmpty)
+    .toSet()
+    .join(',');
+
+/// Formats a normalized comma-separated list of reviewer logins as `@login`
+/// mentions separated by `, `.
+String formatReviewerMentions(String normalizedLogins) => normalizedLogins
+    .split(',')
+    .where((s) => s.isNotEmpty)
+    .map((r) => '@$r')
+    .join(', ');
+
+Future<void> _dismissPullRequestReview(
+  PrContext context, {
+  required String reviewId,
+  required String message,
+  required void Function(String) onWarning,
+  required CommandRunner runCommand,
+}) async {
+  final endpoint =
+      'repos/${context.owner}/${context.repo}/pulls/${context.prNumber}'
+      '/reviews/$reviewId/dismissals';
+  try {
+    await runCommand('gh', [
+      'api',
+      '-X',
+      'PUT',
+      endpoint,
+      '-f',
+      'message=$message',
+    ], workingDirectory: context.workingDir);
+  } catch (e) {
+    onWarning(
+      'WARNING: Failed to dismiss review $reviewId ($e); '
+      'proceeding to re-request review.',
+    );
+  }
+}
+
+/// Posts an optional top-level PR [comment], optionally dismisses a stale
+/// review by its numeric [dismissReviewId] (with [dismissMessage]), and
+/// re-requests review from [reviewerLogins] (`--add-reviewer`).
+///
+/// If dismissing the review fails (e.g. `403 Forbidden` on external
+/// repositories), [onWarning] is invoked and the reviewer is still
+/// re-requested so the PR is guaranteed to re-enter their review queue.
+Future<void> reRequestPrReview(
+  PrContext context, {
+  required String reviewerLogins,
+  String? comment,
+  String? dismissReviewId,
+  String? dismissMessage,
+  void Function(String)? onWarning,
+  CommandRunner runCommand = runCommand,
+}) async {
+  final normalizedLogins = normalizeReviewerLogins(reviewerLogins);
+  if (normalizedLogins.isEmpty) {
+    throw ArgumentError('Reviewer login cannot be empty.');
+  }
+  final cleanDismissId = dismissReviewId?.trim() ?? '';
+  if (cleanDismissId.isNotEmpty && !_digitsOnly.hasMatch(cleanDismissId)) {
+    throw ArgumentError('Dismiss review ID must be a numeric database ID.');
+  }
+  if (comment != null && comment.trim().isEmpty) {
+    throw ArgumentError('Comment body cannot be empty.');
+  }
+
+  if (comment != null) {
+    await runCommand('gh', [
+      'pr',
+      'comment',
+      context.prNumber,
+      '-R',
+      '${context.owner}/${context.repo}',
+      '--body',
+      comment,
+    ], workingDirectory: context.workingDir);
+  }
+
+  if (cleanDismissId.isNotEmpty) {
+    final mentions = formatReviewerMentions(normalizedLogins);
+    final msg = (dismissMessage != null && dismissMessage.trim().isNotEmpty)
+        ? dismissMessage.trim()
+        : 'Addressed review feedback; re-requesting review from $mentions.';
+    await _dismissPullRequestReview(
+      context,
+      reviewId: cleanDismissId,
+      message: msg,
+      onWarning: onWarning ?? print,
+      runCommand: runCommand,
+    );
+  }
+
+  await runCommand('gh', [
+    'pr',
+    'edit',
+    context.prNumber,
+    '-R',
+    '${context.owner}/${context.repo}',
+    '--add-reviewer',
+    normalizedLogins,
+  ], workingDirectory: context.workingDir);
 }
 
 Future<String> _detectPrNumberFromBranch(

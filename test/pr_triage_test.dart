@@ -82,6 +82,7 @@ void main() {
   _registerTriageReportTests();
   _registerSyncStatusTests();
   _registerResolveCliTests();
+  _registerReRequestCliTests();
 }
 
 void _registerGraphQlTests() {
@@ -956,6 +957,182 @@ void _registerResolveCliTests() {
         res.lines.join('\n'),
         contains('Error: <body_text> cannot be empty.'),
       );
+    });
+  });
+}
+
+void _registerReRequestCliTests() {
+  group('reRequestPrReview and re-request CLI tests', () {
+    final context = PrContext(
+      workingDir: '/tmp/repo',
+      prNumber: '193271',
+      owner: 'flutter',
+      repo: 'flutter',
+    );
+
+    test('normalizeReviewerLogins strips leading @ and deduplicates', () {
+      expect(
+        normalizeReviewerLogins(' @mdebbar , @flutter-zl, mdebbar '),
+        equals('mdebbar,flutter-zl'),
+      );
+      expect(
+        formatReviewerMentions('mdebbar,flutter-zl'),
+        equals('@mdebbar, @flutter-zl'),
+      );
+      expect(normalizeReviewerLogins('   '), isEmpty);
+    });
+
+    test('resolvePrContextFromArgs skips local repo check when '
+        'requireLocalRepo is false and full PR URL is given', () async {
+      final calls = <String>[];
+      final resolved = await resolvePrContextFromArgs(
+        prInput: 'https://github.com/flutter/flutter/pull/193271',
+        requireLocalRepo: false,
+        onFail: (msg) => throw StateError(msg),
+        runCommand: (exe, args, {workingDirectory}) async {
+          calls.add('$exe ${args.join(' ')}');
+          return '';
+        },
+      );
+
+      expect(resolved.owner, equals('flutter'));
+      expect(resolved.repo, equals('flutter'));
+      expect(resolved.prNumber, equals('193271'));
+      expect(calls, isEmpty);
+    });
+
+    test('reRequestPrReview executes comment, dismiss, and add-reviewer in '
+        'order', () async {
+      final calls = <String>[];
+      await reRequestPrReview(
+        context,
+        reviewerLogins: '@mdebbar',
+        comment: 'Done! Updated PR description and tests.',
+        dismissReviewId: '5321392541',
+        dismissMessage: 'Addressed feedback in commit abc1234',
+        runCommand: (exe, args, {workingDirectory}) async {
+          calls.add('$exe ${args.join(' ')}');
+          return '';
+        },
+      );
+
+      expect(calls, hasLength(3));
+      expect(
+        calls[0],
+        equals(
+          'gh pr comment 193271 -R flutter/flutter --body '
+          'Done! Updated PR description and tests.',
+        ),
+      );
+      expect(
+        calls[1],
+        equals(
+          'gh api -X PUT '
+          'repos/flutter/flutter/pulls/193271/reviews/5321392541/dismissals '
+          '-f message=Addressed feedback in commit abc1234',
+        ),
+      );
+      expect(
+        calls[2],
+        equals('gh pr edit 193271 -R flutter/flutter --add-reviewer mdebbar'),
+      );
+    });
+
+    test('reRequestPrReview still re-requests review when dismissal fails with '
+        '403 Forbidden', () async {
+      final calls = <String>[];
+      final warnings = <String>[];
+      await reRequestPrReview(
+        context,
+        reviewerLogins: 'mdebbar,flutter-zl',
+        dismissReviewId: '5321392541',
+        onWarning: warnings.add,
+        runCommand: (exe, args, {workingDirectory}) async {
+          final cmd = '$exe ${args.join(' ')}';
+          calls.add(cmd);
+          if (args.any((a) => a.endsWith('/dismissals'))) {
+            throw Exception('HTTP 403: Resource not accessible by integration');
+          }
+          return '';
+        },
+      );
+
+      expect(calls, hasLength(2));
+      expect(
+        calls[0],
+        contains(
+          'message=Addressed review feedback; re-requesting review from '
+          '@mdebbar, @flutter-zl.',
+        ),
+      );
+      expect(warnings, hasLength(1));
+      expect(
+        warnings.single,
+        contains('WARNING: Failed to dismiss review 5321392541'),
+      );
+      expect(
+        calls[1],
+        equals(
+          'gh pr edit 193271 -R flutter/flutter '
+          '--add-reviewer mdebbar,flutter-zl',
+        ),
+      );
+    });
+
+    test('re-request CLI validation errors and prescriptive hints', () async {
+      final noArgs = await _capturePrTriage(['re-request']);
+      expect(noArgs.exitCode, equals(ExitCode.usage.code));
+      expect(
+        noArgs.lines.join('\n'),
+        contains('Error: Invalid arguments for re-request subcommand.'),
+      );
+
+      final badDismiss = await _capturePrTriage([
+        're-request',
+        'mdebbar',
+        '--dismiss',
+        'PRR_node_id',
+      ]);
+      expect(badDismiss.exitCode, equals(ExitCode.usage.code));
+      expect(
+        badDismiss.lines.join('\n'),
+        contains('Error: <review_database_id> must be a numeric database ID.'),
+      );
+
+      final msgWithoutDismiss = await _capturePrTriage([
+        're-request',
+        'mdebbar',
+        '-m',
+        'reason',
+      ]);
+      expect(msgWithoutDismiss.exitCode, equals(ExitCode.usage.code));
+      expect(
+        msgWithoutDismiss.lines.join('\n'),
+        contains('Error: --message requires --dismiss <review_database_id>.'),
+      );
+
+      final emptyComment = await _capturePrTriage([
+        're-request',
+        'mdebbar',
+        '--comment',
+        '   ',
+      ]);
+      expect(emptyComment.exitCode, equals(ExitCode.usage.code));
+      expect(
+        emptyComment.lines.join('\n'),
+        contains('Error: --comment body cannot be empty.'),
+      );
+
+      for (final (cmd, expectedHint) in [
+        ('dismiss', 're-request <reviewer_login> --dismiss'),
+        ('rerequest', 're-request <reviewer_login>'),
+        ('re_request', 're-request <reviewer_login>'),
+        ('reply', 'resolve <thread_id> <comment_id>'),
+      ]) {
+        final hintRes = await _capturePrTriage([cmd, '123']);
+        expect(hintRes.exitCode, equals(ExitCode.usage.code));
+        expect(hintRes.lines.join('\n'), contains(expectedHint));
+      }
     });
   });
 }
