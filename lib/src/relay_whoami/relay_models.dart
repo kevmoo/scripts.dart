@@ -87,9 +87,11 @@ final class RelayIssueRaw {
   final String state;
   final String updatedAt;
   final String createdAt;
+  final String closedAt;
   final String url;
   final String body;
   final List<String> commentBodies;
+  final String lastCommentCreatedAt;
 
   const new({
     required this.number,
@@ -100,15 +102,22 @@ final class RelayIssueRaw {
     required this.url,
     required this.body,
     required this.commentBodies,
+    this.closedAt = '',
+    this.lastCommentCreatedAt = '',
   });
 
   factory fromJson(Map<String, Object?> json) {
     final rawComments = json['comments'];
     final comments = <String>[];
+    var lastCommentCreatedAt = '';
     if (rawComments is List) {
       for (final c in rawComments) {
         if (c is Map) {
           comments.add((c['body'] ?? '').toString());
+          final created = (c['createdAt'] ?? '').toString();
+          if (created.isNotEmpty) {
+            lastCommentCreatedAt = created;
+          }
         }
       }
     }
@@ -118,9 +127,11 @@ final class RelayIssueRaw {
       state: (json['state'] ?? 'OPEN').toString(),
       updatedAt: (json['updatedAt'] ?? '').toString(),
       createdAt: (json['createdAt'] ?? '').toString(),
+      closedAt: (json['closedAt'] ?? '').toString(),
       url: (json['url'] ?? '').toString(),
       body: (json['body'] ?? '').toString(),
       commentBodies: comments,
+      lastCommentCreatedAt: lastCommentCreatedAt,
     );
   }
 }
@@ -136,6 +147,8 @@ final class EnrichedRelayIssue {
   final String url;
   final String updatedAt;
   final String createdAt;
+  final String closedAt;
+  final String lastCommentCreatedAt;
   final int commentCount;
   final RelayEnvelope opener;
   final RelayEnvelope latest;
@@ -143,6 +156,7 @@ final class EnrichedRelayIssue {
   final bool latestFromMe;
   final bool openedByMe;
   final bool addressedToMe;
+  final bool hasPostCloseComment;
 
   const new({
     required this.channel,
@@ -161,6 +175,9 @@ final class EnrichedRelayIssue {
     required this.latestFromMe,
     required this.openedByMe,
     required this.addressedToMe,
+    this.closedAt = '',
+    this.lastCommentCreatedAt = '',
+    this.hasPostCloseComment = false,
   });
 
   factory fromRaw(
@@ -186,6 +203,11 @@ final class EnrichedRelayIssue {
       }
     }
     final addressedToMe = unansweredToMe || selfPattern.hasMatch(latest.to);
+    final hasPostCloseComment =
+        raw.state == 'CLOSED' &&
+        raw.closedAt.isNotEmpty &&
+        raw.lastCommentCreatedAt.isNotEmpty &&
+        raw.lastCommentCreatedAt.compareTo(raw.closedAt) > 0;
 
     return EnrichedRelayIssue(
       channel: channel,
@@ -197,6 +219,8 @@ final class EnrichedRelayIssue {
       url: raw.url,
       updatedAt: raw.updatedAt,
       createdAt: raw.createdAt,
+      closedAt: raw.closedAt,
+      lastCommentCreatedAt: raw.lastCommentCreatedAt,
       commentCount: raw.commentBodies.length,
       opener: opener,
       latest: latest,
@@ -204,7 +228,47 @@ final class EnrichedRelayIssue {
       latestFromMe: latestFromMe,
       openedByMe: openedByMe,
       addressedToMe: addressedToMe,
+      hasPostCloseComment: hasPostCloseComment,
     );
+  }
+
+  /// Whether a `CLOSED` issue has a post-close reply addressed to us that
+  /// requires attention (either an active state tag, open checklist items, or a
+  /// new comment since the last sync watermark).
+  bool hasActionablePostCloseReply(Map<String, Object?> prevIssuesMap) {
+    if (state != 'CLOSED' ||
+        !hasPostCloseComment ||
+        latestFromMe ||
+        !addressedToMe) {
+      return false;
+    }
+    final tag = latest.stateTag;
+    if (tag == 'HANDOFF' || tag == 'BLOCKED' || tag == 'OPEN') {
+      return true;
+    }
+    if (activeTodos.isNotEmpty) {
+      return true;
+    }
+    final prev = _asStringObjectMap(prevIssuesMap[key]);
+    final prevComments = (prev['comment_count'] as num?)?.toInt() ?? 0;
+    return prev.isEmpty || commentCount > prevComments;
+  }
+
+  /// Whether this `OPEN` issue has our own `State: DONE` turn that was already
+  /// recorded at the previous sync watermark with zero new comments since then
+  /// (meaning it has settled across a turn and can now be closed).
+  bool isSettledOwnDone(Map<String, Object?> prevIssuesMap) {
+    if (state != 'OPEN' || !latestFromMe || latest.stateTag != 'DONE') {
+      return false;
+    }
+    final prev = _asStringObjectMap(prevIssuesMap[key]);
+    if (prev.isEmpty) return false;
+    final prevState = (prev['state'] ?? '').toString();
+    final prevComments = (prev['comment_count'] as num?)?.toInt() ?? -1;
+    final prevTag = (prev['last_state_tag'] ?? '').toString();
+    return prevState == 'OPEN' &&
+        prevComments == commentCount &&
+        prevTag == 'DONE';
   }
 
   Map<String, Object?> toStateSummary() => {
@@ -254,9 +318,10 @@ List<String> computeIssueDeltas(
       );
     } else if (c.commentCount > prevComments) {
       final diff = c.commentCount - prevComments;
+      final postCloseNote = c.hasPostCloseComment ? ' ⚠️ POST-CLOSE' : '';
       deltas.add(
         '  💬 +$diff NEW COMMENT(S) [${c.channelBadge}] #${c.number} '
-        '[${c.state}]: ${c.title}\n'
+        '[${c.state}$postCloseNote]: ${c.title}\n'
         '     ↳ Latest: ${c.latest.from} → ${c.latest.to} | '
         'State: ${c.latest.stateTag}$timeSuffix',
       );
@@ -321,6 +386,16 @@ Map<String, Object?> mergeIssueStateMap(
     ...corpEnriched.where((i) => i.state == 'OPEN'),
     ...ossEnriched.where((i) => i.state == 'OPEN'),
   ];
+  final postCloseActionable = <EnrichedRelayIssue>[
+    ...corpEnriched.where((i) => i.hasActionablePostCloseReply(prevCorpIssues)),
+    ...ossEnriched.where((i) => i.hasActionablePostCloseReply(prevOssIssues)),
+  ];
+  final settledOwnDoneKeys = <String>{
+    for (final i in corpEnriched)
+      if (i.isSettledOwnDone(prevCorpIssues)) 'corp:${i.key}',
+    for (final i in ossEnriched)
+      if (i.isSettledOwnDone(prevOssIssues)) 'oss:${i.key}',
+  };
 
   final anyQueryFailed = corpOk == 'false' || ossOk == 'false';
   final report = _formatRelayCheckSections(
@@ -333,6 +408,8 @@ Map<String, Object?> mergeIssueStateMap(
     anyQueryFailed: anyQueryFailed,
     deltas: deltas,
     allOpen: allOpen,
+    postCloseActionable: postCloseActionable,
+    settledOwnDoneKeys: settledOwnDoneKeys,
   );
 
   final newState = _buildUpdatedRelayState(
@@ -368,10 +445,13 @@ String _formatRelayCheckSections({
   required bool anyQueryFailed,
   required List<String> deltas,
   required List<EnrichedRelayIssue> allOpen,
+  required List<EnrichedRelayIssue> postCloseActionable,
+  required Set<String> settledOwnDoneKeys,
 }) {
-  final inboundOnUs = allOpen
-      .where((i) => !i.latestFromMe && i.addressedToMe)
-      .toList();
+  final inboundOnUs = <EnrichedRelayIssue>[
+    ...allOpen.where((i) => !i.latestFromMe && i.addressedToMe),
+    ...postCloseActionable,
+  ];
   final waitingOnOthers = allOpen
       .where((i) => i.latestFromMe || (i.openedByMe && !i.addressedToMe))
       .toList();
@@ -421,7 +501,16 @@ String _formatRelayCheckSections({
     )
     ..writeln(
       waitingOnOthers.isNotEmpty
-          ? waitingOnOthers.map(_formatOutboundIssue).join('\n\n')
+          ? waitingOnOthers
+                .map(
+                  (i) => _formatOutboundIssue(
+                    i,
+                    isSettledDone: settledOwnDoneKeys.contains(
+                      '${i.channel}:${i.key}',
+                    ),
+                  ),
+                )
+                .join('\n\n')
           : anyQueryFailed
           ? '  ⚪ 0 verified outbound threads on reachable channels.'
           : '  ✅ Not waiting on any other agents '
@@ -497,14 +586,22 @@ String _formatInboundIssue(EnrichedRelayIssue i) {
       ? '\n     📋 Open Checklist Items (${i.activeTodos.length}):\n'
             '${i.activeTodos.map((t) => '        • [ ] $t').join('\n')}'
       : '';
-  return '  🔴 [${i.channelBadge}] #${i.number}: ${i.title}'
+  final statusBadge = i.state == 'CLOSED'
+      ? ' ⚠️ [CLOSED — Post-Close Reply]'
+      : i.latest.stateTag == 'DONE'
+      ? ' 🟢 [SETTLING — Verify DONE & Close]'
+      : '';
+  return '  🔴 [${i.channelBadge}] #${i.number}$statusBadge: ${i.title}'
       '$urlLine\n'
       '     📨 Latest Turn: ${i.latest.from} → ${i.latest.to} | '
       'State: ${i.latest.stateTag}$sentSegment | '
       'Comments: ${i.commentCount}$todoSection';
 }
 
-String _formatOutboundIssue(EnrichedRelayIssue i) {
+String _formatOutboundIssue(
+  EnrichedRelayIssue i, {
+  bool isSettledDone = false,
+}) {
   final urlLine = i.url.isNotEmpty ? '\n     🔗 ${i.url}' : '';
   final sentSegment = i.latest.timePt.isNotEmpty
       ? ' | Sent: ${i.latest.timePt}'
@@ -514,7 +611,12 @@ String _formatOutboundIssue(EnrichedRelayIssue i) {
             '(${i.activeTodos.length}):\n'
             '${i.activeTodos.map((t) => '        • [ ] $t').join('\n')}'
       : '';
-  return '  ⏳ [${i.channelBadge}] #${i.number}: ${i.title}'
+  final statusBadge = isSettledDone
+      ? ' ✅ [SETTLED DONE — Ready to Close]'
+      : i.latest.stateTag == 'DONE'
+      ? ' ⏳ [SETTLING DONE — Leave Open This Turn]'
+      : '';
+  return '  ⏳ [${i.channelBadge}] #${i.number}$statusBadge: ${i.title}'
       '$urlLine\n'
       '     🎯 Waiting On: ${i.latest.to} | '
       'Last State: ${i.latest.stateTag}$sentSegment | '

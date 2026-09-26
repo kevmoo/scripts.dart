@@ -236,5 +236,185 @@ Landed PR #113 on kevmoo/scripts.dart.
       expect(forBluefin.addressedToMe, isFalse);
       expect(forBluefin.latestFromMe, isTrue);
     });
+
+    test('surfaces CLOSED issues with actionable post-close replies and '
+        'badges SETTLING / SETTLED DONE threads', () {
+      final selfPattern = RegExp('Enterprise Rodete|All', caseSensitive: false);
+
+      // 1. Closed issue #10 with a post-close reply (like the 38s race on #10).
+      const closedWithPostCloseReply = RelayIssueRaw(
+        number: 10,
+        title: '🔁 [review-queue] kevmoo/gcp-http-bench #4 #6 #5',
+        state: 'CLOSED',
+        updatedAt: '2026-09-26T03:04:06Z',
+        createdAt: '2026-09-26T02:35:00Z',
+        closedAt: '2026-09-26T03:03:29Z',
+        url: 'https://github.com/kevmoo/agent-relay/issues/10',
+        body: '''
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+> **State**: `HANDOFF` | **Time**: `2026-09-25 19:35 PT`
+''',
+        commentBodies: <String>[
+          '''
+### ☁️🐧⚡ Enterprise Rodete → 🐧🛠️🐳 Bluefin-DX
+> **State**: `DONE` | **Time**: `2026-09-25 20:03 PT`
+''',
+          '''
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+> **State**: `ACKED` | **Time**: `2026-09-25 20:04 PT`
+''',
+        ],
+        lastCommentCreatedAt: '2026-09-26T03:04:06Z',
+      );
+
+      // 2. Historical closed issue #1 with an already-synced ACKED post-close
+      // comment (should NOT re-trigger Action Required).
+      const historicalClosedAcked = RelayIssueRaw(
+        number: 1,
+        title: '👋 Hello from Bluefin-DX',
+        state: 'CLOSED',
+        updatedAt: '2026-09-19T21:56:45Z',
+        createdAt: '2026-09-19T21:00:00Z',
+        closedAt: '2026-09-19T21:37:31Z',
+        url: 'https://github.com/kevmoo/agent-relay/issues/1',
+        body: '''
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+> **State**: `OPEN` | **Time**: `2026-09-19 14:00 PT`
+''',
+        commentBodies: <String>[
+          '''
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+> **State**: `ACKED` | **Time**: `2026-09-19 14:56 PT`
+''',
+        ],
+        lastCommentCreatedAt: '2026-09-19T21:56:45Z',
+      );
+
+      // 3. Open issue #11 where peer posted State: DONE (ready for us to verify
+      // & close).
+      const peerSettlingDone = RelayIssueRaw(
+        number: 11,
+        title: 'Peer DONE thread',
+        state: 'OPEN',
+        updatedAt: '2026-09-26T04:00:00Z',
+        createdAt: '2026-09-26T03:00:00Z',
+        url: 'https://github.com/kevmoo/agent-relay/issues/11',
+        body: '''
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+> **State**: `DONE` | **Time**: `2026-09-25 21:00 PT`
+''',
+        commentBodies: <String>[],
+      );
+
+      // 4. Open issue #12 where WE posted State: DONE and it was already
+      // recorded at the previous sync watermark with 0 new comments.
+      const ownSettledDone = RelayIssueRaw(
+        number: 12,
+        title: 'Our settled DONE thread',
+        state: 'OPEN',
+        updatedAt: '2026-09-26T03:50:00Z',
+        createdAt: '2026-09-26T03:00:00Z',
+        url: 'https://github.com/kevmoo/agent-relay/issues/12',
+        body: '''
+### ☁️🐧⚡ Enterprise Rodete → 🐧🛠️🐳 Bluefin-DX
+> **State**: `DONE` | **Time**: `2026-09-25 20:50 PT`
+''',
+        commentBodies: <String>[],
+      );
+
+      final ossEnriched =
+          [
+                closedWithPostCloseReply,
+                historicalClosedAcked,
+                peerSettlingDone,
+                ownSettledDone,
+              ]
+              .map(
+                (r) => EnrichedRelayIssue.fromRaw(
+                  r,
+                  channel: 'oss',
+                  repo: 'kevmoo/agent-relay',
+                  selfPattern: selfPattern,
+                ),
+              )
+              .toList();
+
+      final prevState = <String, Object?>{
+        'last_sync_utc': '2026-09-26T03:03:30Z',
+        'last_sync_pt': '2026-09-25 20:03 PDT',
+        'corp': {'git_head': '', 'issues': <String, Object?>{}},
+        'oss': {
+          'git_head': 'f76b591',
+          'issues': <String, Object?>{
+            '1': {
+              'state': 'CLOSED',
+              'comment_count': 1,
+              'updatedAt': '2026-09-19T21:56:45Z',
+              'last_state_tag': 'ACKED',
+            },
+            '10': {
+              'state': 'CLOSED',
+              'comment_count': 1,
+              'updatedAt': '2026-09-26T03:03:29Z',
+              'last_state_tag': 'DONE',
+            },
+            '12': {
+              'state': 'OPEN',
+              'comment_count': 0,
+              'updatedAt': '2026-09-26T03:50:00Z',
+              'last_state_tag': 'DONE',
+            },
+          },
+        },
+      };
+
+      final built = buildRelayCheckReport(
+        moniker: '☁️🐧⚡ Enterprise Rodete',
+        lastSyncPt: '2026-09-25 20:03 PDT',
+        nowUtc: '2026-09-26T04:05:00Z',
+        nowPt: '2026-09-25 21:05 PDT',
+        corpRepo: 'corp',
+        ossRepo: 'kevmoo/agent-relay',
+        corpOk: 'true',
+        corpErr: '',
+        ossOk: 'true',
+        ossErr: '',
+        newCorpSha: '',
+        newOssSha: 'f76b591',
+        prevState: prevState,
+        corpEnriched: const <EnrichedRelayIssue>[],
+        ossEnriched: ossEnriched,
+      );
+
+      expect(
+        built.report,
+        contains(
+          '💬 +1 NEW COMMENT(S) [🌐 kevmoo/agent-relay] #10 '
+          '[CLOSED ⚠️ POST-CLOSE]',
+        ),
+      );
+      expect(
+        built.report,
+        contains(
+          '🔴 [🌐 kevmoo/agent-relay] #10 ⚠️ [CLOSED — Post-Close Reply]',
+        ),
+      );
+      expect(
+        built.report,
+        isNot(contains('#1 ⚠️ [CLOSED — Post-Close Reply]')),
+      );
+      expect(
+        built.report,
+        contains(
+          '🔴 [🌐 kevmoo/agent-relay] #11 🟢 [SETTLING — Verify DONE & Close]',
+        ),
+      );
+      expect(
+        built.report,
+        contains(
+          '⏳ [🌐 kevmoo/agent-relay] #12 ✅ [SETTLED DONE — Ready to Close]',
+        ),
+      );
+    });
   });
 }

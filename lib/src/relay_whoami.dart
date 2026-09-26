@@ -846,7 +846,8 @@ Future<List<String>> _formatGitCommitDeltas({
 
 Future<({List<RelayIssueRaw> issues, String ok, String error})>
 _fetchChannelIssues(String cli, String repo) async {
-  const fields = 'number,title,state,updatedAt,createdAt,url,body,comments';
+  const fields =
+      'number,title,state,updatedAt,createdAt,closedAt,url,body,comments';
   final results = await Future.wait([
     Process.run(cli, [
       'issue',
