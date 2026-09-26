@@ -10,6 +10,7 @@ final _timePattern = RegExp(
   r'\*\*Time\*\*:\s*`?([0-9]{4}-[0-9]{2}-[0-9]{2}[^`|\n]+)`?',
 );
 final _todoLinePattern = RegExp(r'^\s*[-*]?\s*\[ \]\s+(.*)$');
+final _anyTodoLinePattern = RegExp(r'^\s*[-*]?\s*\[[ xX]\]\s+');
 
 /// Parsed metadata from a relay issue body or comment envelope.
 final class RelayEnvelope {
@@ -18,6 +19,7 @@ final class RelayEnvelope {
   final String stateTag;
   final String timePt;
   final List<String> todos;
+  final bool hasChecklist;
 
   const new({
     required this.from,
@@ -25,6 +27,7 @@ final class RelayEnvelope {
     required this.stateTag,
     required this.timePt,
     required this.todos,
+    this.hasChecklist = false,
   });
 }
 
@@ -33,29 +36,7 @@ final class RelayEnvelope {
 RelayEnvelope parseRelayEnvelope(String? text, String fallbackTitle) {
   final raw = text ?? '';
   final lines = raw.split('\n');
-
-  String? headerLine;
-  for (final line in lines) {
-    if (line.startsWith('### ') &&
-        (line.contains('→') || line.contains('->'))) {
-      headerLine = line;
-      break;
-    }
-  }
-
-  String from;
-  String to;
-  if (headerLine != null) {
-    final stripped = headerLine.replaceFirst(RegExp(r'^###\s+'), '');
-    final parts = stripped.split(_headerSplitArrow);
-    from = parts.isNotEmpty ? parts[0].trim() : '';
-    to = parts.length > 1 ? parts[1].trim() : '';
-  } else {
-    final fromMatch = _fromLinePattern.firstMatch(raw);
-    final toMatch = _toLinePattern.firstMatch(raw);
-    from = fromMatch?.group(1)?.trim() ?? 'unknown';
-    to = toMatch?.group(1)?.trim() ?? fallbackTitle;
-  }
+  final fromTo = _parseFromAndTo(raw, lines, fallbackTitle);
 
   final stateMatch = _statePattern.firstMatch(raw);
   final stateTag = stateMatch?.group(1)?.trim() ?? 'OPEN';
@@ -63,20 +44,43 @@ RelayEnvelope parseRelayEnvelope(String? text, String fallbackTitle) {
   final timeMatch = _timePattern.firstMatch(raw);
   final timePt = timeMatch?.group(1)?.trim() ?? '';
 
-  final todos = <String>[];
-  for (final line in lines) {
-    final match = _todoLinePattern.firstMatch(line);
-    if (match != null) {
-      todos.add(match.group(1)!.trim());
-    }
-  }
+  final todos = <String>[
+    for (final line in lines)
+      if (_todoLinePattern.firstMatch(line) case final match?)
+        match.group(1)!.trim(),
+  ];
 
   return RelayEnvelope(
-    from: from,
-    to: to,
+    from: fromTo.from,
+    to: fromTo.to,
     stateTag: stateTag,
     timePt: timePt,
     todos: todos,
+    hasChecklist: lines.any(_anyTodoLinePattern.hasMatch),
+  );
+}
+
+({String from, String to}) _parseFromAndTo(
+  String raw,
+  List<String> lines,
+  String fallbackTitle,
+) {
+  for (final line in lines) {
+    if (line.startsWith('### ') &&
+        (line.contains('→') || line.contains('->'))) {
+      final stripped = line.replaceFirst(RegExp(r'^###\s+'), '');
+      final parts = stripped.split(_headerSplitArrow);
+      return (
+        from: parts.isNotEmpty ? parts[0].trim() : '',
+        to: parts.length > 1 ? parts[1].trim() : '',
+      );
+    }
+  }
+  final fromMatch = _fromLinePattern.firstMatch(raw);
+  final toMatch = _toLinePattern.firstMatch(raw);
+  return (
+    from: fromMatch?.group(1)?.trim() ?? 'unknown',
+    to: toMatch?.group(1)?.trim() ?? fallbackTitle,
   );
 }
 
@@ -190,18 +194,12 @@ final class EnrichedRelayIssue {
     final commentEnvelopes = [
       for (final b in raw.commentBodies) parseRelayEnvelope(b, raw.title),
     ];
-    final latest = commentEnvelopes.isNotEmpty ? commentEnvelopes.last : opener;
-    final activeTodos = latest.todos.isNotEmpty ? latest.todos : opener.todos;
+    final allTurns = [opener, ...commentEnvelopes];
+    final latest = allTurns.last;
+    final activeTodos = _resolveActiveTodos(raw.state, allTurns, latest);
     final latestFromMe = selfPattern.hasMatch(latest.from);
     final openedByMe = selfPattern.hasMatch(opener.from);
-    var unansweredToMe = selfPattern.hasMatch(raw.title);
-    for (final turn in [opener, ...commentEnvelopes]) {
-      if (selfPattern.hasMatch(turn.from)) {
-        unansweredToMe = false;
-      } else if (selfPattern.hasMatch(turn.to)) {
-        unansweredToMe = true;
-      }
-    }
+    final unansweredToMe = _isUnansweredToMe(raw.title, allTurns, selfPattern);
     final addressedToMe = unansweredToMe || selfPattern.hasMatch(latest.to);
     final hasPostCloseComment =
         raw.state == 'CLOSED' &&
@@ -246,7 +244,7 @@ final class EnrichedRelayIssue {
     if (tag == 'HANDOFF' || tag == 'BLOCKED' || tag == 'OPEN') {
       return true;
     }
-    if (activeTodos.isNotEmpty) {
+    if (latest.todos.isNotEmpty) {
       return true;
     }
     final prev = _asStringObjectMap(prevIssuesMap[key]);
@@ -621,4 +619,33 @@ String _formatOutboundIssue(
       '     🎯 Waiting On: ${i.latest.to} | '
       'Last State: ${i.latest.stateTag}$sentSegment | '
       'Comments: ${i.commentCount}$todoSection';
+}
+
+List<String> _resolveActiveTodos(
+  String state,
+  List<RelayEnvelope> allTurns,
+  RelayEnvelope latest,
+) {
+  if (state != 'OPEN') return latest.todos;
+  for (var idx = allTurns.length - 1; idx >= 0; idx--) {
+    final turn = allTurns[idx];
+    if (turn.hasChecklist) return turn.todos;
+  }
+  return const <String>[];
+}
+
+bool _isUnansweredToMe(
+  String title,
+  List<RelayEnvelope> allTurns,
+  RegExp selfPattern,
+) {
+  var unanswered = selfPattern.hasMatch(title);
+  for (final turn in allTurns) {
+    if (selfPattern.hasMatch(turn.from)) {
+      unanswered = false;
+    } else if (selfPattern.hasMatch(turn.to)) {
+      unanswered = true;
+    }
+  }
+  return unanswered;
 }
