@@ -75,8 +75,8 @@ kscripts pr-triage re-request --dir /path/to/target-repository <reviewer_login> 
   target before taking action.
 
 1. **Run `kscripts pr-triage`**: Execute `kscripts pr-triage` (or the bare
-   `pr-triage` shim) using `run_command`. Pass `--dir` (or `-C`) to specify the
-   target repository or worktree directory:
+   `pr-triage` shim) in your shell tool (`run_command` / `Bash`). Pass `--dir`
+   (or `-C`) to specify the target repository or worktree directory:
 
    ```bash
    kscripts pr-triage --dir <path-to-target-repository>
