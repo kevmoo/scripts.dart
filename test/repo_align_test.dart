@@ -456,6 +456,39 @@ workspace:
       check(status.issues).contains('Missing complexity.yml');
     });
 
+    test('resolves defaultBaseDirPath from HOME environment variable', () {
+      final scanner = RepoAlignScanner(queryGitHubApi: false);
+      final home = Platform.environment['HOME'];
+      if (home != null) {
+        check(scanner.baseDirPath).equals(p.join(home, 'github', 'kevmoo'));
+      }
+    });
+
+    test('discovers subpackage pubspecs in vote.dart layout', () {
+      final tempDir = Directory.systemTemp.createTempSync('repo_align_vote_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final voteRepo = Directory(p.join(tempDir.path, 'vote.dart'))
+        ..createSync();
+      File(p.join(voteRepo.path, '.git')).writeAsStringSync('gitdir: ...');
+      final voteSub = Directory(p.join(voteRepo.path, 'vote'))..createSync();
+      File(p.join(voteSub.path, 'pubspec.yaml')).writeAsStringSync('''
+name: vote
+environment:
+  sdk: ^3.7.0
+''');
+
+      final scanner = RepoAlignScanner(
+        baseDirPath: tempDir.path,
+        queryGitHubApi: false,
+      );
+      final status = scanner.scanSingleRepo(voteRepo);
+
+      check(status.kind).equals(RepoKind.publishedPackage);
+      check(status.hasPubspec).isTrue();
+      check(status.packageNames).contains('vote');
+    });
+
     test('flags missing complexity.yml on monorepoWorkspace and toolOrApp', () {
       for (final kind in [RepoKind.monorepoWorkspace, RepoKind.toolOrApp]) {
         final status = RepoAlignmentStatus(
