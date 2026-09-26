@@ -268,7 +268,8 @@ Landed PR #113 on kevmoo/scripts.dart.
       );
 
       // 2. Historical closed issue #1 with an already-synced ACKED post-close
-      // comment (should NOT re-trigger Action Required).
+      // comment and unchecked opener todos (should NOT re-trigger Action
+      // Required).
       const historicalClosedAcked = RelayIssueRaw(
         number: 1,
         title: '👋 Hello from Bluefin-DX',
@@ -280,6 +281,7 @@ Landed PR #113 on kevmoo/scripts.dart.
         body: '''
 ### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
 > **State**: `OPEN` | **Time**: `2026-09-19 14:00 PT`
+- [ ] Original opener todo item
 ''',
         commentBodies: <String>[
           '''

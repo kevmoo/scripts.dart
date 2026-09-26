@@ -191,7 +191,11 @@ final class EnrichedRelayIssue {
       for (final b in raw.commentBodies) parseRelayEnvelope(b, raw.title),
     ];
     final latest = commentEnvelopes.isNotEmpty ? commentEnvelopes.last : opener;
-    final activeTodos = latest.todos.isNotEmpty ? latest.todos : opener.todos;
+    final activeTodos = latest.todos.isNotEmpty
+        ? latest.todos
+        : (raw.state == 'OPEN' && latest.stateTag != 'DONE'
+              ? opener.todos
+              : const <String>[]);
     final latestFromMe = selfPattern.hasMatch(latest.from);
     final openedByMe = selfPattern.hasMatch(opener.from);
     var unansweredToMe = selfPattern.hasMatch(raw.title);
@@ -246,7 +250,7 @@ final class EnrichedRelayIssue {
     if (tag == 'HANDOFF' || tag == 'BLOCKED' || tag == 'OPEN') {
       return true;
     }
-    if (activeTodos.isNotEmpty) {
+    if (latest.todos.isNotEmpty) {
       return true;
     }
     final prev = _asStringObjectMap(prevIssuesMap[key]);
