@@ -230,6 +230,11 @@ kscripts pr-triage re-request --dir /path/to/target-repository <reviewer_login> 
    - Follow standard development workflows: run formatting (`dart format`),
      analysis (`dart analyze`), and tests (`dart test`) locally to verify fixes
      before finishing.
+   - **Live Read-Only / Dry-Run Smoke Check**: After unit tests and formatters
+     pass, if the patch touches a CLI, script, or query with a side-effect-free
+     execution path (`--help`, `--dry-run`, `readonly`, `status`/`list`/`view`),
+     auto-run it against real state when `<= 15s` and `~0` risk, or explicitly
+     offer the read-only verification in Step 8 when `> 15s`.
 
 8. **Verify Git State and Offer Unified Resolution Menu**:
    - **Check Git Status first**: Run `git status -s --untracked=no` to check
