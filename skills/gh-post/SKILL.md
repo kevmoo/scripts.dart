@@ -48,8 +48,6 @@ graph TD
     D --> E["5. Execution & Verification<br><code>gh issue/pr create --body-file</code>"]
 ```
 
----
-
 ### Step 1: Intake & Disambiguation (STOP. DON'T GUESS.)
 
 The agent MUST have crystal-clear clarity on two fundamental parameters before
@@ -68,8 +66,6 @@ doing any work:
 > user for clarification** using `ask_question` or chat before proceeding. Never
 > guess or fabricate targets.
 
----
-
 ### Step 2: Repository Orientation
 
 Before drafting, run `kscripts gh-orient` (or the bare `gh-orient` shim) to
@@ -77,24 +73,17 @@ inspect the target repository's maintainers, title prefixes, label vocabulary,
 and native templates:
 
 ```bash
-# For a local git repository checkout:
 kscripts gh-orient --dir <path-to-repo>
-
-# For a remote repository (zero local clone required):
-kscripts gh-orient -R invertase/melos
+kscripts gh-orient -R <owner/repo>
 ```
 
-- **What it gathers**:
-  - Active human maintainers and reviewers (filtering out automated bots).
-  - Common issue title prefixes (`request:`, `[analyzer]`, `area/foo:`).
-  - Common PR title prefixes (`feat(scope):`, `fix(scope):`, `chore:`).
-  - Repository label vocabulary and detected issue/PR form schemas (`.yml` field
-    IDs).
+- **What it gathers**: Active human maintainers (filtering out bots), common
+  issue title prefixes (`request:`, `[analyzer]`, `area/foo:`), PR title
+  prefixes (`feat(scope):`, `fix(scope):`, `chore:`), repository label
+  vocabulary, and detected issue/PR form schemas (`.yml` field IDs).
 - **Slop Contagion Guardrail**: Use orientation output _strictly_ for taxonomy,
   prefixes, and template adherence. Do NOT adopt decorative slop, emojis, or
   conversational fluff found in historical repository posts.
-
----
 
 ### Step 3: Draft into an ARTIFACT First
 
@@ -102,30 +91,27 @@ Always draft the complete title and body into a dedicated Markdown artifact in
 the conversation artifact directory (`<appDataDir>/brain/<conversation-id>/`)
 before touching the GitHub CLI, explicitly namespaced by repository:
 
-- **For Issues**: `draft_github_<owner>_<repo>_issue.md` _(e.g.,
-  `draft_github_invertase_melos_issue.md` or
-  `draft_github_kevmoo_scripts_dart_issue.md`)_
-- **For Pull Requests**: `draft_github_<owner>_<repo>_pr.md` _(e.g.,
-  `draft_github_invertase_melos_pr.md` or
-  `draft_github_kevmoo_scripts_dart_pr.md`)_
+- **For Issues**: `draft_github_<owner>_<repo>_issue.md`
+- **For Pull Requests**: `draft_github_<owner>_<repo>_pr.md`
 
 Always provide `ArtifactMetadata` with `RequestFeedback: true` so the user can
-review the rendered draft directly in the UI.
+review the rendered draft directly in the UI. Consult
+[`references/templates.md`](references/templates.md) for the complete Bug
+Report, Feature Proposal, Pull Request templates, title pattern tables, and
+GitHub YAML Issue Form field mappings.
 
 #### Core Philosophy & Anti-Slop Rules (Negative Invariants)
 
 Maintainers suffer from low-effort LLM fatigue. A good submission takes under 15
 seconds to triage. Strictly enforce:
 
-- **No Decorative Emojis**: Never prefix titles, headers, or bullet points with
-  emojis (`🚀`, `🐛`, `📋`, `💡`, `✨`, `⚠️`, `🔍`).
+- **No Decorative Emojis on GitHub**: Never prefix published GitHub titles,
+  headers, or bullet points with emojis (`🚀`, `🐛`, `📋`, `💡`, `✨`, `⚠️`).
 - **No Gratuitous Dividers**: Do not insert `---` horizontal rules between every
   minor section. Standard Markdown headers (`###`) provide sufficient hierarchy.
-- **No Conversational Fluff or Pleasantries**:
-  - Omit opening pleasantries (_"While investigating the codebase..."_, _"I hope
-    this helps..."_).
-  - Omit closing pleasantries (_"Let me know what you think!"_, _"I would be
-    happy to submit a PR..."_).
+- **No Conversational Fluff or Pleasantries**: Omit opening pleasantries
+  (_"While investigating the codebase..."_) and closing pleasantries (_"Let me
+  know what you think!"_, _"I would be happy to submit a PR..."_).
 - **No Speculative Architecture Essays**:
   - In bug reports: State the observed defect, provide exact error logs/repro
     steps, and limit proposed fixes to 1–2 factual sentences (or omit entirely).
@@ -134,150 +120,74 @@ seconds to triage. Strictly enforce:
 - **No Inline Multiline Shell Escapes**: Never pass multiline Markdown inline
   via `--body "line 1\nline 2"`. Always use `--body-file`.
 
----
+#### Explicit 3D Paranoia Header for PR Draft Previews (`OQ3`)
+
+At the top of every PR draft artifact preview
+(`draft_github_<owner>_<repo>_pr.md`) and in chat, display the computed **3D
+Paranoia Classification** line:
+
+```markdown
+🛡️ Paranoia Tier: Ring <0..4B> (<Label>) · Confidence: <High|Low> · Door: <🚪 One-Way | 🔄 Two-Way>
+```
+
+| Dimension      | Values & Classification Rules                                                                                                                                                                                                                                                                                                                            |
+| :------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Reuse Ring** | `Ring 0` (Personal dotfiles & private configs: `personal_dotfiles`) · `Ring 2` (Public skills & utilities: `kevmoo_skills`, `scripts.dart`) · `Ring 3` (Published `pub.dev` packages: `analytica.dart`, `json_serializable`) · `Ring 4A` (Upstream Dart/Flutter framework & packages) · `Ring 4B` (Upstream C++, Dart VM internals, WIMP, Skwasm engine) |
+| **Confidence** | `High` (Pure Dart, CLI, package & framework code) · `Low` (Unfamiliar C++, VM internals, WIMP/Skwasm/engine plumbing)                                                                                                                                                                                                                                    |
+| **Door Type**  | `🚪 One-Way` (Public `api.txt` / CLI flag / JSON schema delta, SemVer `-wip` bump, DB migration, CI release workflow) · `🔄 Two-Way` (Internal `lib/src/` refactors, isolated tests, docs)                                                                                                                                                               |
+
+_Note_: Strip the `🛡️ Paranoia Tier:` preview banner when writing
+`/tmp/post_body.md` in Step 5 so the published GitHub PR body starts cleanly at
+`### Rationale`.
+
+#### Conditional `### Flow / Surface Delta` Rubric for PRs (`FU3`)
+
+Include a compact ASCII flow or Mermaid diagram under `### Flow / Surface Delta`
+(between `### Summary of Changes` and `### Verification`) **only** when at least
+one trigger holds:
+
+1. **Public API / CLI / Config Surface Changes**: `api.txt` changes, new or
+   modified CLI flags/subcommands, exit codes, or config/JSON schemas (render a
+   compact `Before -> After` ASCII or `diff` block `<= 12` lines).
+2. **Multi-File Control-Flow or State Routing (`>= 3` files)**: `>= 3`
+   production files have altered control-flow, pipeline stages, or state
+   transitions (render a compact ASCII pipeline or `<= 6-node` Mermaid
+   `flowchart LR` / `sequenceDiagram` with `<= 50 chars` per node label).
+3. **Benchmark / Hot-Path Architecture Changes**: Algorithmic or hot-path
+   performance changes (render a compact `Before vs. After` delta table).
+
+**Omission Rule**: If none of the three triggers hold (e.g., isolated bug fix,
+single-file refactor, test/doc update), **omit** `### Flow / Surface Delta`
+entirely.
 
 ### Step 4: Mandatory Approval Gate (Hard Stop)
 
-Before running `gh issue create` or `gh pr create`, the agent MUST halt
-execution and prompt the user for explicit confirmation using `ask_question`.
+Before running `gh issue create` or `gh pr create`, halt execution and prompt
+the user for explicit confirmation using `ask_question`:
 
-```dart
-// Example confirmation prompt
-ask_question({
-  questions: [
-    {
-      question: "I have prepared the draft in the artifact. Would you like to create the GitHub Issue now?",
-      options: [
-        "(Recommended) Yes, create issue via gh issue create",
-        "No, keep as draft only"
-      ]
-    }
-  ]
-});
-```
-
-- **If Approved**: Proceed to Step 5.
-- **If Declined / Paused**: Keep the artifact as draft and yield cleanly.
-
----
+- Option 1: `(Recommended) Yes, create <issue|PR> via gh <issue|pr> create`
+- Option 2: `No, keep as draft only`
 
 ### Step 5: Execution & Verification
 
-1. **Write Body to Temporary File**:
+1. **Pre-PR Check (For PRs in `~/github/kevmoo/*`)**: Run `kscripts pr-check`
+   before creating a PR.
+2. **Write Body to Temporary File & Submit**:
    ```bash
-   # Extract the body content from the artifact to /tmp/post_body.md
-   ```
-2. **Execute Submission**:
-   ```bash
-   # For Issues:
+   # Write body (stripping local preview header) to /tmp/post_body.md, then:
    gh issue create -R owner/repo --title "[subsystem] Imperative Title" --body-file /tmp/post_body.md
-   rm /tmp/post_body.md
-
-   # For Pull Requests:
+   # OR for Pull Requests:
    gh pr create --title "feat(scope): imperative summary" --body-file /tmp/post_body.md
    rm /tmp/post_body.md
    ```
-3. **Verify Output**: Confirm the submission succeeded and output the clickable
-   link (`https://github.com/owner/repo/issues/123` or
-   `https://github.com/owner/repo/pull/123`).
+3. **Verify Output**: Confirm submission succeeded and output the clickable
+   link.
 
----
+## Title Conventions & Templates
 
-## Title Conventions & Disambiguation
-
-Use concise, imperative titles (≤70 characters):
-
-- **When Authoring an Issue**: Adopt the repository's issue prefix convention
-  (e.g., `request: ...`, `[subsystem] ...`, `area/foo: ...`).
-- **When Authoring a PR**: Adopt Conventional Commits (`feat(scope): ...`,
-  `fix(scope): ...`, `refactor(scope): ...`) unless the repository explicitly
-  mandates an alternative format.
-
-| Post Type   | Format Pattern                      | High-Signal Example                                               | Slop Example to Avoid                            |
-| :---------- | :---------------------------------- | :---------------------------------------------------------------- | :----------------------------------------------- |
-| **Bug**     | `[subsystem] Failure on condition`  | `[analyzer] Crash with NullPointer when config.json is empty`     | `Bug in analyzer` or `[CRITICAL] System failure` |
-| **Bug**     | `subsystem: Failure on condition`   | `cli: Flag --output fails when target directory is missing`       | `CLI tool is broken`                             |
-| **Feature** | `[subsystem] Imperative capability` | `[auth] Support PKCE flow in OAuth2 authentication client`        | `Feature request: make authentication better`    |
-| **Feature** | `request: Imperative capability`    | `request: avoid cascading releases when constraints allow update` | `Feature idea for melos`                         |
-| **PR**      | `type(scope): imperative summary`   | `feat(orient): add remote repo support and bot filter`            | `Updates and fixes`                              |
-
----
-
-## Standard Content Templates
-
-### 1. Bug Report Template
-
-````markdown
-### Summary
-1–2 sentence description of the failure and trigger condition.
-
-### Steps to Reproduce
-1. Execute `tool_name --flag value` (or minimal CLI command)
-2. Pass input `<repro_input>`
-
-### Observed Behavior
-```text
-<literal error output, exception message, or raw stack trace>
-````
-
-### Expected Behavior
-
-<1–2 sentences describing the expected outcome>
-
-### Environment / Target
-
-- Target Commit / Version: `<commit_hash>`
-- Runtime / Platform: `<e.g. Linux x86_64, Dart 3.8.0, Node 22>`
-
-````
-
-### 2. Feature Proposal Template
-
-```markdown
-### Context & Problem
-1–2 sentences explaining what problem needs to be solved.
-
-### Proposed Solution
-Concrete description of the proposed interface, behavior, or flag.
-
-### Acceptance Criteria
-- [ ] Criterion 1
-- [ ] Criterion 2
-
-### Non-Goals
-- What this feature explicitly does NOT cover
-````
-
-### 3. Pull Request Template
-
-```markdown
-### Rationale
-1–2 sentences explaining why this change is needed.
-
-### Summary of Changes
-- Bulleted description of the concrete code changes
-- Touch only what the task requires; no orphaned imports or unrelated diffs
-
-### Verification
-- Executed `dart test` with 100% pass
-- Verified edge case `<repro_condition>` passes
-
-Fixes #<issue_number>
-```
-
----
-
-## Mapping Standard Sections to GitHub YAML Issue Forms
-
-When a repository uses GitHub Issue Forms (`.github/ISSUE_TEMPLATE/*.yml`), the
-issue body is rendered as sequential H3 markdown sections matching each form
-element's `label:` attribute. Map conceptual anti-slop sections to the form's
-specific fields:
-
-| Conceptual Section     | Common YAML Field IDs               | Rendered Form Heading                                   |
-| :--------------------- | :---------------------------------- | :------------------------------------------------------ |
-| **Trigger Command**    | `command`, `repro_command`          | `### Command`                                           |
-| **Context & Problem**  | `description`, `context`, `problem` | `### Description` or `### Context`                      |
-| **Reasoning / Impact** | `reasoning`, `motivation`           | `### Reasoning`                                         |
-| **Proposed Solution**  | `solution`, `proposal`, `idea`      | `### Proposed Solution`                                 |
-| **Additional Context** | `additional_context`, `comments`    | `### Additional Context` (put Acceptance Criteria here) |
+- **Concise, Imperative Titles (`<= 70` chars)**: Adopt the repository's issue
+  prefix convention (`request: ...`, `[subsystem] ...`, `area/foo: ...`) for
+  Issues, and Conventional Commits (`feat(scope): ...`, `fix(scope): ...`) for
+  PRs unless the repository mandates an alternative.
+- **Full Templates & YAML Form Mappings**: See
+  [`references/templates.md`](references/templates.md).
