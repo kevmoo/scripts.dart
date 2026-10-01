@@ -70,7 +70,7 @@ header line when writing `/tmp/post_body.md` for `gh pr create --body-file` so
 the published GitHub PR description begins cleanly at `### Rationale`.
 
 ````markdown
-🛡️ Paranoia Tier: Ring <2..4B> (<Label>) · Confidence: <High|Low> · Door: <🚪 One-Way | 🔄 Two-Way>
+🛡️ Paranoia Tier: Ring <0..4B> (<Label>) · Confidence: <High|Low> · Door: <🚪 One-Way | 🔄 Two-Way>
 
 ### Rationale
 
