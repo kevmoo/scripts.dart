@@ -112,18 +112,24 @@ seconds to triage. Strictly enforce:
 - **No Conversational Fluff or Pleasantries**: Omit opening pleasantries
   (_"While investigating the codebase..."_) and closing pleasantries (_"Let me
   know what you think!"_, _"I would be happy to submit a PR..."_).
+- **Single-Audience / One-Owner Split (`100% Relevance`)**: Never bundle bugs or
+  action items spanning multiple distinct subsystems, packages, or teams into a
+  single cross-cutting issue where only a small fraction is relevant to any
+  given maintainer. Split distinct owners/subsystems into separate issues.
 - **No Speculative Architecture Essays**:
   - In bug reports: State the observed defect, provide exact error logs/repro
     steps, and limit proposed fixes to 1–2 factual sentences (or omit entirely).
-  - **Progressive Disclosure (`Tight Summary + <details>`) for Deep/Perf Bugs**:
-    When a bug report includes multiple root causes, import/bundle chains, or
-    benchmark tables, keep the visible top-level summary `<= 12` lines
-    (1-sentence trigger + 2–3 bullets with exact commit/line permalinks + bolded
-    `**from X to Y (Zx smaller/faster)**` impact bullets). Wrap the deep
-    technical breakdown, code snippets, and full tables inside a
-    `<details><summary>...</summary>` block (always leave a blank line
-    immediately after `</summary>` and before `</details>` so GitHub Flavored
-    Markdown renders inner tables and code blocks).
+  - **Progressive Disclosure (`Tight Human Summary + <details>`) & AI
+    Encapsulation**: Whenever an issue includes multiple root causes,
+    import/bundle chains, benchmark tables, or AI-gathered code traces /
+    inventories, keep the visible top-level gist `<= 8–12` lines (1-sentence
+    trigger + 2–3 actionable bullets with exact commit/line permalinks + bolded
+    `**from X to Y (Zx smaller/faster)**` impact bullets). Encapsulate the deep
+    technical breakdown, code traces, and full tables inside a
+    `<details><summary><b>Detailed Breakdown, Repro Steps & Measurements (AI-assisted)</b></summary>`
+    block (always leave a blank line immediately after `</summary>` and before
+    `</details>` so GitHub Flavored Markdown renders inner tables and code
+    blocks).
   - In PRs: Explain strictly the rationale ("why") and the isolated diff ("what
     changed").
 - **No Inline Multiline Shell Escapes**: Never pass multiline Markdown inline
@@ -174,17 +180,22 @@ one trigger holds:
 single-file refactor, test/doc update), **omit** `### Flow / Surface Delta`
 entirely.
 
-### Step 4: Mandatory Approval Gate & Concise Change Explanation (Hard Stop)
+### Step 4: Two-Layer Pre-Chew Gate & Concise Change Explanation (Hard Stop)
 
-Before running `gh issue create` or `gh pr create`, emit a concise change
-explanation (`<= 50` lines inline in chat or in
-`draft_github_<owner>_<repo>_pr.md`) covering (1) PR title & description
-rationale, (2) major code changes by file, and (3) test coverage added/executed,
-then halt execution and prompt the user for explicit confirmation using
-`ask_question`:
+Separate **Layer A (Internal Pre-Chew Brief for the human author)** from **Layer
+B (Outbound GitHub Payload)**:
 
-- Option 1: `(Recommended) Yes, create <issue|PR> via gh <issue|pr> create`
-- Option 2: `No, keep as draft only`
+1. **Layer A (Internal Pre-Flight Brief)**: Before running `gh issue create` or
+   `gh pr create`, emit a concise internal explanation (`<= 50` lines in chat or
+   above the draft separator) covering (1) title & audience/routing rationale,
+   (2) major code changes or verified root causes by file, and (3) test coverage
+   executed. Never leak Layer A's internal forensic trace into the published
+   GitHub body unless encapsulated inside a `<details>` appendix.
+2. **Layer B (Outbound Payload Approval)**: Halt execution and prompt the user
+   via `ask_question` so they can pre-chew/adjust the human gist or approve
+   submission:
+   - Option 1: `(Recommended) Yes, create <issue|PR> via gh <issue|pr> create`
+   - Option 2: `No, keep as draft only (let me edit/pre-chew the framing)`
 
 ### Step 5: Execution & Verification
 

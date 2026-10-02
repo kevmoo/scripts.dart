@@ -30,13 +30,14 @@ Create `pr_triage_report.md` in `<appDataDir>/brain/<conversation-id>/` using
   - `<1–2 sentence summary of the reviewer claim or CI failure>`
 - **Identifiers**:
   - `Thread ID`: `PRRT_...` · `Comment ID`: `<database_id>` (or `Review ID`: `PRR_...` · `Database ID`: `<review_database_id>`)
-- **Agent Assessment**:
+- **Agent Assessment (Internal Only — Do Not Paste into GitHub)**:
   - **Agreement Level**: `<🔥 Urgent [Valid — Fix] | 👍 Solid [Valid — Fix] | 🤷 Meh | 👎 Disagree>`
   - **Empirical Verification**: `<Output of dart analyze / dart test on unmodified code>`
   - **Rationale**: `<Technical explanation of why we agree, disagree, or recommend a direction>`
   - **Review-Escape Capture (`[Valid — Fix]` only)**: `<Logged via /sharpen-later (--cat=review-escape) | N/A>`
 - **Planned Action**:
   - **Code / Doc Changes**: [`lib/src/foo.dart`](file:///.../lib/src/foo.dart#L10-L25) — `<proposed change or "No action needed">`
+  - **Outbound Draft Reply (`<= 40 words` / 1–2 sentences)**: `<e.g. "Fixed in <sha> — moved validation before state update." Never paste the internal Agent Assessment rationale.>`
   - **Test Plan (2-Bucket TDD Filter)**:
     - `<Companion Test: test/foo_test.dart — test case summary>` OR `<None — copy/comment/rename or behavior already covered>`
 ```
@@ -65,7 +66,12 @@ Include the `"dismiss stale CHANGES_REQUESTED review"` option whenever an open
 
 ## 3. Thread Resolution, Review Dismissal & Re-Request Mechanics
 
-### CLI Commands (`kscripts pr-triage`)
+### CLI Commands & Outbound Reply Compression (`kscripts pr-triage`)
+
+Keep every outbound `<reply_body>` and `<top_level_reply_body>` to
+**`<= 40 words` (1–2 sentences)** stating the commit SHA and fix (or answering
+the reviewer's question directly). Never paste the internal `Agent Assessment`
+block into GitHub.
 
 ```bash
 # Reply to an inline comment and resolve its review thread:
