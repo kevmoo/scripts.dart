@@ -6,8 +6,8 @@ description: >-
   title prefixes, and templates, drafting into an artifact, and gating on user
   approval before submission. Use when triggered via /gh-post or when asked to
   file, draft, format, or submit a GitHub issue, bug report, feature request, or
-  pull request. Don't use for triaging existing PR comments (use pr-triage),
-  reviewing a PR diff (use pr-review), or Google3 Piper CLs (use cl-finalize).
+  pull request. Don't use for triaging existing PR comments (use pr-triage) or
+  reviewing a PR diff (use pr-review).
 ---
 
 # GitHub Post (`/gh-post`)
@@ -94,8 +94,8 @@ before touching the GitHub CLI, explicitly namespaced by repository:
 - **For Issues**: `draft_github_<owner>_<repo>_issue.md`
 - **For Pull Requests**: `draft_github_<owner>_<repo>_pr.md`
 
-Always provide `ArtifactMetadata` with `RequestFeedback: true` so the user can
-review the rendered draft directly in the UI. Consult
+Always provide `ArtifactMetadata` with `RequestFeedback: false` and
+`UserFacing: true` (gating execution via Step 4's `ask_question`). Consult
 [`references/templates.md`](references/templates.md) for the complete Bug
 Report, Feature Proposal, Pull Request templates, title pattern tables, and
 GitHub YAML Issue Form field mappings.
@@ -160,10 +160,14 @@ one trigger holds:
 single-file refactor, test/doc update), **omit** `### Flow / Surface Delta`
 entirely.
 
-### Step 4: Mandatory Approval Gate (Hard Stop)
+### Step 4: Mandatory Approval Gate & Concise Change Explanation (Hard Stop)
 
-Before running `gh issue create` or `gh pr create`, halt execution and prompt
-the user for explicit confirmation using `ask_question`:
+Before running `gh issue create` or `gh pr create`, emit a concise change
+explanation (`<= 50` lines inline in chat or in
+`draft_github_<owner>_<repo>_pr.md`) covering (1) PR title & description
+rationale, (2) major code changes by file, and (3) test coverage added/executed,
+then halt execution and prompt the user for explicit confirmation using
+`ask_question`:
 
 - Option 1: `(Recommended) Yes, create <issue|PR> via gh <issue|pr> create`
 - Option 2: `No, keep as draft only`

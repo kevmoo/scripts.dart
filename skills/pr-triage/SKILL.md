@@ -6,8 +6,8 @@ description: >-
   proposing a structured action plan. Use when asked to triage or address PR
   comments, review feedback, merge conflicts, or failing CI checks on a GitHub
   pull request, or when invoked via /pr-triage. Don't use for multi-repo PR
-  cleanup sweeps (use pr-cleanup), initial adversarial code review (use
-  pr-review), or Google3 Piper changelist triage (use cl-triage).
+  cleanup sweeps (use pr-cleanup) or initial adversarial code review (use
+  pr-review).
 ---
 
 # GitHub PR Triage (`/pr-triage`)
@@ -72,7 +72,10 @@ kscripts pr-triage re-request --dir /path/to/target-repository <reviewer_login> 
      `🔥 Urgent` blocker in `pr_triage_report.md` and resolve via a forward
      merge commit
      (`git fetch origin <baseRefName> && git merge origin/<baseRefName>`), never
-     `git rebase`.
+     `git rebase`. When committing a monorepo merge with
+     `git commit --no-verify` (to avoid reformatting unrelated upstream files),
+     explicitly run `dart format` on only the PR's touched `.dart` files before
+     committing or pushing.
 
 3. **Analyze Open Comments**:
    - Inspect unresolved review threads, top-level reviews, and general PR
@@ -93,8 +96,8 @@ kscripts pr-triage re-request --dir /path/to/target-repository <reviewer_login> 
      code changes are needed).
 
 5. **Generate a Triage Report (`pr_triage_report.md`) & Log Review Escapes**:
-   - Create `pr_triage_report.md` (`RequestFeedback: true` in
-     `ArtifactMetadata`) following the artifact skeleton in
+   - Create `pr_triage_report.md` (`RequestFeedback: false`, `UserFacing: true`
+     in `ArtifactMetadata`) following the artifact skeleton in
      [`references/graphql_and_templates.md`](references/graphql_and_templates.md).
    - Link to `raw_triage_output.md` at the top and group related comments/CI
      failures into cohesive action items containing:
@@ -112,25 +115,24 @@ kscripts pr-triage re-request --dir /path/to/target-repository <reviewer_login> 
    - **Wire `[Valid — Fix]` Findings to `/sharpen-later` (`--cat=review-escape`,
      `FU4`)**: Whenever a reviewer comment or thread is classified as
      `[Valid — Fix]` (a real bug, missing edge case, API leak, or convention
-     violation that escaped local pre-review), log it via
-     `scan_transcripts.sh later --cat=review-escape` (when
-     `/google/src/files/head/depot/google3/experimental/users/kevmoo/skills/sharpen_saw/scripts/scan_transcripts.sh`
-     is available on the workstation):
-     ```bash
-     /google/src/files/head/depot/google3/experimental/users/kevmoo/skills/sharpen_saw/scripts/scan_transcripts.sh later \
-       --cat=review-escape \
-       --agent-note "<owner>/<repo>#<PR>: <why local pre-review missed it>" \
-       "<1-line summary of escaped defect>"
-     ```
+     violation that escaped local pre-review) and `/sharpen-later` is available,
+     record it with `--cat=review-escape` and
+     `--agent-note "<owner>/<repo>#<PR>: <why local pre-review missed it>"`.
 
-6. **Wait for Approval**:
-   - DO NOT edit files until the user approves `pr_triage_report.md` via the
-     interactive 'Proceed' button or chat confirmation.
+6. **Interactive Approval Gate (`ask_question`)**:
+   - Immediately after writing `pr_triage_report.md`, call `ask_question` to
+     gate implementation (see
+     [`references/graphql_and_templates.md`](references/graphql_and_templates.md)):
+     - Option 1: `(Recommended) Implement the proposed fixes and test plan`
+     - Option 2: `Adjust the triage plan first`
+     - Option 3: `Do not edit files (keep triage report only)`
+   - DO NOT edit repository files until the user approves via `ask_question`.
 
 7. **Surgical Implementation & Verification (Red-Green TDD)**:
    - **Test First (Red) -> Implementation (Green)**: Write approved companion
      tests in `test/` first and verify failure on unpatched code, then apply the
-     fix and run `dart format`, `dart analyze`, and `dart test`.
+     fix and run `dart format` (explicitly targeting touched `.dart` files when
+     hooks or `--no-verify` are used), `dart analyze`, and `dart test`.
    - **Sync PR Title & Description**: If public APIs or architecture changed,
      update via `cat << 'EOF' | gh pr edit <pr> --title "..." --body-file -`.
    - **Live Read-Only Smoke Check**: Auto-run side-effect-free CLI paths
@@ -150,12 +152,20 @@ See [`references/graphql_and_templates.md`](references/graphql_and_templates.md)
 for full `kscripts pr-triage resolve` / `re-request` syntax, GitHub
 state-machine notes, and underlying GraphQL/REST schemas.
 
-- **Never Re-Request an `APPROVED` Reviewer**: `--add-reviewer` revokes active
-  approvals. Run `kscripts pr-triage re-request` **ONLY when ALL 3 hold**:
+- **Never Re-Request an Active `APPROVED` Reviewer**: `--add-reviewer` revokes
+  active approvals. Run `kscripts pr-triage re-request` **ONLY when ALL 3
+  hold**:
   1. The human reviewer is **not** currently listed in `reviewRequests`, **AND**
   2. Their latest state in `latestReviews` is **NOT** `"APPROVED"` (`COMMENTED`,
      `CHANGES_REQUESTED`, or `DISMISSED`), **AND**
   3. Commits were pushed or replies posted addressing their feedback.
+- **Re-Request After `dismiss_stale_reviews` Auto-Dismisses an Approval**: In
+  repositories with `dismiss_stale_reviews` enabled (such as `flutter/flutter`),
+  pushing new commits automatically transitions a prior `"APPROVED"` review to
+  `"DISMISSED"` and removes the reviewer from `reviewRequests`. Always check
+  `gh pr view <pr_number> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests`
+  after `git push` and re-request any reviewer whose approval was dismissed via
+  `kscripts pr-triage re-request --dir <repo-path> <reviewer_login>`.
 - **Stop When Already Queued**: If `<login>` is already in `reviewRequests` and
   all feedback is addressed on the latest commit, **STOP**.
 

@@ -3,10 +3,15 @@
 Detailed report artifact skeletons, Step 8 completion menus, and GitHub GraphQL
 / REST schemas for [`skills/pr-triage/SKILL.md`](../SKILL.md).
 
-## 1. `pr_triage_report.md` Artifact Skeleton
+## 1. `pr_triage_report.md` Artifact Skeleton & Step 6 Gate
 
 Create `pr_triage_report.md` in `<appDataDir>/brain/<conversation-id>/` using
-`write_to_file` with `RequestFeedback: true` in `ArtifactMetadata`.
+`write_to_file` with `RequestFeedback: false` and `UserFacing: true` in
+`ArtifactMetadata`, then immediately call `ask_question` in Step 6:
+
+- Option 1: `(Recommended) Implement the proposed fixes and test plan`
+- Option 2: `Adjust the triage plan first`
+- Option 3: `Do not edit files (keep triage report only)`
 
 ```markdown
 # PR Triage Report: `<owner>/<repo>#<PR>`
@@ -29,7 +34,7 @@ Create `pr_triage_report.md` in `<appDataDir>/brain/<conversation-id>/` using
   - **Agreement Level**: `<🔥 Urgent [Valid — Fix] | 👍 Solid [Valid — Fix] | 🤷 Meh | 👎 Disagree>`
   - **Empirical Verification**: `<Output of dart analyze / dart test on unmodified code>`
   - **Rationale**: `<Technical explanation of why we agree, disagree, or recommend a direction>`
-  - **Review-Escape Capture (`[Valid — Fix]` only)**: `<Logged via scan_transcripts.sh later --cat=review-escape | N/A>`
+  - **Review-Escape Capture (`[Valid — Fix]` only)**: `<Logged via /sharpen-later (--cat=review-escape) | N/A>`
 - **Planned Action**:
   - **Code / Doc Changes**: [`lib/src/foo.dart`](file:///.../lib/src/foo.dart#L10-L25) — `<proposed change or "No action needed">`
   - **Test Plan (2-Bucket TDD Filter)**:
@@ -86,10 +91,15 @@ kscripts pr-triage re-request --dir <repo-path> <reviewer_login> \
   `**Review Requests**` line and `> [!IMPORTANT] Reviewer Dropped from Queue`
   banner in `raw_triage_output.md` (do **not** make an extra `gh pr view` call).
 - **If new commits were pushed in Step 8**: Check post-push state (in case
-  `dismiss_stale_reviews` dismissed a prior approval):
+  `dismiss_stale_reviews` in repositories like `flutter/flutter` dismissed a
+  prior `APPROVED` review and dropped the reviewer from `reviewRequests`):
   ```bash
   gh pr view <pr_number> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests
   ```
+  If a previously `APPROVED` reviewer is now `DISMISSED` and absent from
+  `reviewRequests`, run
+  `kscripts pr-triage re-request --dir <repo-path> <reviewer_login>` so the PR
+  re-enters their review queue.
 - **GitHub State-Machine Quirk (`reviewDecision` vs. `latestReviews`)**:
   Re-requesting review without `--dismiss` adds `<login>` back to
   `reviewRequests` (`🟡 Re-review Requested`) and hides `<login>` from

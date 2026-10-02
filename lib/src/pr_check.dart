@@ -222,6 +222,13 @@ PrCheckReport runPrCheck({
     if (prettierViolation != null) violations.add(prettierViolation);
   }
 
+  final toolTestViolation = _checkStandaloneToolTests(
+    repoRoot,
+    dartBin,
+    processRunner,
+  );
+  if (toolTestViolation != null) violations.add(toolTestViolation);
+
   return PrCheckReport(
     baseRef: baseRef,
     changedFiles: changedFiles,
@@ -470,6 +477,34 @@ PrCheckViolation? _checkDartAnalyzeFatalInfos(
   String dartBin,
   SyncProcessRunner runSync,
 ) {
+  final hasRootPubspec = File(p.join(repoRoot.path, 'pubspec.yaml'))
+      .existsSync();
+  final toolDir = Directory(p.join(repoRoot.path, 'tool'));
+  final hasToolPubspec = File(p.join(toolDir.path, 'pubspec.yaml'))
+      .existsSync();
+  if (!hasRootPubspec &&
+      hasToolPubspec &&
+      dartFiles.every((f) => f.startsWith('tool/'))) {
+    final toolRelative = dartFiles
+        .map((f) => f.substring('tool/'.length))
+        .toList();
+    final res = runSync(dartBin, [
+      'analyze',
+      '--fatal-infos',
+      ...toolRelative,
+    ], workingDirectory: toolDir.path);
+    if (res.exitCode == 0) return null;
+    final out = '${res.stdout}\n${res.stderr}'.trim();
+    return PrCheckViolation(
+      check: 'dart-analyze-fatal-infos',
+      message:
+          'dart analyze --fatal-infos failed in tool/ (bare `dart analyze` '
+          'ignores info-level lints that fail CI):\n$out',
+      remediation:
+          'Run "dart pub get" in tool/ and fix the analyzer diagnostics '
+          'above (e.g. dart fix --apply).',
+    );
+  }
   final res = runSync(dartBin, [
     'analyze',
     '--fatal-infos',
@@ -485,6 +520,30 @@ PrCheckViolation? _checkDartAnalyzeFatalInfos(
     remediation:
         'Run "dart pub get" (if uninitialized) and fix the analyzer '
         'diagnostics above (e.g. dart fix --apply).',
+  );
+}
+
+PrCheckViolation? _checkStandaloneToolTests(
+  Directory repoRoot,
+  String dartBin,
+  SyncProcessRunner runSync,
+) {
+  if (File(p.join(repoRoot.path, 'pubspec.yaml')).existsSync()) return null;
+  final toolDir = Directory(p.join(repoRoot.path, 'tool'));
+  if (!File(p.join(toolDir.path, 'pubspec.yaml')).existsSync()) return null;
+  if (!Directory(p.join(toolDir.path, 'test')).existsSync()) return null;
+
+  final res = runSync(dartBin, [
+    'test',
+    '-c',
+    'source',
+  ], workingDirectory: toolDir.path);
+  if (res.exitCode == 0) return null;
+  final out = '${res.stdout}\n${res.stderr}'.trim();
+  return PrCheckViolation(
+    check: 'tool-dart-test',
+    message: 'Standalone tool/ test suite failed:\n$out',
+    remediation: 'Run "dart test" inside tool/ and fix failing tests.',
   );
 }
 
