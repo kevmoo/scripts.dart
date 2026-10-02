@@ -26,13 +26,6 @@ bool isBotLogin(String login) {
       knownBotLogins.contains(lower);
 }
 
-/// Helper to extract search node lists from GitHub GraphQL API responses.
-List<dynamic> extractGraphQLSearchNodes(Map<String, dynamic> decoded) {
-  final data = decoded['data'] as Map<String, dynamic>?;
-  final search = data?['search'] as Map<String, dynamic>?;
-  return search?['nodes'] as List<dynamic>? ?? [];
-}
-
 /// Extracts pagination info (`hasNextPage` and `endCursor`) from a decoded
 /// GitHub GraphQL `search` response.
 ({bool hasNextPage, String? endCursor}) extractGraphQLSearchPageInfo(
@@ -133,9 +126,10 @@ String? _processGraphQLPage(
     result,
     exceptionBuilder: exceptionBuilder,
   );
-  final pageNodes = extractGraphQLSearchNodes(decoded)
-      .whereType<Map<String, dynamic>>()
-      .toList();
+  final data = decoded['data'] as Map<String, dynamic>?;
+  final search = data?['search'] as Map<String, dynamic>?;
+  final rawNodes = search?['nodes'] as List<dynamic>? ?? [];
+  final pageNodes = rawNodes.whereType<Map<String, dynamic>>().toList();
   nodes.addAll(pageNodes);
 
   final pageInfo = extractGraphQLSearchPageInfo(decoded);

@@ -39,10 +39,6 @@ ArgParser _buildReRequestArgParser() => buildPrContextArgParser()
     help: 'Optional top-level PR comment to post before re-requesting review.',
   );
 
-ArgParser buildPrTriageArgParser() => buildPrContextArgParser()
-  ..addCommand('resolve', buildPrContextArgParser())
-  ..addCommand('re-request', _buildReRequestArgParser());
-
 void _printPrTriageUsage(ArgParser parser) {
   print(prTriageDescription);
   print('');
@@ -69,7 +65,9 @@ const _commonPrTriageSubcommandMistakes = <String, String>{
 };
 
 Future<void> runPrTriageCli(List<String> args) async {
-  final parser = buildPrTriageArgParser();
+  final parser = buildPrContextArgParser()
+    ..addCommand('resolve', buildPrContextArgParser())
+    ..addCommand('re-request', _buildReRequestArgParser());
   final ArgResults results;
   try {
     results = parser.parse(args);
@@ -384,10 +382,6 @@ String _extractPrAuthorLogin(Map<String, dynamic> prData) =>
 bool _isNonAuthorHumanReviewer(String login, String prAuthor) =>
     login.isNotEmpty && login != prAuthor && !isBotLogin(login);
 
-bool _shouldUpdateReviewState(String? previousState, String newState) =>
-    newState.isNotEmpty &&
-    (newState != 'COMMENTED' || previousState != 'APPROVED');
-
 Set<String> _collectApprovedReviewers(
   Iterable<PrReview> reviews,
   String prAuthor,
@@ -396,7 +390,8 @@ Set<String> _collectApprovedReviewers(
   for (final review in reviews) {
     if (!_isNonAuthorHumanReviewer(review.author, prAuthor)) continue;
     final previous = latestStateByReviewer[review.author];
-    if (_shouldUpdateReviewState(previous, review.state)) {
+    if (review.state.isNotEmpty &&
+        (review.state != 'COMMENTED' || previous != 'APPROVED')) {
       latestStateByReviewer[review.author] = review.state;
     }
   }
@@ -548,19 +543,15 @@ _extractTriageReviewerQueue(TriageData data) {
 
 final _prUrlRepoRegex = RegExp(r'github\.com/([^/]+/[^/]+)/pull/\d+');
 
-String _extractRepoFlag(Map<String, dynamic> prData) {
-  final url = prData['url']?.toString() ?? '';
-  final match = _prUrlRepoRegex.firstMatch(url);
-  return match != null ? ' -R ${match.group(1)}' : '';
-}
-
 ({String line, String warningBlock}) _formatReviewerQueueSection(
   ({List<String> requested, List<String> unrequestedHumans}) queue,
   Map<String, dynamic> prData,
 ) {
   final unrequested = queue.unrequestedHumans;
   final unrequestedMentions = unrequested.map((r) => '@$r').join(', ');
-  final repoFlag = _extractRepoFlag(prData);
+  final url = prData['url']?.toString() ?? '';
+  final match = _prUrlRepoRegex.firstMatch(url);
+  final repoFlag = match != null ? ' -R ${match.group(1)}' : '';
   final warningBlock = unrequested.isEmpty
       ? ''
       : '> [!IMPORTANT]\n'

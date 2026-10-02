@@ -303,14 +303,26 @@ class OrientationGatherer {
     final issuePrefixCounts = <String, int>{};
     final issueLabels = <String>{};
 
-    await _fetchIssues(
-      targetDir,
-      repoArgs,
-      sampleLimit,
-      issueTitles,
-      issuePrefixCounts,
-      issueLabels,
-    );
+    try {
+      final issuesJsonOut = await runCmd('gh', [
+        'issue',
+        'list',
+        ...repoArgs,
+        '--state',
+        'all',
+        '--limit',
+        sampleLimit.toString(),
+        '--json',
+        'author,title,labels',
+      ], workingDirectory: targetDir);
+
+      final issuesList = jsonDecode(issuesJsonOut) as List<dynamic>;
+      for (final issue in issuesList) {
+        if (issue is! Map<String, dynamic>) continue;
+        _recordTitle(issue['title'] as String?, issueTitles, issuePrefixCounts);
+        issueLabels.addAll(_extractLabels(issue['labels'] as List<dynamic>?));
+      }
+    } catch (_) {}
 
     final detectedTemplates = <String>[];
     final templateSchemas = <String, List<String>>{};
@@ -403,36 +415,6 @@ class OrientationGatherer {
     }
   }
 
-  Future<void> _fetchIssues(
-    String targetDir,
-    List<String> repoArgs,
-    int sampleLimit,
-    List<String> issueTitles,
-    Map<String, int> issuePrefixCounts,
-    Set<String> issueLabels,
-  ) async {
-    try {
-      final issuesJsonOut = await runCmd('gh', [
-        'issue',
-        'list',
-        ...repoArgs,
-        '--state',
-        'all',
-        '--limit',
-        sampleLimit.toString(),
-        '--json',
-        'author,title,labels',
-      ], workingDirectory: targetDir);
-
-      final issuesList = jsonDecode(issuesJsonOut) as List<dynamic>;
-      for (final issue in issuesList) {
-        if (issue is! Map<String, dynamic>) continue;
-        _recordTitle(issue['title'] as String?, issueTitles, issuePrefixCounts);
-        issueLabels.addAll(_extractLabels(issue['labels'] as List<dynamic>?));
-      }
-    } catch (_) {}
-  }
-
   Future<void> _scanTemplates(
     String targetDir,
     String? remoteRepo,
@@ -462,64 +444,32 @@ class OrientationGatherer {
       '.github/PULL_REQUEST_TEMPLATE',
     ];
     for (final remoteDir in remoteDirs) {
-      await _scanRemoteTemplateDir(
-        targetDir,
-        remoteRepo,
-        remoteDir,
-        detectedTemplates,
-        templateSchemas,
-      );
+      try {
+        final apiOut = await runCmd('gh', [
+          'api',
+          'repos/$remoteRepo/contents/$remoteDir',
+        ], workingDirectory: targetDir);
+        final list = jsonDecode(apiOut) as List<dynamic>;
+        for (final item in list.whereType<Map<String, dynamic>>()) {
+          final path = item['path'] as String?;
+          if (path == null) continue;
+          detectedTemplates.add(path);
+
+          final downloadUrl = item['download_url'] as String?;
+          final isYaml = path.endsWith('.yml') || path.endsWith('.yaml');
+          if (downloadUrl != null && isYaml) {
+            await _fetchRemoteYamlSchema(
+              targetDir,
+              remoteRepo,
+              path,
+              templateSchemas,
+            );
+          }
+        }
+      } catch (_) {}
     }
 
     await _checkRemoteRootPrTemplate(targetDir, remoteRepo, detectedTemplates);
-  }
-
-  Future<void> _scanRemoteTemplateDir(
-    String targetDir,
-    String remoteRepo,
-    String remoteDir,
-    List<String> detectedTemplates,
-    Map<String, List<String>> templateSchemas,
-  ) async {
-    try {
-      final apiOut = await runCmd('gh', [
-        'api',
-        'repos/$remoteRepo/contents/$remoteDir',
-      ], workingDirectory: targetDir);
-      final list = jsonDecode(apiOut) as List<dynamic>;
-      for (final item in list.whereType<Map<String, dynamic>>()) {
-        await _processRemoteTemplateItem(
-          item,
-          targetDir,
-          remoteRepo,
-          detectedTemplates,
-          templateSchemas,
-        );
-      }
-    } catch (_) {}
-  }
-
-  Future<void> _processRemoteTemplateItem(
-    Map<String, dynamic> item,
-    String targetDir,
-    String remoteRepo,
-    List<String> detectedTemplates,
-    Map<String, List<String>> templateSchemas,
-  ) async {
-    final path = item['path'] as String?;
-    if (path == null) return;
-    detectedTemplates.add(path);
-
-    final downloadUrl = item['download_url'] as String?;
-    final isYaml = path.endsWith('.yml') || path.endsWith('.yaml');
-    if (downloadUrl != null && isYaml) {
-      await _fetchRemoteYamlSchema(
-        targetDir,
-        remoteRepo,
-        path,
-        templateSchemas,
-      );
-    }
   }
 
   Future<void> _checkRemoteRootPrTemplate(

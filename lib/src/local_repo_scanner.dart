@@ -44,12 +44,6 @@ bool isRootGitRepository(Directory dir) {
   return gitType == FileSystemEntityType.directory;
 }
 
-/// Checks if [dir] is either a primary Git repository or a linked worktree.
-bool isGitRepository(Directory dir) {
-  final gitType = FileSystemEntity.typeSync('${dir.path}/.git');
-  return gitType != FileSystemEntityType.notFound;
-}
-
 /// Checks whether a local git repository or worktree directory has uncommitted
 /// changes.
 ///
@@ -154,7 +148,8 @@ List<LocalRepoInfo> scanLocalGitRepositories(
     if (depth > maxDepth) return;
     if (p.basename(dir.path).startsWith('.')) return;
 
-    if (isGitRepository(dir)) {
+    if (FileSystemEntity.typeSync('${dir.path}/.git') !=
+        FileSystemEntityType.notFound) {
       final info = _indexRepository(dir, runner);
       if (info != null) repos.add(info);
       return;

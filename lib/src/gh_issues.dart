@@ -420,13 +420,6 @@ Future<List<GhIssue>> fetchAssignedIssues({
   return _enrichWithTimelinePrs(parsedIssues, runner: runner);
 }
 
-String _formatLabels(List<String> labels) {
-  if (labels.isEmpty) return '—';
-  final firstThree = labels.take(3).join(', ');
-  final remaining = labels.length > 3 ? ' (+${labels.length - 3})' : '';
-  return '`$firstThree$remaining`';
-}
-
 String _formatLinkedPrsMarkdown(GhIssue issue) {
   if (issue.linkedPrs.isEmpty) return '—';
   final links = <String>[];
@@ -497,7 +490,11 @@ String renderMarkdownReport(
 
     final sanitizedTitle = sanitizeMarkdownCell(issue.title);
 
-    final labelStr = _formatLabels(issue.labels);
+    final labels = issue.labels;
+    final labelStr = labels.isEmpty
+        ? '—'
+        : '`${labels.take(3).join(', ')}'
+              '${labels.length > 3 ? ' (+${labels.length - 3})' : ''}`';
     final touched = formatTouchedMarkdown(issue.updatedAt, currentTime: now);
     final prCell = _formatLinkedPrsMarkdown(issue);
 
