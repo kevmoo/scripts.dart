@@ -115,10 +115,24 @@ seconds to triage. Strictly enforce:
 - **No Speculative Architecture Essays**:
   - In bug reports: State the observed defect, provide exact error logs/repro
     steps, and limit proposed fixes to 1–2 factual sentences (or omit entirely).
+  - **Progressive Disclosure (`Tight Summary + <details>`) for Deep/Perf Bugs**:
+    When a bug report includes multiple root causes, import/bundle chains, or
+    benchmark tables, keep the visible top-level summary `<= 12` lines
+    (1-sentence trigger + 2–3 bullets with exact commit/line permalinks + bolded
+    `**from X to Y (Zx smaller/faster)**` impact bullets). Wrap the deep
+    technical breakdown, code snippets, and full tables inside a
+    `<details><summary>...</summary>` block (always leave a blank line
+    immediately after `</summary>` and before `</details>` so GitHub Flavored
+    Markdown renders inner tables and code blocks).
   - In PRs: Explain strictly the rationale ("why") and the isolated diff ("what
     changed").
 - **No Inline Multiline Shell Escapes**: Never pass multiline Markdown inline
   via `--body "line 1\nline 2"`. Always use `--body-file`.
+- **Manual Web Form Mode**: If the user asks for a link to the repo's issue form
+  to paste manually, strip `**Target Repository**:` / `**Proposed Title**:` from
+  `draft_github_<owner>_<repo>_issue.md` so the file is 100% copy-pasteable body
+  text, and provide a pre-filled
+  `https://github.com/<owner>/<repo>/issues/new?title=...` URL artifact.
 
 #### Explicit 3D Paranoia Header for PR Draft Previews (`OQ3`)
 
