@@ -41,11 +41,12 @@ Reference templates, title examples, and GitHub YAML Issue Form mappings for
 - Runtime / Platform: `<e.g. Linux x86_64, Dart 3.8.0, Node 22>`
 ````
 
-### 1B. Deep / Performance Bug Report Template (Tight Summary + `<details>`)
+### 1B. Deep / Performance / Multi-Cause Bug Report Template (Tight Summary + `<details>`)
 
 Use this structure when filing multi-cause performance, bundle-size, or
-deep-investigation issues so maintainers can triage the top-level summary in
-`< 15` seconds while preserving full reproducibility inside `<details>`:
+deep-investigation issues (scoped to a single owning team/subsystem) so
+maintainers can triage the top-level human gist in `< 15` seconds while
+encapsulating AI-gathered traces and reproducibility tables inside `<details>`:
 
 ```markdown
 1-sentence summary of the issue, measured overhead, and trigger condition on `<route_or_command>` (`@ <commit>`):
@@ -58,7 +59,7 @@ Addressing these reduces:
 - **<Metric 2>**: **from `<pre>` to `<post>` (`<N>x` smaller/faster)**
 
 <details>
-<summary><b>Detailed Breakdown, Repro Steps & Measurements</b></summary>
+<summary><b>Detailed Breakdown, Repro Steps & Measurements (AI-assisted)</b></summary>
 
 ### Steps to Reproduce
 
