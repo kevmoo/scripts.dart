@@ -617,6 +617,38 @@ String renderJsonOutput(
   return const JsonEncoder.withIndent('  ').convert(data);
 }
 
+/// Main execution function for `gh-issues`.
+Future<void> runGhIssues({
+  required GhIssuesOptions options,
+  ProcessRunner? processRunner,
+  DateTime? now,
+}) async {
+  final currentTime = now ?? DateTime.now();
+
+  final issues = await fetchAssignedIssues(
+    user: options.user,
+    repo: options.repo,
+    limit: options.limit,
+    lastNDays: options.lastNDays,
+    createdDays: options.createdDays,
+    checkLinkedPrs: options.checkLinkedPrs,
+    processRunner: processRunner,
+    now: currentTime,
+  );
+
+  if (options.json) {
+    print(renderJsonOutput(issues, options: options, currentTime: currentTime));
+  } else if (options.markdown) {
+    print(
+      renderMarkdownReport(issues, options: options, currentTime: currentTime),
+    );
+  } else {
+    print(
+      renderTerminalReport(issues, options: options, currentTime: currentTime),
+    );
+  }
+}
+
 typedef _Summary = ({int total, int withPrs, int recent});
 
 _Summary _computeSummary(List<GhIssue> issues, DateTime now) {

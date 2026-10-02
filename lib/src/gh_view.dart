@@ -731,6 +731,13 @@ Map<String, String> _parseEnrichedContextJson(String rawOutput) {
   }
 }
 
+String? _lookupContext(GhPr pr, Map<String, String>? contextMap) {
+  if (contextMap == null || contextMap.isEmpty) return null;
+  return contextMap[pr.url] ??
+      contextMap['${pr.repository}#${pr.number}'] ??
+      contextMap['#${pr.number}'];
+}
+
 /// Main execution function for `gh-view`.
 Future<void> runGhView({
   required GhViewOptions options,
@@ -768,19 +775,14 @@ Future<void> runGhView({
       ? await _discoverLocalRepositories(options.localRoot)
       : null;
   final prs = await Future.wait(
-    rawPrs.map((pr) {
-      final context = (contextMap == null || contextMap.isEmpty)
-          ? null
-          : (contextMap[pr.url] ??
-                contextMap['${pr.repository}#${pr.number}'] ??
-                contextMap['#${pr.number}']);
-      return _attachLocalStatus(
+    rawPrs.map(
+      (pr) => _attachLocalStatus(
         pr,
         localRepos,
-        context: context,
+        context: _lookupContext(pr, contextMap),
         processRunner: runner,
-      );
-    }),
+      ),
+    ),
   );
 
   if (options.json) {

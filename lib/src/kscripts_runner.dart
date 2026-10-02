@@ -13,8 +13,7 @@ import 'gerrit_view.dart';
 import 'gh_clean.dart';
 import 'gh_issues.dart';
 import 'gh_orient.dart';
-import 'gh_view.dart'
-    hide renderJsonOutput, renderMarkdownReport, renderTerminalReport;
+import 'gh_view.dart';
 import 'git_org_clean.dart';
 import 'git_up.dart';
 import 'lint_cleanup.dart';
@@ -516,40 +515,7 @@ Future<void> runGhIssuesCli(List<String> arguments) async {
     markdown: results['markdown'] as bool,
   );
 
-  await runCliGuarded(() async {
-    final currentTime = DateTime.now();
-    final issues = await fetchAssignedIssues(
-      user: options.user,
-      repo: options.repo,
-      limit: options.limit,
-      lastNDays: options.lastNDays,
-      createdDays: options.createdDays,
-      checkLinkedPrs: options.checkLinkedPrs,
-      now: currentTime,
-    );
-
-    if (options.json) {
-      print(
-        renderJsonOutput(issues, options: options, currentTime: currentTime),
-      );
-    } else if (options.markdown) {
-      print(
-        renderMarkdownReport(
-          issues,
-          options: options,
-          currentTime: currentTime,
-        ),
-      );
-    } else {
-      print(
-        renderTerminalReport(
-          issues,
-          options: options,
-          currentTime: currentTime,
-        ),
-      );
-    }
-  });
+  await runCliGuarded(() => runGhIssues(options: options));
 }
 
 Future<void> runGhViewCli(List<String> arguments) async {
