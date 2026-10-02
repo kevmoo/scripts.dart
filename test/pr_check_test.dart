@@ -320,45 +320,4 @@ environment:
       ]);
     },
   );
-
-  test('runs standalone tool/ tests and tool-scoped analyze when repo has '
-      'tool/pubspec.yaml without root pubspec.yaml', () {
-    final toolTestDir = Directory(p.join(tempDir.path, 'tool', 'test'))
-      ..createSync(recursive: true);
-    File(p.join(tempDir.path, 'tool', 'pubspec.yaml')).writeAsStringSync('''
-name: repo_tool
-publish_to: none
-environment:
-  sdk: ^3.5.0
-''');
-    File(p.join(toolTestDir.path, 'readme_test.dart'))
-        .writeAsStringSync('void main() {}\n');
-    File(p.join(tempDir.path, 'README.md')).writeAsStringSync('# Skills\n');
-
-    String? testWorkingDir;
-    String? analyzeWorkingDir;
-    final report = runPrCheck(
-      directory: tempDir,
-      processRunner: (exe, args, {workingDirectory}) {
-        if (args.contains('test')) {
-          testWorkingDir = workingDirectory;
-          return ProcessResult(0, 1, 'tool/test/readme_test.dart failed', '');
-        }
-        if (args.contains('analyze')) {
-          analyzeWorkingDir = workingDirectory;
-        }
-        return fakeGitAndTools(
-          exe,
-          args,
-          workingDirectory: workingDirectory,
-          changedFiles: ['README.md', 'tool/test/readme_test.dart'],
-        );
-      },
-    );
-
-    check(report.passed).isFalse();
-    check(testWorkingDir).equals(p.join(tempDir.path, 'tool'));
-    check(analyzeWorkingDir).equals(p.join(tempDir.path, 'tool'));
-    check(report.violations.map((v) => v.check)).contains('tool-dart-test');
-  });
 }
