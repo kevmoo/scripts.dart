@@ -138,10 +138,12 @@ void _writeMarkdownPrRow(StringBuffer buffer, GhPr pr, DateTime now) {
     '[${pr.repository}]($repoUrl)',
   ];
 
-  final branchLines = <String>[
-    '`${pr.headRefName}`',
-    _formatLocalMappingMarkdown(pr.localStatus),
-  ];
+  final loc = pr.localStatus;
+  final localMapping = loc == null
+      ? 'Local: ⚪ Not checked out'
+      : 'Local: ${loc.displayStatus} '
+            '([${p.basename(loc.repoPath)}](file://${loc.repoPath}))';
+  final branchLines = <String>['`${pr.headRefName}`', localMapping];
 
   final areThreadsResolved =
       pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0;
@@ -291,13 +293,6 @@ String _formatChangesRequestedActionMarkdown(
       : '🔴 **Changes Requested**';
 }
 
-bool _isRecentPing(GhPr pr, DateTime now) {
-  if (!pr.isAlreadyPinged) return false;
-  final authorComment = pr.lastAuthorCommentAt;
-  if (authorComment == null) return false;
-  return now.difference(authorComment).inDays < 7;
-}
-
 String _resolveReviewRequiredActionMarkdown(
   GhPr pr, {
   required String reviewersText,
@@ -308,8 +303,11 @@ String _resolveReviewRequiredActionMarkdown(
     final unrequestedText = '@${pr.unrequestedActiveReviewers.join(', @')}';
     return '🔄 **Re-request Review** ($unrequestedText)';
   }
-  if (_isRecentPing(pr, now)) {
-    final pingAge = formatTimeAgo(pr.lastAuthorCommentAt!, currentTime: now);
+  final authorComment = pr.lastAuthorCommentAt;
+  if (pr.isAlreadyPinged &&
+      authorComment != null &&
+      now.difference(authorComment).inDays < 7) {
+    final pingAge = formatTimeAgo(authorComment, currentTime: now);
     if (reviewersText.isNotEmpty) {
       return '⏳ **Awaiting $reviewersText** (pinged $pingAge)';
     }
@@ -383,12 +381,6 @@ String _formatMergeableBadgeMarkdown(GhPr pr) {
     _ => pr.isInMergeQueue ? '✅ Yes' : '⚪ Unknown',
   };
   return pr.isInMergeQueue ? '$label (🔀 Queue)' : label;
-}
-
-String _formatLocalMappingMarkdown(LocalBranchStatus? loc) {
-  if (loc == null) return 'Local: ⚪ Not checked out';
-  final dirName = p.basename(loc.repoPath);
-  return 'Local: ${loc.displayStatus} ([$dirName](file://${loc.repoPath}))';
 }
 
 /// Renders human-readable colorized terminal output.

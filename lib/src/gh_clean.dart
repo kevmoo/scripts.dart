@@ -224,13 +224,6 @@ bool _isDirDirty(String path, SyncProcessRunner runner) => isRepoDirtySync(
   failClosedOnProcessError: true,
 );
 
-bool _isTrunkSynced(LocalRepoInfo localRepo, String trunkBranch) {
-  final trunk = localRepo.branches
-      .where((b) => b.name == trunkBranch)
-      .firstOrNull;
-  return trunk != null && trunk.isUpToDateWithUpstream;
-}
-
 int _countGitStashes(String repoPath, SyncProcessRunner runner) {
   if (!Directory(repoPath).existsSync()) return 0;
   try {
@@ -296,7 +289,10 @@ List<String> planCleanup(
   );
   if (branchAction != null) actions.add(branchAction);
 
-  if (!skipSync && !_isTrunkSynced(localRepo, trunkBranch)) {
+  final trunk = localRepo.branches
+      .where((b) => b.name == trunkBranch)
+      .firstOrNull;
+  if (!skipSync && (trunk == null || !trunk.isUpToDateWithUpstream)) {
     actions.add('Sync `$trunkBranch` to `origin/$trunkBranch`');
   }
 
@@ -565,19 +561,66 @@ void _executeLocalRepoCleanup(
     );
   }
 
-  _recordAction(
-    actions,
-    _executeBranchDeletion(
-      localRepo,
-      headBranch,
-      trunkBranch,
-      pr.headRefOid,
-      runner,
-      prNumber: pr.number,
-      worktreePruned: wtAction != null && wtAction.success,
-    ),
-    onProgress,
+  if (headBranch.isEmpty ||
+      headBranch == trunkBranch ||
+      isProtectedBranch(headBranch) ||
+      !localRepo.branches.any((b) => b.name == headBranch)) {
+    return;
+  }
+
+  final worktreePruned = wtAction != null && wtAction.success;
+  final blockingWt = _findBlockingWorktreeForBranch(
+    localRepo,
+    headBranch,
+    worktreePruned: worktreePruned,
   );
+  if (blockingWt != null) {
+    _recordAction(actions, (
+      description: 'Delete local branch `$headBranch`',
+      success: false,
+      error:
+          'Branch `$headBranch` is checked out in worktree at '
+          '${blockingWt.path}.',
+    ), onProgress);
+    return;
+  }
+
+  final safetyError = _verifyBranchSafeToDelete(
+    localRepo.repoPath,
+    headBranch: headBranch,
+    trunkBranch: trunkBranch,
+    headRefOid: pr.headRefOid,
+    prNumber: pr.number,
+    runner: runner,
+  );
+  if (safetyError != null) {
+    _recordAction(actions, (
+      description: 'Delete local branch `$headBranch`',
+      success: false,
+      error: safetyError,
+    ), onProgress);
+    return;
+  }
+
+  final res = runner('git', [
+    '-C',
+    localRepo.repoPath,
+    'branch',
+    '-D',
+    headBranch,
+  ]);
+  final branchDeleteAction = res.exitCode == 0
+      ? (
+          description: 'Deleted local feature branch `$headBranch`',
+          success: true,
+          error: null,
+        )
+      : (
+          description: 'Failed to delete local branch `$headBranch`',
+          success: false,
+          error: (res.stderr as String).trim(),
+        );
+  _recordAction(actions, branchDeleteAction, onProgress);
 }
 
 CleanAction? _executeRemoteBranchDeletion(
@@ -720,76 +763,6 @@ CleanAction? _executeBranchCheckout(
         );
 }
 
-CleanAction? _executeBranchDeletion(
-  LocalRepoInfo localRepo,
-  String headBranch,
-  String trunkBranch,
-  String? headRefOid,
-  SyncProcessRunner runner, {
-  int? prNumber,
-  bool worktreePruned = false,
-}) {
-  if (headBranch.isEmpty ||
-      headBranch == trunkBranch ||
-      isProtectedBranch(headBranch)) {
-    return null;
-  }
-  final localBranch = localRepo.branches
-      .where((b) => b.name == headBranch)
-      .firstOrNull;
-  if (localBranch == null) return null;
-
-  final blockingWt = _findBlockingWorktreeForBranch(
-    localRepo,
-    headBranch,
-    worktreePruned: worktreePruned,
-  );
-  if (blockingWt != null) {
-    return (
-      description: 'Delete local branch `$headBranch`',
-      success: false,
-      error:
-          'Branch `$headBranch` is checked out in worktree at '
-          '${blockingWt.path}.',
-    );
-  }
-
-  final safetyError = _verifyBranchSafeToDelete(
-    localRepo.repoPath,
-    headBranch: headBranch,
-    trunkBranch: trunkBranch,
-    headRefOid: headRefOid,
-    prNumber: prNumber,
-    runner: runner,
-  );
-  if (safetyError != null) {
-    return (
-      description: 'Delete local branch `$headBranch`',
-      success: false,
-      error: safetyError,
-    );
-  }
-
-  final res = runner('git', [
-    '-C',
-    localRepo.repoPath,
-    'branch',
-    '-D',
-    headBranch,
-  ]);
-  return res.exitCode == 0
-      ? (
-          description: 'Deleted local feature branch `$headBranch`',
-          success: true,
-          error: null,
-        )
-      : (
-          description: 'Failed to delete local branch `$headBranch`',
-          success: false,
-          error: (res.stderr as String).trim(),
-        );
-}
-
 /// Returns an error string if [headBranch] (or [localSha]) has unmerged commits
 /// not in [trunkBranch] or past [headRefOid], or `null` if safe to delete.
 String? _verifyBranchSafeToDelete(
@@ -825,7 +798,11 @@ String? _verifyBranchSafeToDelete(
     return 'Branch has unmerged commits, and PR HEAD could not be verified '
         '(empty headRefOid).';
   }
-  _ensureCommitExistsLocally(repoPath, headRefOid, prNumber, runner);
+  if (prNumber != null &&
+      runner('git', ['-C', repoPath, 'cat-file', '-e', headRefOid]).exitCode !=
+          0) {
+    runner('git', ['-C', repoPath, 'fetch', 'origin', 'pull/$prNumber/head']);
+  }
   final logRes = runner('git', [
     '-C',
     repoPath,
@@ -837,35 +814,22 @@ String? _verifyBranchSafeToDelete(
     return 'PR HEAD ($headRefOid) is not present locally and could not be '
         'verified.';
   }
-  if ((logRes.stdout as String).trim().isNotEmpty) {
-    runner('git', ['-C', repoPath, 'fetch', 'origin', trunkBranch, '--quiet']);
-    final postFetchCount = runner('git', [
-      '-C',
-      repoPath,
-      'rev-list',
-      '--count',
-      'origin/$trunkBranch..$targetRef',
-    ]);
-    if (postFetchCount.exitCode == 0 &&
-        (postFetchCount.stdout as String).trim() == '0') {
-      return null;
-    }
-    return 'Branch has unpushed commits past PR HEAD ($headRefOid).';
+  if ((logRes.stdout as String).trim().isEmpty) {
+    return null;
   }
-  return null;
-}
-
-void _ensureCommitExistsLocally(
-  String repoPath,
-  String commitSha,
-  int? prNumber,
-  SyncProcessRunner runner,
-) {
-  if (prNumber == null) return;
-  final catRes = runner('git', ['-C', repoPath, 'cat-file', '-e', commitSha]);
-  if (catRes.exitCode != 0) {
-    runner('git', ['-C', repoPath, 'fetch', 'origin', 'pull/$prNumber/head']);
+  runner('git', ['-C', repoPath, 'fetch', 'origin', trunkBranch, '--quiet']);
+  final postFetchCount = runner('git', [
+    '-C',
+    repoPath,
+    'rev-list',
+    '--count',
+    'origin/$trunkBranch..$targetRef',
+  ]);
+  if (postFetchCount.exitCode == 0 &&
+      (postFetchCount.stdout as String).trim() == '0') {
+    return null;
   }
+  return 'Branch has unpushed commits past PR HEAD ($headRefOid).';
 }
 
 CleanAction _executeTrunkSync(

@@ -107,22 +107,14 @@ query($q: String!, $limit: Int!, $cursor: String) {
     for (final node in nodes)
       if (parseLandedPrNode(node) case final parsed?)
         if (!isDartSdkRepositoryName(parsed.repository) &&
-            _isAllowedUserPr(
-              parsed.repository,
-              user,
-              includeOwned: includeOwned,
-            ))
+            (includeOwned ||
+                user.isEmpty ||
+                user == '@me' ||
+                !parsed.repository.toLowerCase().startsWith(
+                  '${user.toLowerCase()}/',
+                )))
           parsed,
   ];
-}
-
-bool _isAllowedUserPr(
-  String repository,
-  String user, {
-  required bool includeOwned,
-}) {
-  if (includeOwned || user.isEmpty || user == '@me') return true;
-  return !repository.toLowerCase().startsWith('${user.toLowerCase()}/');
 }
 
 /// Parses a landed PR node from GraphQL.
@@ -166,26 +158,21 @@ Iterable<({LocalRepoInfo repo, String owner, String name})> _filteredRootRepos(
   List<LocalRepoInfo> localRepos, {
   String? repoFilter,
 }) sync* {
+  final filterLower = repoFilter?.toLowerCase();
   for (final repo in localRepos) {
-    if (!isRootGitRepository(Directory(repo.repoPath))) continue;
-    if (!_isRepoMatchingFilter(repo, repoFilter)) continue;
-    final parsedRepo = _parseRepoOwnerAndName(repo);
-    if (parsedRepo == null) continue;
-    yield (repo: repo, owner: parsedRepo.owner, name: parsedRepo.name);
+    if (!isRootGitRepository(Directory(repo.repoPath)) ||
+        isDartSdkRepositoryName(repo.repoName)) {
+      continue;
+    }
+    if (filterLower != null &&
+        !repo.repoNames.any((n) => n.toLowerCase() == filterLower)) {
+      continue;
+    }
+    final canonicalRepo = repo.repoNames.firstOrNull;
+    if (canonicalRepo == null || !canonicalRepo.contains('/')) continue;
+    final repoParts = canonicalRepo.split('/');
+    yield (repo: repo, owner: repoParts[0], name: repoParts[1]);
   }
-}
-
-bool _isRepoMatchingFilter(LocalRepoInfo repo, String? repoFilter) {
-  if (isDartSdkRepositoryName(repo.repoName)) return false;
-  if (repoFilter == null) return true;
-  return repo.repoNames.any((n) => n.toLowerCase() == repoFilter.toLowerCase());
-}
-
-({String owner, String name})? _parseRepoOwnerAndName(LocalRepoInfo repo) {
-  final canonicalRepo = repo.repoNames.firstOrNull;
-  if (canonicalRepo == null || !canonicalRepo.contains('/')) return null;
-  final repoParts = canonicalRepo.split('/');
-  return (owner: repoParts[0], name: repoParts[1]);
 }
 
 Map<String, dynamic>? _tryParseGraphQLData(Object? stdout) {
@@ -243,46 +230,38 @@ List<_CandidateBranch> _collectCandidateBranches(
 }) {
   final candidates = <_CandidateBranch>[];
   for (final r in _filteredRootRepos(localRepos, repoFilter: repoFilter)) {
-    _collectRepoCandidateBranches(
-      r.repo,
-      r.owner,
-      r.name,
-      alreadyMatchedBranches,
-      candidates,
-    );
+    final repo = r.repo;
+    final owner = r.owner;
+    final name = r.name;
+    final trunk = resolveTrunkBranch(repo);
+    final uniqueBranches = <String>{};
+    final repoKey = '$owner/$name'.toLowerCase();
+
+    for (final b in repo.branches) {
+      if (_isBranchCandidate(b.name, trunk, repoKey, alreadyMatchedBranches)) {
+        uniqueBranches.add(b.name);
+      }
+    }
+
+    for (final wt in repo.worktrees) {
+      if (wt.path != repo.repoPath &&
+          wt.branch.isNotEmpty &&
+          wt.branch != 'DETACHED' &&
+          _isBranchCandidate(
+            wt.branch,
+            trunk,
+            repoKey,
+            alreadyMatchedBranches,
+          )) {
+        uniqueBranches.add(wt.branch);
+      }
+    }
+
+    for (final branch in uniqueBranches) {
+      candidates.add((repo: repo, branch: branch, owner: owner, name: name));
+    }
   }
   return candidates;
-}
-
-void _collectRepoCandidateBranches(
-  LocalRepoInfo repo,
-  String owner,
-  String name,
-  Set<String> alreadyMatchedBranches,
-  List<_CandidateBranch> candidates,
-) {
-  final trunk = resolveTrunkBranch(repo);
-  final uniqueBranches = <String>{};
-  final repoKey = '$owner/$name'.toLowerCase();
-
-  for (final b in repo.branches) {
-    if (_isBranchCandidate(b.name, trunk, repoKey, alreadyMatchedBranches)) {
-      uniqueBranches.add(b.name);
-    }
-  }
-
-  for (final wt in repo.worktrees) {
-    if (wt.path != repo.repoPath &&
-        wt.branch.isNotEmpty &&
-        wt.branch != 'DETACHED' &&
-        _isBranchCandidate(wt.branch, trunk, repoKey, alreadyMatchedBranches)) {
-      uniqueBranches.add(wt.branch);
-    }
-  }
-
-  for (final branch in uniqueBranches) {
-    candidates.add((repo: repo, branch: branch, owner: owner, name: name));
-  }
 }
 
 bool _isBranchCandidate(
@@ -330,7 +309,15 @@ List<LandedPr> _fetchBatchCrossAuthorPrs(
       continue;
     }
 
-    _extractLandedPrsFromBatch(data, batch, cutoff, seenPrKeys, results);
+    for (var b = 0; b < batch.length; b++) {
+      final landedPr = _parseBatchItemLandedPr(data, b, cutoff);
+      if (landedPr == null) continue;
+
+      final key = '${landedPr.repository}#${landedPr.number}'.toLowerCase();
+      if (seenPrKeys.add(key)) {
+        results.add(landedPr);
+      }
+    }
   }
 
   return results;
@@ -379,24 +366,6 @@ String _buildBatchCrossAuthorQuery(List<_CandidateBranch> batch) {
   }
   buffer.writeln('}');
   return buffer.toString();
-}
-
-void _extractLandedPrsFromBatch(
-  Map<String, dynamic> data,
-  List<_CandidateBranch> batch,
-  DateTime? cutoff,
-  Set<String> seenPrKeys,
-  List<LandedPr> results,
-) {
-  for (var b = 0; b < batch.length; b++) {
-    final landedPr = _parseBatchItemLandedPr(data, b, cutoff);
-    if (landedPr == null) continue;
-
-    final key = '${landedPr.repository}#${landedPr.number}'.toLowerCase();
-    if (seenPrKeys.add(key)) {
-      results.add(landedPr);
-    }
-  }
 }
 
 LandedPr? _parseBatchItemLandedPr(
@@ -486,48 +455,23 @@ _collectCandidateWorktrees(
   final detachedCandidates = <({LocalRepoInfo repo, LocalWorktreeEntry wt})>[];
 
   for (final r in _filteredRootRepos(localRepos, repoFilter: repoFilter)) {
-    _classifyRepoWorktrees(
-      r.repo,
-      r.owner,
-      r.name,
-      matchedWorktreePaths,
-      candidates,
-      detachedCandidates,
-    );
+    final repo = r.repo;
+    for (final wt in repo.worktrees) {
+      if (wt.path == repo.repoPath ||
+          matchedWorktreePaths.contains(wt.path) ||
+          !Directory(wt.path).existsSync()) {
+        continue;
+      }
+
+      if (wt.branch.isEmpty || wt.branch == 'DETACHED') {
+        detachedCandidates.add((repo: repo, wt: wt));
+      } else {
+        candidates.add((repo: repo, wt: wt, owner: r.owner, name: r.name));
+      }
+    }
   }
 
   return (branchCandidates: candidates, detachedCandidates: detachedCandidates);
-}
-
-void _classifyRepoWorktrees(
-  LocalRepoInfo repo,
-  String owner,
-  String name,
-  Set<String> matchedWorktreePaths,
-  List<_CandidateWorktree> candidates,
-  List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> detachedCandidates,
-) {
-  for (final wt in repo.worktrees) {
-    if (!_isCandidateWorktree(wt, repo.repoPath, matchedWorktreePaths)) {
-      continue;
-    }
-
-    if (wt.branch.isEmpty || wt.branch == 'DETACHED') {
-      detachedCandidates.add((repo: repo, wt: wt));
-    } else {
-      candidates.add((repo: repo, wt: wt, owner: owner, name: name));
-    }
-  }
-}
-
-bool _isCandidateWorktree(
-  LocalWorktreeEntry wt,
-  String repoPath,
-  Set<String> matchedWorktreePaths,
-) {
-  if (wt.path == repoPath) return false;
-  if (matchedWorktreePaths.contains(wt.path)) return false;
-  return Directory(wt.path).existsSync();
 }
 
 List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> _filterUnlinkedCandidates(

@@ -768,33 +768,6 @@ Future<({List<String> lines, String afterSha})> _syncGitRepo({
 
   final afterSha =
       await _runCapture('git', ['-C', dir, 'rev-parse', 'HEAD']) ?? '';
-  final lines = await _formatGitCommitDeltas(
-    label: label,
-    dir: dir,
-    shortDir: shortDir,
-    effectivePrev: effectivePrev,
-    afterSha: afterSha,
-  );
-
-  if (dirty.isNotEmpty) {
-    lines.add('  ⚠️  $label ($shortDir) has uncommitted local changes:');
-    for (final l in dirty.split('\n').where((s) => s.trim().isNotEmpty)) {
-      lines.add('     $l');
-    }
-  }
-
-  return (lines: lines, afterSha: afterSha);
-}
-
-String _shortSha(String sha) => sha.length >= 7 ? sha.substring(0, 7) : sha;
-
-Future<List<String>> _formatGitCommitDeltas({
-  required String label,
-  required String dir,
-  required String shortDir,
-  required String effectivePrev,
-  required String afterSha,
-}) async {
   final shortAfter = _shortSha(afterSha);
   final hasPrevCommit =
       effectivePrev.isNotEmpty &&
@@ -808,41 +781,59 @@ Future<List<String>> _formatGitCommitDeltas({
           ])).exitCode ==
           0;
 
+  final List<String> lines;
   if (!hasPrevCommit) {
     final msg =
         '  ✅ $label ($shortDir): up to date at $shortAfter '
         '(0 new commits since last sync)';
-    return [msg];
+    lines = [msg];
+  } else {
+    final shortPrev = _shortSha(effectivePrev);
+    final count =
+        await _runCapture('git', [
+          '-C',
+          dir,
+          'rev-list',
+          '--count',
+          '$effectivePrev..$afterSha',
+        ]) ??
+        '?';
+    final logOut =
+        await _runCapture('git', [
+          '-C',
+          dir,
+          'log',
+          '--oneline',
+          '$effectivePrev..$afterSha',
+        ]) ??
+        '';
+    final summary =
+        '  🆕 $label ($shortDir): '
+        '+$count new commit(s) ($shortPrev..$shortAfter)';
+    lines = [
+      summary,
+      ...logOut
+          .split('\n')
+          .where((s) => s.trim().isNotEmpty)
+          .map((l) => '     • $l'),
+    ];
   }
 
-  final shortPrev = _shortSha(effectivePrev);
-  final count =
-      await _runCapture('git', [
-        '-C',
-        dir,
-        'rev-list',
-        '--count',
-        '$effectivePrev..$afterSha',
-      ]) ??
-      '?';
-  final logOut =
-      await _runCapture('git', [
-        '-C',
-        dir,
-        'log',
-        '--oneline',
-        '$effectivePrev..$afterSha',
-      ]) ??
-      '';
-  final summary =
-      '  🆕 $label ($shortDir): '
-      '+$count new commit(s) ($shortPrev..$shortAfter)';
-  return [
-    summary,
-    for (final l in logOut.split('\n').where((s) => s.trim().isNotEmpty))
-      '     • $l',
-  ];
+  if (dirty.isNotEmpty) {
+    lines
+      ..add('  ⚠️  $label ($shortDir) has uncommitted local changes:')
+      ..addAll(
+        dirty
+            .split('\n')
+            .where((s) => s.trim().isNotEmpty)
+            .map((l) => '     $l'),
+      );
+  }
+
+  return (lines: lines, afterSha: afterSha);
 }
+
+String _shortSha(String sha) => sha.length >= 7 ? sha.substring(0, 7) : sha;
 
 Future<({List<RelayIssueRaw> issues, String ok, String error})>
 _fetchChannelIssues(String cli, String repo) async {

@@ -17,7 +17,15 @@ Future<void> runDartClean(
   DartCleanOptions options, {
   ProcessInspector? inspector,
 }) async {
-  final activeInspector = inspector ?? ProcessInspector.platform();
+  final activeInspector =
+      inspector ??
+      (Platform.isLinux
+          ? ProcFsProcessInspector()
+          : Platform.isMacOS
+          ? WitrProcessInspector()
+          : throw const DartCleanException(
+              'dart-clean is currently only supported on macOS and Linux.',
+            ));
 
   final currentPid = pid;
 
@@ -134,9 +142,14 @@ class _ProcessNode({
     if (reason.contains('parent is ')) {
       reasonStr = ' (${cyan.wrap(reason)})';
     }
-    final cwdStr = (cwd != null && cwd != '/')
-        ? '  ${abbreviatePath(cwd!)}'
-        : '';
+    final home = Platform.environment['HOME'];
+    var cwdStr = '';
+    if (cwd != null && cwd != '/') {
+      final formattedCwd = (home != null && cwd!.startsWith(home))
+          ? '~${cwd!.substring(home.length)}'
+          : cwd!;
+      cwdStr = '  $formattedCwd';
+    }
     final pidStr = isDart ? yellow.wrap(pid.toString()) : pid.toString();
 
     print('$indent[$pidStr] $cmdline$cwdStr$reasonStr');
@@ -261,8 +274,6 @@ Future<({String reason, int? ownerPid})> _resolveOwnerReason(
   return (reason: 'Orphaned', ownerPid: null);
 }
 
-typedef _PidAncestry = ({int pid, List<({int pid, String command})> ancestry});
-
 Future<List<_ProcessNode>> _buildTree(
   List<DartProcess> processes,
   ProcessInspector inspector,
@@ -293,9 +304,10 @@ Future<List<_ProcessNode>> _buildTree(
   // 3. Fetch ancestries concurrently
   final pool = Pool(4);
   final ancestriesList = await pool
-      .forEach(parentToPid.values, (pid) => _fetchPidAncestry(pid, inspector))
-      .where((r) => r != null)
-      .cast<_PidAncestry>()
+      .forEach(
+        parentToPid.values,
+        (pid) async => (pid: pid, ancestry: await inspector.ancestry(pid)),
+      )
       .toList();
 
   final ancestries = Map.fromEntries(
@@ -303,30 +315,6 @@ Future<List<_ProcessNode>> _buildTree(
   );
 
   // 4. Build the tree
-  return _linkProcessNodes(
-    processes,
-    nodes,
-    parentToPid,
-    ancestries,
-    inspector,
-  );
-}
-
-Future<_PidAncestry?> _fetchPidAncestry(
-  int pid,
-  ProcessInspector inspector,
-) async {
-  final ancestry = await inspector.ancestry(pid);
-  return (pid: pid, ancestry: ancestry);
-}
-
-Future<List<_ProcessNode>> _linkProcessNodes(
-  List<DartProcess> processes,
-  Map<int, _ProcessNode> nodes,
-  Map<int, int> parentToPid,
-  Map<int, List<({int pid, String command})>> ancestries,
-  ProcessInspector inspector,
-) async {
   final roots = <_ProcessNode>[];
 
   for (final p in processes) {

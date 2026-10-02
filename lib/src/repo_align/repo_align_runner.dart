@@ -61,7 +61,9 @@ class RepoAlignRunner {
 
     for (final r in activeResults) {
       final strictIcon = _strictModeIcon(r);
-      final lbIcon = _lowerBoundIcon(r);
+      final lbIcon = r.hasLowerBound
+          ? '✅'
+          : (r.kind == RepoKind.publishedPackage ? '❌' : '-');
       final ccIcon = _complexityIcon(r);
       final asIcon = r.hasAutosubmit ? '✅' : '❌';
       final dbIcon = r.hasDependabot ? '✅' : '❌';
@@ -82,12 +84,6 @@ class RepoAlignRunner {
     if (r.hasFullStrictMode) return '✅';
     if (r.strictCasts || r.strictInference || r.strictRawTypes) return '⚠️';
     return '❌';
-  }
-
-  String _lowerBoundIcon(RepoAlignmentStatus r) {
-    if (r.hasLowerBound) return '✅';
-    if (r.kind == RepoKind.publishedPackage) return '❌';
-    return '-';
   }
 
   String _complexityIcon(RepoAlignmentStatus r) {
@@ -162,29 +158,13 @@ class RepoAlignRunner {
     );
 
     for (final r in targets) {
-      _fixSingleRepo(
-        r,
-        fixLints: shouldFixLints,
-        fixCi: shouldFixCi,
-        fixGitHub: shouldFixGitHub,
-        dryRun: dryRun,
-      );
+      print('\nProcessing ${cyan.wrap(r.name)} (${r.kind.name})...');
+      if (shouldFixLints) _fixAnalysisOptions(r, dryRun: dryRun);
+      if (shouldFixCi) _fixCiWorkflows(r, dryRun: dryRun);
+      if (shouldFixGitHub) _fixGitHubSettings(r, dryRun: dryRun);
     }
 
     print('\n${green.wrap('✅ Remediation pass completed.')}\n');
-  }
-
-  void _fixSingleRepo(
-    RepoAlignmentStatus r, {
-    required bool fixLints,
-    required bool fixCi,
-    required bool fixGitHub,
-    required bool dryRun,
-  }) {
-    print('\nProcessing ${cyan.wrap(r.name)} (${r.kind.name})...');
-    if (fixLints) _fixAnalysisOptions(r, dryRun: dryRun);
-    if (fixCi) _fixCiWorkflows(r, dryRun: dryRun);
-    if (fixGitHub) _fixGitHubSettings(r, dryRun: dryRun);
   }
 
   void _fixAnalysisOptions(RepoAlignmentStatus r, {required bool dryRun}) {

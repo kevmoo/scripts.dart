@@ -159,18 +159,27 @@ PrCheckReport runPrCheck({
   final workflowsText = _readWorkflowsContent(repoRoot);
   final dartBin = _resolveDartBinary();
 
-  violations.addAll(
-    _checkFirehosePackages(
-      repoRoot: repoRoot,
-      baseRef: baseRef,
-      changedFiles: changedFiles.toSet(),
-      requireWip: requireWip,
-      runSync: processRunner,
-    ),
+  final packages = runZoned(
+    () => firehose.Repository(repoRoot).locatePackages(),
+    zoneSpecification: ZoneSpecification(print: (_, _, _, _) {}),
   );
+  final changedFilesSet = changedFiles.toSet();
+  for (final pkg in packages) {
+    violations.addAll(
+      _validateSingleFirehosePackage(
+        repoRoot: repoRoot,
+        baseRef: baseRef,
+        pkg: pkg,
+        changedFiles: changedFilesSet,
+        requireWip: requireWip,
+        runSync: processRunner,
+      ),
+    );
+  }
 
   final dartFiles = changedFiles.where((f) => f.endsWith('.dart')).toList();
-  if (dartFiles.isNotEmpty && !_isDartSdkRepo(repoRoot)) {
+  if (dartFiles.isNotEmpty &&
+      !File(p.join(repoRoot.path, 'tools', 'VERSION')).existsSync()) {
     final fmtViolation = _checkDartFormat(
       repoRoot,
       dartFiles,
@@ -314,37 +323,6 @@ String _resolveDartBinary() {
     if (flutterDart.existsSync()) return flutterDart.path;
   }
   return dartExecutable ?? 'dart';
-}
-
-bool _isDartSdkRepo(Directory repoRoot) =>
-    File(p.join(repoRoot.path, 'tools', 'VERSION')).existsSync();
-
-/// Validates publishable packages using `package:firehose` (`Repository`,
-/// `Package`, and `Changelog`).
-List<PrCheckViolation> _checkFirehosePackages({
-  required Directory repoRoot,
-  required String baseRef,
-  required Set<String> changedFiles,
-  required bool requireWip,
-  required SyncProcessRunner runSync,
-}) {
-  final packages = runZoned(
-    () => firehose.Repository(repoRoot).locatePackages(),
-    zoneSpecification: ZoneSpecification(print: (_, _, _, _) {}),
-  );
-  final violations = <PrCheckViolation>[];
-  for (final pkg in packages) {
-    final v = _validateSingleFirehosePackage(
-      repoRoot: repoRoot,
-      baseRef: baseRef,
-      pkg: pkg,
-      changedFiles: changedFiles,
-      requireWip: requireWip,
-      runSync: runSync,
-    );
-    violations.addAll(v);
-  }
-  return violations;
 }
 
 List<String> _packageRelativeChanges(String prefix, Set<String> changedFiles) {
@@ -713,7 +691,11 @@ PrCheckViolation? _checkSingleMarkdownLine(
           'line (>), or run `mdf $relPath`.',
     );
   }
-  if (_isMalformedAlertContinuation(line, nextLine, bodyLine)) {
+  if (_gfmAlertHeaderRegex.hasMatch(line) &&
+      (nextLine == null ||
+          nextLine.trim() != '>' ||
+          bodyLine == null ||
+          !_gfmAlertBodyLineRegex.hasMatch(bodyLine))) {
     return PrCheckViolation(
       check: 'gfm-alert-format',
       message:
@@ -737,14 +719,4 @@ PrCheckViolation? _checkSingleMarkdownLine(
     );
   }
   return null;
-}
-
-bool _isMalformedAlertContinuation(
-  String line,
-  String? nextLine,
-  String? bodyLine,
-) {
-  if (!_gfmAlertHeaderRegex.hasMatch(line)) return false;
-  if (nextLine == null || nextLine.trim() != '>') return true;
-  return bodyLine == null || !_gfmAlertBodyLineRegex.hasMatch(bodyLine);
 }

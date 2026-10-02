@@ -3,7 +3,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
-import 'dart_clean.dart';
 import 'process_utils.dart';
 import 'witr_types.dart';
 
@@ -31,19 +30,6 @@ abstract interface class ProcessInspector {
 
   /// Display name of the system reaper (e.g. "launchd" or "systemd").
   String get reaperName;
-
-  /// Returns the default inspector for the current platform.
-  static ProcessInspector platform() {
-    if (Platform.isLinux) {
-      return ProcFsProcessInspector();
-    } else if (Platform.isMacOS) {
-      return WitrProcessInspector();
-    } else {
-      throw const DartCleanException(
-        'dart-clean is currently only supported on macOS and Linux.',
-      );
-    }
-  }
 }
 
 /// Linux process inspector reading directly from `/proc`.

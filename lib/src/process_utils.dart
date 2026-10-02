@@ -71,14 +71,6 @@ Future<String?> getProcessCwd(int pid) async {
   }
 }
 
-String abbreviatePath(String path) {
-  final home = Platform.environment['HOME'];
-  if (home != null && path.startsWith(home)) {
-    return '~${path.substring(home.length)}';
-  }
-  return path;
-}
-
 Future<String> getProcessName(int pid) async {
   try {
     final output = await runProcess('ps', [

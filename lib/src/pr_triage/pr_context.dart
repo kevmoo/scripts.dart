@@ -314,7 +314,11 @@ final _conflictInFileRegExp = RegExp(r'^CONFLICT \([^)]+\): .* in (.+)$');
     } else if (_hexOidRegExp.hasMatch(line)) {
       inNameList = true;
     } else if (line.startsWith('CONFLICT (')) {
-      _recordConflictLine(line, files, messages);
+      messages.add(line);
+      final match = _conflictInFileRegExp.firstMatch(line);
+      if (match != null) {
+        files.add(match.group(1)!.trim());
+      }
       inNameList = false;
     } else if (inNameList && !line.contains(' ')) {
       files.add(line);
@@ -322,18 +326,6 @@ final _conflictInFileRegExp = RegExp(r'^CONFLICT \([^)]+\): .* in (.+)$');
   }
 
   return (files: files.toList(), messages: messages);
-}
-
-void _recordConflictLine(
-  String line,
-  Set<String> files,
-  List<String> messages,
-) {
-  messages.add(line);
-  final match = _conflictInFileRegExp.firstMatch(line);
-  if (match != null) {
-    files.add(match.group(1)!.trim());
-  }
 }
 
 /// Inspects a PR's mergeability state and, if `CONFLICTING` or `DIRTY`, uses

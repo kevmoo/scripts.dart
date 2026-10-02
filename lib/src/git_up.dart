@@ -108,7 +108,20 @@ Future<void> _runGit(
 /// repository.
 Future<GitDir> getGitDir(String workingDirectory) async {
   try {
-    return await GitDirExtensions.fromCurrentDirectory(workingDirectory);
+    final result = await Process.run('git', [
+      'rev-parse',
+      '--show-toplevel',
+    ], workingDirectory: workingDirectory);
+    if (result.exitCode != 0) {
+      throw ProcessException(
+        'git',
+        ['rev-parse', '--show-toplevel'],
+        result.stderr as String,
+        result.exitCode,
+      );
+    }
+    final gitRoot = (result.stdout as String).trim();
+    return await GitDir.fromExisting(gitRoot);
   } on ProcessException catch (e) {
     throw GitUpException(
       e.message.trim().isNotEmpty ? e.message.trim() : 'Failed to run git.',
@@ -270,20 +283,70 @@ Future<void> _cleanBranches(
   final branches = await _categorizeBranches(gitDir, defaultBranch);
   final (:goneBranches, :activeRemoteBranches, :ghAvailable, :recentPrs) =
       await _resolveGitHubStatus(gitDir, branches);
-  await _processGoneBranches(
-    gitDir,
-    defaultBranch,
-    goneBranches,
-    ghAvailable: ghAvailable,
-    recentPrs: recentPrs,
-  );
-  await _inspectActiveRemoteBranches(
-    gitDir,
-    activeRemoteBranches,
-    check: check,
-    ghAvailable: ghAvailable,
-    recentPrs: recentPrs,
-  );
+  if (goneBranches.isEmpty) {
+    print('No local branches found with deleted upstreams.');
+  } else {
+    print(
+      styleDim.wrap(
+        'Checking safety of ${goneBranches.length} branches with '
+        'gone upstreams...',
+      )!,
+    );
+  }
+  final toDelete = <String>[
+    for (final entry in goneBranches.entries)
+      if (await _shouldDeleteBranch(
+        gitDir,
+        defaultBranch,
+        entry.key,
+        entry.value,
+        ghAvailable: ghAvailable,
+        recentPrs: recentPrs,
+      ))
+        entry.key,
+  ];
+  if (toDelete.isNotEmpty) {
+    await _executeBranchDeletion(gitDir, goneBranches, toDelete);
+  }
+
+  if (!check) {
+    if (activeRemoteBranches.isNotEmpty) {
+      print(
+        styleDim.wrap(
+          'Tip: Run with --check to inspect active remote branches '
+          'for closed PRs.',
+        )!,
+      );
+    }
+    return;
+  }
+
+  if (activeRemoteBranches.isEmpty) {
+    print('No active remote branches to check.');
+    return;
+  }
+  if (!ghAvailable) {
+    printError(
+      'Warning: GitHub CLI (gh) is not available or authenticated. '
+      'Skipping active remote branch checks.',
+    );
+    return;
+  }
+  if (recentPrs == null) return;
+
+  var closedHeadingPrinted = false;
+  var conflictHeadingPrinted = false;
+  for (final branch in activeRemoteBranches) {
+    final printed = await _inspectSingleRemoteBranch(
+      gitDir,
+      branch,
+      recentPrs,
+      closedHeadingPrinted: closedHeadingPrinted,
+      conflictHeadingPrinted: conflictHeadingPrinted,
+    );
+    closedHeadingPrinted = printed.closedHeadingPrinted;
+    conflictHeadingPrinted = printed.conflictHeadingPrinted;
+  }
 }
 
 Future<void> _fetchAndPrune(GitDir gitDir) async {
@@ -396,46 +459,6 @@ Future<_ResolvedGitHubStatus> _resolveGitHubStatus(
     ghAvailable: true,
     recentPrs: recentPrs,
   );
-}
-
-Future<void> _processGoneBranches(
-  GitDir gitDir,
-  String defaultBranch,
-  Map<String, String> goneBranches, {
-  required bool ghAvailable,
-  required Map<String, PrInfo>? recentPrs,
-}) async {
-  if (goneBranches.isEmpty) {
-    print('No local branches found with deleted upstreams.');
-    return;
-  }
-
-  print(
-    styleDim.wrap(
-          'Checking safety of ${goneBranches.length} branches with '
-          'gone upstreams...',
-        ) ??
-        'Checking safety of ${goneBranches.length} branches with '
-            'gone upstreams...',
-  );
-
-  final toDelete = <String>[];
-  for (final entry in goneBranches.entries) {
-    if (await _shouldDeleteBranch(
-      gitDir,
-      defaultBranch,
-      entry.key,
-      entry.value,
-      ghAvailable: ghAvailable,
-      recentPrs: recentPrs,
-    )) {
-      toDelete.add(entry.key);
-    }
-  }
-
-  if (toDelete.isNotEmpty) {
-    await _executeBranchDeletion(gitDir, goneBranches, toDelete);
-  }
 }
 
 Future<bool> _shouldDeleteBranch(
@@ -592,55 +615,6 @@ Future<bool> _removeCleanWorktree(
   }
 }
 
-Future<void> _inspectActiveRemoteBranches(
-  GitDir gitDir,
-  List<String> activeRemoteBranches, {
-  required bool check,
-  required bool ghAvailable,
-  required Map<String, PrInfo>? recentPrs,
-}) async {
-  if (!check) {
-    if (activeRemoteBranches.isNotEmpty) {
-      print(
-        styleDim.wrap(
-              'Tip: Run with --check to inspect active remote branches '
-              'for closed PRs.',
-            ) ??
-            'Tip: Run with --check to inspect active remote branches '
-                'for closed PRs.',
-      );
-    }
-    return;
-  }
-
-  if (activeRemoteBranches.isEmpty) {
-    print('No active remote branches to check.');
-    return;
-  }
-  if (!ghAvailable) {
-    printError(
-      'Warning: GitHub CLI (gh) is not available or authenticated. '
-      'Skipping active remote branch checks.',
-    );
-    return;
-  }
-  if (recentPrs == null) return;
-
-  var closedHeadingPrinted = false;
-  var conflictHeadingPrinted = false;
-  for (final branch in activeRemoteBranches) {
-    final printed = await _inspectSingleRemoteBranch(
-      gitDir,
-      branch,
-      recentPrs,
-      closedHeadingPrinted: closedHeadingPrinted,
-      conflictHeadingPrinted: conflictHeadingPrinted,
-    );
-    closedHeadingPrinted = printed.closedHeadingPrinted;
-    conflictHeadingPrinted = printed.conflictHeadingPrinted;
-  }
-}
-
 Future<({bool closedHeadingPrinted, bool conflictHeadingPrinted})>
 _inspectSingleRemoteBranch(
   GitDir gitDir,
@@ -665,7 +639,9 @@ _inspectSingleRemoteBranch(
     );
   }
 
-  if (!await _hasClosedRemoteBranch(gitDir, branch, recentPrs)) {
+  if (prInfo == null ||
+      (prInfo.state != 'MERGED' && prInfo.state != 'CLOSED') ||
+      !await gitDir.hasRemoteBranch(branch)) {
     return (
       closedHeadingPrinted: closedHeadingPrinted,
       conflictHeadingPrinted: conflictHeadingPrinted,
@@ -677,22 +653,11 @@ _inspectSingleRemoteBranch(
     const heading = 'Checking active remote branches for closed PRs...';
     print(styleDim.wrap(heading) ?? heading);
   }
-  _printClosedRemoteBranchNotice(branch, recentPrs[branch]!);
+  _printClosedRemoteBranchNotice(branch, prInfo);
   return (
     closedHeadingPrinted: true,
     conflictHeadingPrinted: conflictHeadingPrinted,
   );
-}
-
-Future<bool> _hasClosedRemoteBranch(
-  GitDir gitDir,
-  String branch,
-  Map<String, PrInfo> recentPrs,
-) async {
-  final prInfo = recentPrs[branch];
-  if (prInfo == null) return false;
-  if (prInfo.state != 'MERGED' && prInfo.state != 'CLOSED') return false;
-  return gitDir.hasRemoteBranch(branch);
 }
 
 void _printConflictingBranchNotice(String branch, PrInfo prInfo) {
@@ -713,16 +678,13 @@ void _printClosedRemoteBranchNotice(String branch, PrInfo prInfo) {
   final url = prInfo.url ?? '';
   final prLabel = prInfo.number != null ? '#${prInfo.number}' : '';
   final branchLabel = styleBold.wrap(branch) ?? branch;
-  final link = _hyperlink(url, 'Click here');
+  final link = '\x1B]8;;$url\x1B\\Click here\x1B]8;;\x1B\\';
   print(
     'PR $prLabel for branch "$branchLabel" is closed, '
     'but the remote branch still exists.\n'
     '  $link to delete it: $url',
   );
 }
-
-String _hyperlink(String url, String text) =>
-    '\x1B]8;;$url\x1B\\$text\x1B]8;;\x1B\\';
 
 /// Exception thrown by `git-up` operations.
 ///

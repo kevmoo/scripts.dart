@@ -436,10 +436,6 @@ List<String> _extractMentionedUsers(String body, String prAuthor) {
 
 final _mentionRegex = RegExp('@([a-zA-Z0-9-]+)');
 
-bool _shouldUpdateReviewState(String? previousState, String newState) =>
-    newState.isNotEmpty &&
-    (newState != 'COMMENTED' || previousState != 'APPROVED');
-
 List<String> _extractApprovedReviewers(
   Map<String, dynamic>? reviewsObj,
   String prAuthor,
@@ -450,7 +446,9 @@ List<String> _extractApprovedReviewers(
     final login = _extractNodeLogin(item);
     if (!_isHumanReviewer(login, prAuthor)) continue;
     final state = item['state'] as String? ?? '';
-    if (_shouldUpdateReviewState(latestStateByReviewer[login!], state)) {
+    final previousState = latestStateByReviewer[login!];
+    if (state.isNotEmpty &&
+        (state != 'COMMENTED' || previousState != 'APPROVED')) {
       latestStateByReviewer[login] = state;
     }
   }

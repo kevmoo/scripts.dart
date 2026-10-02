@@ -23,28 +23,6 @@ Map<String, PrInfo>? mockRecentPrsForTesting;
 ///
 /// These are candidates for moving to `package:git`.
 extension GitDirExtensions on GitDir {
-  /// Resolves the Git repository root directory from the [workingDirectory] or
-  /// its parents.
-  ///
-  /// Throws a [ProcessException] if it's not a Git repository.
-  static Future<GitDir> fromCurrentDirectory([String? workingDirectory]) async {
-    workingDirectory ??= Directory.current.path;
-    final result = await Process.run('git', [
-      'rev-parse',
-      '--show-toplevel',
-    ], workingDirectory: workingDirectory);
-    if (result.exitCode != 0) {
-      throw ProcessException(
-        'git',
-        ['rev-parse', '--show-toplevel'],
-        result.stderr as String,
-        result.exitCode,
-      );
-    }
-    final gitRoot = (result.stdout as String).trim();
-    return GitDir.fromExisting(gitRoot);
-  }
-
   /// Helper for executing a git command and throwing a ProcessException on
   /// failure.
   Future<ProcessResult> _runGit(List<String> args) async {
@@ -289,18 +267,6 @@ extension GitDirExtensions on GitDir {
     return int.tryParse(output);
   }
 
-  /// Queries the GitHub API for the PR info by its number.
-  ///
-  /// Returns [PrInfo], or null if not found.
-  Future<PrInfo?> getPrInfoByNumber(int prNumber) =>
-      _getPrInfo(prNumber.toString());
-
-  /// Queries the GitHub API for the PR info by branch name.
-  ///
-  /// Returns [PrInfo], or null if not found.
-  Future<PrInfo?> getPrInfoByBranch(String branchName) =>
-      _getPrInfo(branchName);
-
   Future<PrInfo?> _getPrInfo(String target) async {
     try {
       final result = await Process.run('gh', [
@@ -336,14 +302,14 @@ extension GitDirExtensions on GitDir {
   }) async {
     final prNumber = await getLocalPrNumber(branchName);
     if (prNumber != null) {
-      final prInfo = await getPrInfoByNumber(prNumber);
+      final prInfo = await _getPrInfo(prNumber.toString());
       if (prInfo != null) return prInfo;
     }
 
     final cachedPr = cachedRecentPrs?[branchName];
     if (cachedPr != null) return cachedPr;
 
-    return getPrInfoByBranch(branchName);
+    return _getPrInfo(branchName);
   }
 
   /// Retrieves the details of recent PRs in the repository.

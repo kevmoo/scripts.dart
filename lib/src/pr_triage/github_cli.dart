@@ -105,15 +105,25 @@ Future<PrContext> resolvePrContextFromArgs({
     onFail('Failed to resolve repository owner and name.');
   }
 
-  await _verifyRepoCompatibility(
-    workingDir: workingDir,
-    localOwner: localOwner,
-    localRepo: localRepo,
-    targetOwner: owner,
-    targetRepo: repo,
-    onFail: onFail,
-    runCommand: runCommand,
-  );
+  if (localOwner != null &&
+      localRepo != null &&
+      owner != null &&
+      repo != null &&
+      localRepo.toLowerCase() != repo.toLowerCase()) {
+    final matchesRemote = await _hasGitRemote(
+      workingDir,
+      owner,
+      repo,
+      runCommand: runCommand,
+    );
+    if (!matchesRemote) {
+      onFail(
+        'The target directory "$workingDir" is for repository '
+        '"$localOwner/$localRepo", but the specified PR is for repository '
+        '"$owner/$repo".',
+      );
+    }
+  }
 
   return PrContext(
     workingDir: workingDir,
@@ -136,39 +146,6 @@ Future<PrContext> resolvePrContextFromArgs({
     return (null, null, prInput);
   }
   onFail('Invalid PR argument. Please provide a PR number or a GitHub PR URL.');
-}
-
-Future<void> _verifyRepoCompatibility({
-  required String workingDir,
-  required String? localOwner,
-  required String? localRepo,
-  required String? targetOwner,
-  required String? targetRepo,
-  required Never Function(String message) onFail,
-  required CommandRunner runCommand,
-}) async {
-  if (localOwner == null ||
-      localRepo == null ||
-      targetOwner == null ||
-      targetRepo == null) {
-    return;
-  }
-  if (localRepo.toLowerCase() == targetRepo.toLowerCase()) {
-    return;
-  }
-  final matchesRemote = await _hasGitRemote(
-    workingDir,
-    targetOwner,
-    targetRepo,
-    runCommand: runCommand,
-  );
-  if (!matchesRemote) {
-    onFail(
-      'The target directory "$workingDir" is for repository '
-      '"$localOwner/$localRepo", but the specified PR is for repository '
-      '"$targetOwner/$targetRepo".',
-    );
-  }
 }
 
 Future<bool> _hasGitRemote(
@@ -503,7 +480,9 @@ Future<String> fetchFailedCheckLog(
         )
       : _formatNonActionsCheckLog(check, matchedCheckRun);
 
-  return _prependAnnotations(annotations, logBody);
+  return annotations.isEmpty
+      ? logBody
+      : 'Check Annotations:\n${annotations.join("\n")}\n\n$logBody';
 }
 
 Future<Map<dynamic, dynamic>?> _fetchExternalCheckRun(
@@ -568,11 +547,6 @@ String _formatNonActionsCheckLog(
     return '$details\nInspect details at: $link';
   }
   return 'Non-GitHub Actions run. Inspect details at: $link';
-}
-
-String _prependAnnotations(List<String> annotations, String logBody) {
-  if (annotations.isEmpty) return logBody;
-  return 'Check Annotations:\n${annotations.join("\n")}\n\n$logBody';
 }
 
 Future<String> _fetchActionsRunLog(
@@ -707,33 +681,6 @@ String formatReviewerMentions(String normalizedLogins) => normalizedLogins
     .map((r) => '@$r')
     .join(', ');
 
-Future<void> _dismissPullRequestReview(
-  PrContext context, {
-  required String reviewId,
-  required String message,
-  required void Function(String) onWarning,
-  required CommandRunner runCommand,
-}) async {
-  final endpoint =
-      'repos/${context.owner}/${context.repo}/pulls/${context.prNumber}'
-      '/reviews/$reviewId/dismissals';
-  try {
-    await runCommand('gh', [
-      'api',
-      '-X',
-      'PUT',
-      endpoint,
-      '-f',
-      'message=$message',
-    ], workingDirectory: context.workingDir);
-  } catch (e) {
-    onWarning(
-      'WARNING: Failed to dismiss review $reviewId ($e); '
-      'proceeding to re-request review.',
-    );
-  }
-}
-
 /// Posts an optional top-level PR [comment], optionally dismisses a stale
 /// review by its numeric [dismissReviewId] (with [dismissMessage]), and
 /// re-requests review from [reviewerLogins] (`--add-reviewer`).
@@ -779,13 +726,24 @@ Future<void> reRequestPrReview(
     final msg = (dismissMessage != null && dismissMessage.trim().isNotEmpty)
         ? dismissMessage.trim()
         : 'Addressed review feedback; re-requesting review from $mentions.';
-    await _dismissPullRequestReview(
-      context,
-      reviewId: cleanDismissId,
-      message: msg,
-      onWarning: onWarning ?? print,
-      runCommand: runCommand,
-    );
+    final endpoint =
+        'repos/${context.owner}/${context.repo}/pulls/${context.prNumber}'
+        '/reviews/$cleanDismissId/dismissals';
+    try {
+      await runCommand('gh', [
+        'api',
+        '-X',
+        'PUT',
+        endpoint,
+        '-f',
+        'message=$msg',
+      ], workingDirectory: context.workingDir);
+    } catch (e) {
+      (onWarning ?? print)(
+        'WARNING: Failed to dismiss review $cleanDismissId ($e); '
+        'proceeding to re-request review.',
+      );
+    }
   }
 
   await runCommand('gh', [
