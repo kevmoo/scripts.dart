@@ -188,7 +188,7 @@ class RepoAlignRunner {
   }
 
   void _fixAnalysisOptions(RepoAlignmentStatus r, {required bool dryRun}) {
-    if (!r.hasPubspec || r.kind == RepoKind.agentSkills) return;
+    if (!r.hasPubspec) return;
 
     final analysisFile = File(p.join(r.path, 'analysis_options.yaml'));
     if (r.hasAnalysisOptions &&
