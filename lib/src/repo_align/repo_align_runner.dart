@@ -368,7 +368,7 @@ class RepoAlignRunner {
 
     final rulesetId = r.defaultBranchRulesetId;
     if (rulesetId == null) {
-      print('  ${red.wrap('⚠️  No writable ruleset on ${r.defaultBranch}')}');
+      _createBranchRuleset(r, dryRun: dryRun);
       return;
     }
 
@@ -383,8 +383,6 @@ class RepoAlignRunner {
 
     final ruleset = jsonDecode(read.stdout as String) as Map<String, dynamic>;
 
-    // The scan happens up to ~30 repos before this write, so re-check against
-    // what the ruleset says right now rather than trusting the stale snapshot.
     if (rulesetRequiresContext(ruleset, markdownCheckContext)) {
       print('  ✓ Already required (added since scan)');
       return;
@@ -411,6 +409,71 @@ class RepoAlignRunner {
       if (write.exitCode != 0) {
         print('  ${red.wrap('⚠️  Failed to update ruleset: ${write.stderr}')}');
       }
+    } finally {
+      tmpDir.deleteSync(recursive: true);
+    }
+  }
+
+  void _createBranchRuleset(RepoAlignmentStatus r, {required bool dryRun}) {
+    print(
+      '  🚀 ${dryRun ? 'Would create' : 'Creating'} '
+      'ruleset for ${r.defaultBranch}',
+    );
+    if (dryRun) return;
+
+    final checks = <Map<String, dynamic>>[];
+    if (r.hasMarkdownWorkflow) {
+      checks.add({
+        'context': markdownCheckContext,
+        'integration_id': githubActionsAppId,
+      });
+    }
+    for (final check in r.expectedCiCheckPrefixes) {
+      checks.add({'context': check, 'integration_id': githubActionsAppId});
+    }
+
+    final payload = {
+      'name': 'default',
+      'target': 'branch',
+      'enforcement': 'active',
+      'conditions': {
+        'ref_name': {
+          'include': const <String>['~DEFAULT_BRANCH'],
+          'exclude': const <String>[],
+        },
+      },
+      'rules': [
+        {'type': 'deletion'},
+        {'type': 'non_fast_forward'},
+        if (checks.isNotEmpty)
+          {
+            'type': 'required_status_checks',
+            'parameters': {
+              'required_status_checks': checks,
+              'strict_required_status_checks_policy': false,
+            },
+          },
+      ],
+    };
+
+    final tmpDir = Directory.systemTemp.createTempSync('repo_align_');
+    try {
+      final tmp = File(p.join(tmpDir.path, 'ruleset.json'))
+        ..writeAsStringSync(jsonEncode(payload));
+      final create = Process.runSync('gh', [
+        'api',
+        '--method',
+        'POST',
+        'repos/kevmoo/${r.name}/rulesets',
+        '--input',
+        tmp.path,
+      ]);
+      if (create.exitCode != 0) {
+        final err = create.stderr;
+        print('  ${red.wrap('⚠️  Failed to create ruleset: $err')}');
+        return;
+      }
+      print('  ✓ Created new branch ruleset');
     } finally {
       tmpDir.deleteSync(recursive: true);
     }
