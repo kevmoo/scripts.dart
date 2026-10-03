@@ -126,8 +126,12 @@ class RepoAlignmentStatus {
     return result;
   }
 
+  /// Dart lint standards apply to any repo carrying a `pubspec.yaml`,
+  /// including [RepoKind.agentSkills] -- `kevmoo_skills` and `dash_skills`
+  /// ship real Dart tooling under a workspace root, and a root
+  /// `analysis_options.yaml` governs every workspace member.
   void _checkDartIssues(List<String> result) {
-    if (!hasPubspec || kind == RepoKind.agentSkills) return;
+    if (!hasPubspec) return;
 
     if (!hasAnalysisOptions) {
       result.add('Missing analysis_options.yaml');

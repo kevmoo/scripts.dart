@@ -241,6 +241,57 @@ void main() {
           .contains('markdown.yml present but not a required check');
     });
 
+    test('flags missing analysis_options.yaml on agentSkills repos with a '
+        'pubspec', () {
+      // Regression: _checkDartIssues exempted agentSkills wholesale, so
+      // kevmoo_skills (a Dart workspace with real tooling under tool/) was
+      // reported 🟢 Aligned with no analysis_options.yaml at all.
+      final aligned = _markdownFixture(
+        kind: RepoKind.agentSkills,
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        requiredChecks: ['markdown'],
+      );
+      final noLints = RepoAlignmentStatus(
+        name: aligned.name,
+        path: aligned.path,
+        kind: RepoKind.agentSkills,
+        isArchived: false,
+        isFork: false,
+        isPrivate: false,
+        defaultBranch: 'main',
+        hasPubspec: true,
+        sdkConstraint: '^3.0.0',
+        packageNames: ['skills_repo'],
+        hasAnalysisOptions: false,
+        analysisInclude: null,
+        strictCasts: false,
+        strictInference: false,
+        strictRawTypes: false,
+        customLints: [],
+        workflowFiles: ['markdown.yml'],
+        hasCi: false,
+        hasLowerBound: false,
+        hasCogComp: false,
+        hasAutosubmit: true,
+        hasDependabot: true,
+        hasPublish: false,
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        autoMergeAllowed: true,
+        hasRulesetOrProtection: true,
+        requiredChecks: ['markdown'],
+        defaultBranchRulesetId: '123',
+        defaultBranchRequiredChecks: ['markdown'],
+      );
+
+      check(aligned.issues).isEmpty();
+      check(noLints.issues).contains('Missing analysis_options.yaml');
+      // Lower-bound / complexity remain out of scope for skills repos.
+      check(noLints.issues).not((it) => it.contains('Missing lower_bound.yml'));
+      check(noLints.issues).not((it) => it.contains('Missing complexity.yml'));
+    });
+
     test('does not flag gating when there is no ruleset at all', () {
       // Already reported as "No branch protection or ruleset"; a second
       // finding about gating would be noise.
