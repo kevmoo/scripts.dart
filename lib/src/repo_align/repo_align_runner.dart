@@ -368,8 +368,69 @@ class RepoAlignRunner {
 
     final rulesetId = r.defaultBranchRulesetId;
     if (rulesetId == null) {
-      print('  ${red.wrap('⚠️  No writable ruleset on ${r.defaultBranch}')}');
-      return;
+      print(
+        '  🚀 ${dryRun ? 'Would create' : 'Creating'} ruleset for ${r.defaultBranch}',
+      );
+      if (dryRun) return;
+
+      final checks = <Map<String, dynamic>>[];
+      if (r.hasMarkdownWorkflow) {
+        checks.add({
+          'context': markdownCheckContext,
+          'integration_id': githubActionsAppId,
+        });
+      }
+      for (final check in r.expectedCiCheckPrefixes) {
+        checks.add({'context': check, 'integration_id': githubActionsAppId});
+      }
+
+      final payload = {
+        'name': 'default',
+        'target': 'branch',
+        'enforcement': 'active',
+        'conditions': {
+          'ref_name': {
+            'include': ['~DEFAULT_BRANCH'],
+            'exclude': const [],
+          },
+        },
+        'rules': [
+          {'type': 'deletion'},
+          {'type': 'non_fast_forward'},
+          if (checks.isNotEmpty)
+            {
+              'type': 'required_status_checks',
+              'parameters': {
+                'required_status_checks': checks,
+                'strict_required_status_checks_policy': false,
+              },
+            },
+        ],
+      };
+
+      final tmpDir = Directory.systemTemp.createTempSync('repo_align_');
+      try {
+        final tmp = File(p.join(tmpDir.path, 'ruleset.json'))
+          ..writeAsStringSync(jsonEncode(payload));
+        final create = Process.runSync('gh', [
+          'api',
+          '--method',
+          'POST',
+          'repos/kevmoo/${r.name}/rulesets',
+          '--input',
+          tmp.path,
+        ]);
+        if (create.exitCode != 0) {
+          print(
+            '  ${red.wrap('⚠️  Failed to create ruleset: ${create.stderr}')}',
+          );
+          return;
+        }
+        print('  ✓ Created new branch ruleset');
+        return;
+      } finally {
+        tmpDir.deleteSync(recursive: true);
+      }
     }
 
     final read = Process.runSync('gh', [
