@@ -251,14 +251,14 @@ void checkKScriptsStaleness({
   // without `KSCRIPTS_REPO_DIR`); stay silent rather than nagging every run.
   if (repoPath == null) return;
 
-  final mainRef = File(p.join(repoPath, '.git', 'refs', 'heads', 'main'));
-  if (!mainRef.existsSync() || !exe.existsSync()) return;
+  if (!exe.existsSync()) return;
+  final mainModified = _mainUpdatedAt(repoPath);
+  if (mainModified == null) return;
 
   try {
     final binModified = File(exe.resolveSymbolicLinksSync())
         .statSync()
         .modified;
-    final mainModified = mainRef.statSync().modified;
     if (mainModified.isAfter(binModified)) {
       emit(
         '⚠️ Note: kscripts binary is older than $repoPath (main). '
@@ -266,6 +266,43 @@ void checkKScriptsStaleness({
       );
     }
   } catch (_) {}
+}
+
+/// When `main` in [repoPath] was last updated, or `null` when there is no such
+/// repository or branch.
+///
+/// Asks `git` rather than stat-ing `.git/refs/heads/main`: that loose file is
+/// absent once refs are packed and never exists under the `reftable` backend.
+/// Prefers the reflog entry (when the local ref last moved, matching the old
+/// mtime semantics) and falls back to the commit time when there is no reflog.
+DateTime? _mainUpdatedAt(String repoPath) {
+  String? run(List<String> args) {
+    try {
+      final result = Process.runSync('git', ['-C', repoPath, ...args]);
+      if (result.exitCode != 0) return null;
+      final out = (result.stdout as String).trim();
+      return out.isEmpty ? null : out;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  // `main@{<unix seconds>}` from the reflog, if one exists.
+  final reflog = run([
+    'log',
+    '-g',
+    '-1',
+    '--format=%gd',
+    '--date=unix',
+    'main',
+  ]);
+  final seconds =
+      int.tryParse(
+        RegExp(r'@\{(\d+)\}$').firstMatch(reflog ?? '')?.group(1) ?? '',
+      ) ??
+      int.tryParse(run(['log', '-1', '--format=%ct', 'main']) ?? '');
+  if (seconds == null) return null;
+  return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
 }
 
 String? _resolveRepoDirFromBundleLock(File exe) {

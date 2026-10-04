@@ -215,15 +215,16 @@ void main() {
         );
         check(unresolvedMessages).isEmpty();
 
-        // 2. Repo exists with older main ref -> emits nothing.
+        // 2. Repo exists and `main` moved before the binary was built ->
+        // emits nothing. Uses a real repo: the check must ask `git` rather
+        // than stat `.git/refs/heads/main`, which is absent once refs are
+        // packed and never exists under the `reftable` backend. Stored as
+        // `reftable` when the local git supports it so step 3 proves the
+        // warning still fires without that loose file.
         final repoDir = Directory(p.join(tempDir.path, 'scripts.dart'));
         final now = DateTime.now();
-        final mainRef =
-            File(p.join(repoDir.path, '.git', 'refs', 'heads', 'main'))
-              ..createSync(recursive: true)
-              ..writeAsStringSync('abc1234\n')
-              ..setLastModifiedSync(now.subtract(const Duration(minutes: 5)));
-        exeFile.setLastModifiedSync(now);
+        _initRepoWithMain(repoDir, preferReftable: true);
+        exeFile.setLastModifiedSync(now.add(const Duration(minutes: 5)));
 
         final freshMessages = <String>[];
         checkKScriptsStaleness(
@@ -233,8 +234,8 @@ void main() {
         );
         check(freshMessages).isEmpty();
 
-        // 3. Repo main ref is newer than binary -> emits warning.
-        mainRef.setLastModifiedSync(now.add(const Duration(minutes: 5)));
+        // 3. Binary predates the last `main` update -> emits warning.
+        exeFile.setLastModifiedSync(now.subtract(const Duration(hours: 1)));
         final staleMessages = <String>[];
         checkKScriptsStaleness(
           repoDirEnv: repoDir.path,
@@ -281,14 +282,10 @@ packages:
     source: git
     version: "0.0.0"
 ''');
-        // Run from inside an unrelated repo whose `main` ref is newer than the
+        // Run from inside an unrelated repo whose `main` is newer than the
         // binary: resolving `.` against the CWD would emit a bogus warning.
-        final cwdRepo = Directory(p.join(tempDir.path, 'unrelated'))
-          ..createSync();
-        File(p.join(cwdRepo.path, '.git', 'refs', 'heads', 'main'))
-          ..createSync(recursive: true)
-          ..writeAsStringSync('def5678\n')
-          ..setLastModifiedSync(now.add(const Duration(minutes: 5)));
+        final cwdRepo = Directory(p.join(tempDir.path, 'unrelated'));
+        _initRepoWithMain(cwdRepo);
 
         final gitInstallMessages = <String>[];
         final priorCwd = Directory.current;
@@ -306,4 +303,38 @@ packages:
       },
     );
   });
+}
+
+/// Creates a git repository at [dir] whose `main` holds one commit made now.
+///
+/// With [preferReftable], uses `--ref-format=reftable` (git 2.45+) and falls
+/// back to the default `files` backend on older gits.
+void _initRepoWithMain(Directory dir, {bool preferReftable = false}) {
+  dir.createSync(recursive: true);
+  ProcessResult git(List<String> args) =>
+      Process.runSync('git', ['-C', dir.path, ...args]);
+
+  var init = git([
+    'init',
+    '-q',
+    '--initial-branch=main',
+    if (preferReftable) '--ref-format=reftable',
+  ]);
+  if (preferReftable && init.exitCode != 0) {
+    init = git(['init', '-q', '--initial-branch=main']);
+  }
+  check(init.exitCode, because: init.stderr.toString()).equals(0);
+
+  final commit = git([
+    '-c',
+    'user.name=Test User',
+    '-c',
+    'user.email=test@example.com',
+    'commit',
+    '-q',
+    '--allow-empty',
+    '-m',
+    'init',
+  ]);
+  check(commit.exitCode, because: commit.stderr.toString()).equals(0);
 }
