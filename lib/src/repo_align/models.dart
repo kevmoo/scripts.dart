@@ -191,7 +191,7 @@ class RepoAlignmentStatus {
     if (hasDeprecatedAnalyticaRef) {
       result.add(
         'Deprecated root action uses: kevmoo/analytica.dart@... '
-        '(use packages/cognitive_complexity or packages/lower_bound)',
+        '(use packages/cognitive_complexity or kevmoo/lower_bound.dart)',
       );
     }
     if (hasNarrowWorkflowsPathFilter) {
