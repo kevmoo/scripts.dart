@@ -35,6 +35,8 @@ const Set<String> publishedPackages = {
   'completion.dart',
   'dhttpd',
   'git',
+  'lower_bound',
+  'lower_bound.dart',
   'peanut',
   'peanut.dart',
   'pubviz',
@@ -440,8 +442,9 @@ class RepoAlignScanner {
         content.contains(
           'dart-lang/ecosystem/.github/workflows/post_summaries.yaml',
         );
-    final hasDeprecatedAnalyticaRef = RegExp(r'uses:\s*kevmoo/analytica\.dart@')
-        .hasMatch(content);
+    final hasDeprecatedAnalyticaRef = RegExp(
+      r'uses:\s*kevmoo/analytica\.dart(?:/packages/lower_bound)?@',
+    ).hasMatch(content);
     final hasNarrowWorkflowsPathFilter =
         content.contains('.github/workflows/**') &&
         !content.contains("'.github/**'") &&

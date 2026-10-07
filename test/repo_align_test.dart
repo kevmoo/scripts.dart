@@ -367,7 +367,7 @@ void main() {
       );
       check(drifted.issues).contains(
         'Deprecated root action uses: kevmoo/analytica.dart@... '
-        '(use packages/cognitive_complexity or packages/lower_bound)',
+        '(use packages/cognitive_complexity or kevmoo/lower_bound.dart)',
       );
       check(drifted.issues).contains(
         'Narrow .github/workflows/** path filter in workflow '
@@ -383,7 +383,7 @@ void main() {
   group('Canonical Templates', () {
     test('contains expected workflow actions and flags', () {
       check(canonicalLowerBoundWorkflow)
-          .contains('kevmoo/analytica.dart/packages/lower_bound@main');
+          .contains('kevmoo/lower_bound.dart@main');
       check(canonicalLowerBoundWorkflow).contains('actions/checkout@v7');
       check(canonicalComplexityWorkflow)
           .contains('kevmoo/analytica.dart/packages/cognitive_complexity@main');
@@ -432,6 +432,8 @@ void main() {
     test('contains bench_press and other known published packages', () {
       check(publishedPackages).contains('bench_press');
       check(publishedPackages).contains('build_cli');
+      check(publishedPackages).contains('lower_bound');
+      check(publishedPackages).contains('lower_bound.dart');
       check(publishedPackages).contains('pubviz');
       check(publishedPackages).contains('stats');
     });
@@ -620,6 +622,41 @@ environment:
           status.issues,
         ).contains('Missing complexity.yml');
       }
+    });
+
+    test('flags uses: kevmoo/analytica.dart/packages/lower_bound@main as '
+        'deprecated', () {
+      final tempDir = Directory.systemTemp.createTempSync(
+        'repo_align_deprecated_lb_',
+      );
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final repoDir = Directory(p.join(tempDir.path, 'mock_pkg'))..createSync();
+      File(p.join(repoDir.path, '.git')).writeAsStringSync('gitdir: ...');
+      final workflowsDir = Directory(
+        p.join(repoDir.path, '.github', 'workflows'),
+      )..createSync(recursive: true);
+      File(p.join(workflowsDir.path, 'lower_bound.yml')).writeAsStringSync('''
+name: Dependency Lower-Bound Validation
+on: [pull_request]
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: kevmoo/analytica.dart/packages/lower_bound@main
+''');
+
+      final scanner = RepoAlignScanner(
+        baseDirPath: tempDir.path,
+        queryGitHubApi: false,
+      );
+      final status = scanner.scanSingleRepo(repoDir);
+
+      check(status.hasDeprecatedAnalyticaRef).isTrue();
+      check(status.issues).contains(
+        'Deprecated root action uses: kevmoo/analytica.dart@... '
+        '(use packages/cognitive_complexity or kevmoo/lower_bound.dart)',
+      );
     });
   });
 
