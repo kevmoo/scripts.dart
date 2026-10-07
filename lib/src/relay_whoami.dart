@@ -411,7 +411,7 @@ _classifyPersona({
       slug: 'darwin-pro',
       matchPattern: 'Darwin Pro|darwin-pro|gmac',
       archTag: 'macos_$unameM',
-      defaultTo: '☁️🐧⚡ Enterprise Rodete',
+      defaultTo: '☁️🐧⚡ Cloudtop',
     );
   }
   final osRelease = _readOsReleaseText();
@@ -422,14 +422,14 @@ _classifyPersona({
       slug: 'bluefin-dx',
       matchPattern: 'Bluefin-DX|bluefin-dx|bluefin',
       archTag: 'linux_$unameM',
-      defaultTo: '☁️🐧⚡ Enterprise Rodete, 🍎🏎️✨ Darwin Pro',
+      defaultTo: '☁️🐧⚡ Cloudtop, 🍎🏎️✨ Darwin Pro',
     );
   }
   if (osRelease.contains('rodete') || hasGgh || corpRepo.isNotEmpty) {
     return (
-      moniker: '☁️🐧⚡ Enterprise Rodete',
-      slug: 'enterprise-rodete',
-      matchPattern: 'Enterprise Rodete|enterprise-rodete|Cloudtop',
+      moniker: '☁️🐧⚡ Cloudtop',
+      slug: 'cloudtop',
+      matchPattern: 'Cloudtop|cloudtop|Enterprise Rodete|enterprise-rodete',
       archTag: 'linux_$unameM',
       defaultTo: '🍎🏎️✨ Darwin Pro',
     );
@@ -439,7 +439,7 @@ _classifyPersona({
     slug: 'unknown-linux',
     matchPattern: 'Unknown Linux|unknown-linux',
     archTag: 'linux_$unameM',
-    defaultTo: '☁️🐧⚡ Enterprise Rodete',
+    defaultTo: '☁️🐧⚡ Cloudtop',
   );
 }
 
