@@ -26,20 +26,20 @@ void main() {
 ## Summary
 
 **From:** 🐧🛠️🐳 Bluefin-DX (Personal Linux · Claude Code)
-**To:** ☁️🐧⚡ Enterprise Rodete, 🍎🏎️✨ Darwin Pro
+**To:** ☁️🐧⚡ Cloudtop, 🍎🏎️✨ Darwin Pro
 **Date:** 2026-09-22
 
 Landed PR #113 on kevmoo/scripts.dart.
-- [ ] Sync skills on Enterprise Rodete
+- [ ] Sync skills on Cloudtop
 - [ ] Sync skills on Darwin Pro
 ''';
       final env = parseRelayEnvelope(markdown, 'Fallback Title');
       expect(env.from, '🐧🛠️🐳 Bluefin-DX (Personal Linux · Claude Code)');
-      expect(env.to, '☁️🐧⚡ Enterprise Rodete, 🍎🏎️✨ Darwin Pro');
+      expect(env.to, '☁️🐧⚡ Cloudtop, 🍎🏎️✨ Darwin Pro');
       expect(env.stateTag, 'OPEN');
       expect(env.timePt, '');
       expect(env.todos, [
-        'Sync skills on Enterprise Rodete',
+        'Sync skills on Cloudtop',
         'Sync skills on Darwin Pro',
       ]);
     });
@@ -120,13 +120,13 @@ Landed PR #113 on kevmoo/scripts.dart.
         url: 'https://github.com/kevmoo/agent-relay/issues/4',
         body: '''
 **From:** 🐧🛠️🐳 Bluefin-DX
-**To:** ☁️🐧⚡ Enterprise Rodete, 🍎🏎️✨ Darwin Pro
+**To:** ☁️🐧⚡ Cloudtop, 🍎🏎️✨ Darwin Pro
 
 - [ ] Sync skills
 ''',
         commentBodies: <String>[],
       );
-      final selfPattern = RegExp('Enterprise Rodete|All', caseSensitive: false);
+      final selfPattern = RegExp('Cloudtop|All', caseSensitive: false);
       final enriched = EnrichedRelayIssue.fromRaw(
         rawIssue4,
         channel: 'oss',
@@ -150,7 +150,7 @@ Landed PR #113 on kevmoo/scripts.dart.
       };
 
       final built = buildRelayCheckReport(
-        moniker: '☁️🐧⚡ Enterprise Rodete',
+        moniker: '☁️🐧⚡ Cloudtop',
         lastSyncPt: '2026-09-21 17:00 PDT',
         nowUtc: '2026-09-23T02:45:00Z',
         nowPt: '2026-09-22 19:45 PDT',
@@ -172,7 +172,7 @@ Landed PR #113 on kevmoo/scripts.dart.
         built.report,
         contains(
           '=== 📥 3. Action Required — Waiting on Us '
-          '(☁️🐧⚡ Enterprise Rodete) [1] ===',
+          '(☁️🐧⚡ Cloudtop) [1] ===',
         ),
       );
       expect(
@@ -201,12 +201,12 @@ Landed PR #113 on kevmoo/scripts.dart.
         createdAt: '2026-09-23T03:03:00Z',
         url: 'https://github.com/kevmoo/agent-relay/issues/5',
         body: '''
-### ☁️🐧⚡ Enterprise Rodete (`kevmoo` · `linux_x86_64`) → 🐧🛠️🐳 Bluefin-DX, 🍎🏎️✨ Darwin Pro
+### ☁️🐧⚡ Cloudtop (`kevmoo` · `linux_x86_64`) → 🐧🛠️🐳 Bluefin-DX, 🍎🏎️✨ Darwin Pro
 > **Thread**: `#5 Review` | **State**: `HANDOFF` | **Time**: `2026-09-22 20:03 PT`
 ''',
         commentBodies: <String>[
           '''
-### 🐧🛠️🐳 Bluefin-DX (`bluefin` · `linux_x86_64`) → ☁️🐧⚡ Enterprise Rodete
+### 🐧🛠️🐳 Bluefin-DX (`bluefin` · `linux_x86_64`) → ☁️🐧⚡ Cloudtop
 > **Thread**: `#5 Review` | **State**: `ACKED` | **Time**: `2026-09-22 20:21 PT`
 ''',
         ],
@@ -239,7 +239,7 @@ Landed PR #113 on kevmoo/scripts.dart.
 
     test('surfaces CLOSED issues with actionable post-close replies and '
         'badges SETTLING / SETTLED DONE threads', () {
-      final selfPattern = RegExp('Enterprise Rodete|All', caseSensitive: false);
+      final selfPattern = RegExp('Cloudtop|All', caseSensitive: false);
 
       // 1. Closed issue #10 with a post-close reply (like the 38s race on #10).
       const closedWithPostCloseReply = RelayIssueRaw(
@@ -251,16 +251,16 @@ Landed PR #113 on kevmoo/scripts.dart.
         closedAt: '2026-09-26T03:03:29Z',
         url: 'https://github.com/kevmoo/agent-relay/issues/10',
         body: '''
-### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Cloudtop
 > **State**: `HANDOFF` | **Time**: `2026-09-25 19:35 PT`
 ''',
         commentBodies: <String>[
           '''
-### ☁️🐧⚡ Enterprise Rodete → 🐧🛠️🐳 Bluefin-DX
+### ☁️🐧⚡ Cloudtop → 🐧🛠️🐳 Bluefin-DX
 > **State**: `DONE` | **Time**: `2026-09-25 20:03 PT`
 ''',
           '''
-### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Cloudtop
 > **State**: `ACKED` | **Time**: `2026-09-25 20:04 PT`
 ''',
         ],
@@ -279,13 +279,13 @@ Landed PR #113 on kevmoo/scripts.dart.
         closedAt: '2026-09-19T21:37:31Z',
         url: 'https://github.com/kevmoo/agent-relay/issues/1',
         body: '''
-### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Cloudtop
 > **State**: `OPEN` | **Time**: `2026-09-19 14:00 PT`
 - [ ] Original opener todo item
 ''',
         commentBodies: <String>[
           '''
-### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Cloudtop
 > **State**: `ACKED` | **Time**: `2026-09-19 14:56 PT`
 ''',
         ],
@@ -303,13 +303,13 @@ Landed PR #113 on kevmoo/scripts.dart.
         createdAt: '2026-09-26T03:00:00Z',
         url: 'https://github.com/kevmoo/agent-relay/issues/11',
         body: '''
-### ☁️🐧⚡ Enterprise Rodete → 🐧🛠️🐳 Bluefin-DX
+### ☁️🐧⚡ Cloudtop → 🐧🛠️🐳 Bluefin-DX
 > **State**: `HANDOFF` | **Time**: `2026-09-25 20:00 PT`
 - [ ] Verify benchmark numbers
 ''',
         commentBodies: <String>[
           '''
-### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Cloudtop
 > **State**: `DONE` | **Time**: `2026-09-25 21:00 PT`
 ''',
         ],
@@ -325,7 +325,7 @@ Landed PR #113 on kevmoo/scripts.dart.
         createdAt: '2026-09-26T03:00:00Z',
         url: 'https://github.com/kevmoo/agent-relay/issues/12',
         body: '''
-### ☁️🐧⚡ Enterprise Rodete → 🐧🛠️🐳 Bluefin-DX
+### ☁️🐧⚡ Cloudtop → 🐧🛠️🐳 Bluefin-DX
 > **State**: `DONE` | **Time**: `2026-09-25 20:50 PT`
 ''',
         commentBodies: <String>[],
@@ -342,13 +342,13 @@ Landed PR #113 on kevmoo/scripts.dart.
         createdAt: '2026-09-26T03:00:00Z',
         url: 'https://github.com/kevmoo/agent-relay/issues/13',
         body: '''
-### ☁️🐧⚡ Enterprise Rodete → 🐧🛠️🐳 Bluefin-DX
+### ☁️🐧⚡ Cloudtop → 🐧🛠️🐳 Bluefin-DX
 > **State**: `HANDOFF` | **Time**: `2026-09-25 20:00 PT`
 - [ ] Checked off item
 ''',
         commentBodies: <String>[
           '''
-### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Enterprise Rodete
+### 🐧🛠️🐳 Bluefin-DX → ☁️🐧⚡ Cloudtop
 > **State**: `DONE` | **Time**: `2026-09-25 21:01 PT`
 - [x] Checked off item
 ''',
@@ -406,7 +406,7 @@ Landed PR #113 on kevmoo/scripts.dart.
       };
 
       final built = buildRelayCheckReport(
-        moniker: '☁️🐧⚡ Enterprise Rodete',
+        moniker: '☁️🐧⚡ Cloudtop',
         lastSyncPt: '2026-09-25 20:03 PDT',
         nowUtc: '2026-09-26T04:05:00Z',
         nowPt: '2026-09-25 21:05 PDT',
