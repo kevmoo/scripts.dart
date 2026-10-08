@@ -172,7 +172,17 @@ Future<bool> _hasGitRemote(
 
 /// Extension getters for [PrCheckRun].
 extension PrCheckRunExt on PrCheckRun {
-  bool get isFail => bucket == 'fail';
+  bool get isCancelled =>
+      bucket == 'cancel' ||
+      state.toUpperCase() == 'CANCELLED' ||
+      state.toUpperCase() == 'TIMED_OUT';
+
+  bool get isFail =>
+      bucket == 'fail' ||
+      isCancelled ||
+      state.toUpperCase() == 'STARTUP_FAILURE' ||
+      isActionRequired;
+
   bool get isPending => bucket == 'pending';
   bool get isActionRequired => state.toUpperCase() == 'ACTION_REQUIRED';
 }
@@ -674,7 +684,11 @@ Future<String?> _fetchCheckRunJobLogs(
 
 bool _isFailedJob(Map<dynamic, dynamic> job) {
   final conc = job['conclusion']?.toString();
-  return conc == 'failure' || conc == 'timed_out' || conc == 'action_required';
+  return conc == 'failure' ||
+      conc == 'timed_out' ||
+      conc == 'cancelled' ||
+      conc == 'startup_failure' ||
+      conc == 'action_required';
 }
 
 Future<String?> _fetchSingleJobLog(

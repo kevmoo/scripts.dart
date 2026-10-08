@@ -131,8 +131,14 @@ Future<void> _runTriage(ArgResults results) async {
     onFail: _failTriage,
   );
 
-  final (data, conflictAnalysis) = await _fetchTriageData(context);
-  final report = buildTriageReport(data, conflictAnalysis: conflictAnalysis);
+  final (data, conflictAnalysis, resolvedFollowUps) = await _fetchTriageData(
+    context,
+  );
+  final report = buildTriageReport(
+    data,
+    conflictAnalysis: conflictAnalysis,
+    resolvedThreadsWithReviewerReplies: resolvedFollowUps,
+  );
 
   print('\n================== REPORT ==================\n');
   stdout.write(report);
@@ -280,7 +286,7 @@ const _prViewFields =
     'number,title,state,author,reviewDecision,reviewRequests,mergeable,'
     'mergeStateStatus,baseRefName,headRefName,headRefOid,url';
 
-Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
+Future<(TriageData, PrConflictAnalysis, List<PrReviewThread>)> _fetchTriageData(
   PrContext context,
 ) async {
   print(
@@ -330,6 +336,7 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
       .toList();
 
   final reviewers = summarizeReviewers(graphData, prData);
+  final resolvedFollowUps = reviewers.resolvedThreadsWithReviewerReplies;
   prData['humanReviewers'] = reviewers.humanReviewers;
   prData['approvedReviewers'] = reviewers.approvedReviewers;
 
@@ -353,6 +360,7 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
       checkLogs: checkLogs,
     ),
     conflictAnalysis,
+    resolvedFollowUps,
   );
 }
 

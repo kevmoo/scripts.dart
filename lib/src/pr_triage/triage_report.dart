@@ -23,6 +23,17 @@ String _extractPrAuthorLogin(Map<String, dynamic> prData) =>
 bool _isNonAuthorHumanReviewer(String login, String prAuthor) =>
     login.isNotEmpty && login != prAuthor && !isBotLogin(login);
 
+/// Filters resolved review threads whose final comment was authored by a
+/// non-author human reviewer (so reviewer follow-up notes inside resolved
+/// threads are surfaced during triage).
+List<PrReviewThread> filterResolvedThreadsWithReviewerReplies(
+  Iterable<PrReviewThread> reviewThreads, {
+  required String prAuthor,
+}) => reviewThreads.where((thread) {
+  if (!thread.isResolved || thread.comments.isEmpty) return false;
+  return _isNonAuthorHumanReviewer(thread.comments.last.author, prAuthor);
+}).toList();
+
 Set<String> _collectApprovedReviewers(
   Iterable<PrReview> reviews,
   String prAuthor,
@@ -42,12 +53,22 @@ Set<String> _collectApprovedReviewers(
       .toSet();
 }
 
-/// Derives the non-author human reviewers who have not approved and the
-/// reviewers whose latest review state is `APPROVED`, from [graphData].
-({List<String> humanReviewers, List<String> approvedReviewers})
+/// Derives the non-author human reviewers who have not approved, the
+/// reviewers whose latest review state is `APPROVED`, and the resolved threads
+/// whose latest comment is a reviewer follow-up, from [graphData].
+({
+  List<String> humanReviewers,
+  List<String> approvedReviewers,
+  List<PrReviewThread> resolvedThreadsWithReviewerReplies,
+})
 summarizeReviewers(PrGraphData graphData, Map<String, dynamic> prData) {
   final prAuthor = _extractPrAuthorLogin(prData);
   return (
+    resolvedThreadsWithReviewerReplies:
+        filterResolvedThreadsWithReviewerReplies(
+          graphData.reviewThreads,
+          prAuthor: prAuthor,
+        ),
     humanReviewers: _collectHumanReviewersFromGraphData(graphData, prAuthor),
     approvedReviewers: _collectApprovedReviewers(
       graphData.reviews,
@@ -242,6 +263,7 @@ String _formatReviewDecisionSection(
 String buildTriageReport(
   TriageData data, {
   PrConflictAnalysis? conflictAnalysis,
+  List<PrReviewThread> resolvedThreadsWithReviewerReplies = const [],
 }) {
   final prData = data.prData;
   final syncStatus = data.syncStatus;
@@ -290,6 +312,10 @@ $syncWarningBlock$conflictWarningBlock$reviewerQueueWarningBlock''');
     _writeMergeConflictsSection(report, conflict);
   }
   _writeUnresolvedThreads(report, data.unresolvedThreads);
+  _writeResolvedThreadsWithReviewerReplies(
+    report,
+    resolvedThreadsWithReviewerReplies,
+  );
   _writeReviewComments(
     report,
     data.reviewComments,
@@ -404,6 +430,38 @@ void _writeUnresolvedThreads(
   }
 }
 
+void _writeResolvedThreadsWithReviewerReplies(
+  StringBuffer report,
+  List<PrReviewThread> threads,
+) {
+  if (threads.isEmpty) return;
+
+  report.write(
+    '## Resolved Threads with Latest Reviewer Follow-Up '
+    '(${threads.length}) 💬\n\n',
+  );
+  for (var i = 0; i < threads.length; i++) {
+    final thread = threads[i];
+    if (thread.comments.isEmpty) continue;
+
+    final first = thread.comments.first;
+    final last = thread.comments.last;
+    final commentsMarkdown = thread.comments
+        .map((c) => _formatBlockquoteComment(c.author, c.createdAt, c.body))
+        .join('\n\n');
+
+    _writeMarkdownItem(
+      report,
+      header:
+          'Resolved Thread #${i + 1} (Thread `${thread.id}`, Latest Comment '
+          '`${last.databaseId}` by @${last.author}): `${first.path}` '
+          '(Line ${first.line})',
+      url: last.url,
+      bodyMarkdown: commentsMarkdown,
+    );
+  }
+}
+
 String _formatReviewQueueBadge(
   PrReview review, {
   required Set<String> requestedReviewers,
@@ -495,8 +553,11 @@ void _writeFailedChecks(
   }
 
   for (final check in failedChecks) {
-    final icon = check.isActionRequired ? '⚠️' : '❌';
-    final suffix = check.isActionRequired ? ' (ACTION_REQUIRED)' : '';
+    final (icon, suffix) = check.isActionRequired
+        ? ('⚠️', ' (ACTION_REQUIRED)')
+        : check.isCancelled
+        ? ('🚫', ' (${check.state.toUpperCase()})')
+        : ('❌', '');
     report.write('''
 ### $icon ${check.name}$suffix
 Link: ${check.link}
