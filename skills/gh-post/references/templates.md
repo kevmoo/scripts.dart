@@ -15,41 +15,47 @@ Reference templates, title examples, and GitHub YAML Issue Form mappings for
 
 ## 1. Bug Report Template (`draft_github_<owner>_<repo>_issue.md`)
 
+Always place `# <Proposed Title>` on Line 1 of the draft artifact (stripped via
+`tail -n +3` when passing `--body-file -` to `gh issue create`), and open Line 1
+of the body directly with the exact problem statement (unlabelled BLUF; no
+`### Summary` or historical preamble):
+
 ````markdown
-### Summary
+# [subsystem] Imperative or descriptive defect title
 
-1–2 sentence description of the failure and trigger condition.
+1-sentence statement of the exact broken behavior and trigger condition (never open with historical backstory).
 
-### Steps to Reproduce
+- **Root cause**: [`<file>#L<start>-L<end>`](https://github.com/<owner>/<repo>/blob/<commit>/<file>#L<start>-L<end>) <concise factual explanation>.
+- **Impact**: <1-sentence user or build impact>.
 
-1. Execute `tool_name --flag value` (or minimal CLI command)
-2. Pass input `<repro_input>`
+### Proposed Fix
 
-### Observed Behavior
+- <Concrete, completable change 1>
+- <Concrete, completable change 2>
+
+<details>
+<summary><b>Detailed reproduction & compiler/CLI output (AI-assisted)</b></summary>
+
+1. Execute `tool_name --flag value` on `<commit_hash>`:
 
 ```text
 <literal error output, exception message, or raw stack trace>
 ```
 
-### Expected Behavior
-
-<1–2 sentences describing the expected outcome>
-
-### Environment / Target
-
-- Target Commit / Version: `<commit_hash>`
-- Runtime / Platform: `<e.g. Linux x86_64, Dart 3.8.0, Node 22>`
+</details>
 ````
 
-### 1B. Deep / Performance / Multi-Cause Bug Report Template (Tight Summary + `<details>`)
+### 1B. Performance / Multi-Cause Bug Report Template (Tight Summary + `<details>`)
 
 Use this structure when filing multi-cause performance, bundle-size, or
 deep-investigation issues (scoped to a single owning team/subsystem) so
 maintainers can triage the top-level human gist in `< 15` seconds while
-encapsulating AI-gathered traces and reproducibility tables inside `<details>`:
+encapsulating raw traces and reproducibility tables inside `<details>`:
 
 ```markdown
-1-sentence summary of the issue, measured overhead, and trigger condition on `<route_or_command>` (`@ <commit>`):
+# [subsystem] Imperative performance or multi-cause defect title
+
+1-sentence summary of the defect, measured overhead, and trigger condition on `<route_or_command>` (`@ <commit>`):
 
 1. **<Root Cause 1> (`<metric>`)**: [`<file>#L<start>-L<end>`](https://github.com/<owner>/<repo>/blob/<commit>/<file>#L<start>-L<end>) <1-sentence explanation>.
 2. **<Root Cause 2> (`<metric>`)**: [`<file>#L<start>-L<end>`](https://github.com/<owner>/<repo>/blob/<commit>/<file>#L<start>-L<end>) <1-sentence explanation>.
@@ -66,11 +72,6 @@ Addressing these reduces:
 1. <Step 1>
 2. <Step 2>
 
-### Root Cause Details & Suggested Fixes
-
-- **<Cause 1>**: <Concise technical explanation + 1–2 sentence fix>.
-- **<Cause 2>**: <Concise technical explanation + 1–2 sentence fix>.
-
 ### Pre-Change vs. Post-Change Measurements
 
 | Metric | Pre-Change (`<commit>`) | Post-Change | Delta (%) | Speedup / Reduction |
@@ -83,32 +84,32 @@ Addressing these reduces:
 ## 2. Feature Proposal Template (`draft_github_<owner>_<repo>_issue.md`)
 
 ```markdown
-### Context & Problem
+# request: imperative capability summary
 
-1–2 sentences explaining what problem needs to be solved.
+1-sentence statement of the capability gap or problem to solve (no historical preamble).
 
 ### Proposed Solution
 
-Concrete description of the proposed interface, behavior, or flag.
+- Concrete description of the proposed interface, behavior, or flag
+- Key edge case or compatibility handling
 
 ### Acceptance Criteria
 
 - [ ] Criterion 1
 - [ ] Criterion 2
-
-### Non-Goals
-
-- What this feature explicitly does NOT cover
 ```
 
 ## 3. Pull Request Artifact Preview & Body Template (`draft_github_<owner>_<repo>_pr.md`)
 
-Include the **Explicit 3D Paranoia Header** at the top of the local artifact
-preview (`draft_github_<owner>_<repo>_pr.md`) for user review, and strip that
-header line when writing `/tmp/post_body.md` for `gh pr create --body-file` so
-the published GitHub PR description begins cleanly at `### Rationale`.
+Include `# <Proposed Title>` on Line 1 and the **Explicit 3D Paranoia Header**
+on Line 3 of the local artifact preview (`draft_github_<owner>_<repo>_pr.md`)
+for user review, and strip lines 1–4 (`tail -n +5`) when passing `--body-file -`
+to `gh pr create` so the published GitHub PR description begins cleanly at
+`### Rationale`.
 
 ````markdown
+# feat(scope): imperative summary
+
 🛡️ Paranoia Tier: Ring <0..4B> (<Label>) · Confidence: <High|Low> · Door: <🚪 One-Way | 🔄 Two-Way>
 
 ### Rationale
