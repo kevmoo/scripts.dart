@@ -281,7 +281,19 @@ class OrientationGatherer {
     String? remoteRepo,
     required int sampleLimit,
   }) async {
-    final repoSlug = await _resolveRepoSlug(targetDir, remoteRepo);
+    var repoSlug = remoteRepo;
+    if (repoSlug == null) {
+      try {
+        final repoViewOut = await runCmd('gh', [
+          'repo',
+          'view',
+          '--json',
+          'nameWithOwner',
+        ], workingDirectory: targetDir);
+        final json = jsonDecode(repoViewOut) as Map<String, dynamic>;
+        repoSlug = json['nameWithOwner'] as String?;
+      } catch (_) {}
+    }
     final repoArgs = repoSlug != null ? ['-R', repoSlug] : <String>[];
 
     final maintainers = <String>{};
@@ -327,12 +339,16 @@ class OrientationGatherer {
     final detectedTemplates = <String>[];
     final templateSchemas = <String, List<String>>{};
 
-    await _scanTemplates(
-      targetDir,
-      remoteRepo,
-      detectedTemplates,
-      templateSchemas,
-    );
+    if (remoteRepo != null) {
+      await _scanRemoteTemplates(
+        targetDir,
+        remoteRepo,
+        detectedTemplates,
+        templateSchemas,
+      );
+    } else {
+      _scanLocalTemplates(targetDir, detectedTemplates, templateSchemas);
+    }
 
     return RepositoryOrientation(
       environment: 'GitHub',
@@ -346,22 +362,6 @@ class OrientationGatherer {
       sampleIssueTitles: issueTitles,
       samplePrTitles: prTitles,
     );
-  }
-
-  Future<String?> _resolveRepoSlug(String targetDir, String? remoteRepo) async {
-    if (remoteRepo != null) return remoteRepo;
-    try {
-      final repoViewOut = await runCmd('gh', [
-        'repo',
-        'view',
-        '--json',
-        'nameWithOwner',
-      ], workingDirectory: targetDir);
-      final json = jsonDecode(repoViewOut) as Map<String, dynamic>;
-      return json['nameWithOwner'] as String?;
-    } catch (_) {
-      return null;
-    }
   }
 
   Future<void> _fetchMergedPrs(
@@ -412,24 +412,6 @@ class OrientationGatherer {
       if (login != null && login.isNotEmpty && !isBotAccount(login)) {
         maintainers.add(login);
       }
-    }
-  }
-
-  Future<void> _scanTemplates(
-    String targetDir,
-    String? remoteRepo,
-    List<String> detectedTemplates,
-    Map<String, List<String>> templateSchemas,
-  ) async {
-    if (remoteRepo != null) {
-      await _scanRemoteTemplates(
-        targetDir,
-        remoteRepo,
-        detectedTemplates,
-        templateSchemas,
-      );
-    } else {
-      _scanLocalTemplates(targetDir, detectedTemplates, templateSchemas);
     }
   }
 

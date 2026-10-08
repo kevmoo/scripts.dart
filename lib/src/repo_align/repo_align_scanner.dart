@@ -141,7 +141,18 @@ class RepoAlignScanner {
     final markdown = _scanMarkdownConfig(dir);
     final ghInfo = queryGitHubApi
         ? _scanGitHubRemote(name)
-        : _defaultGitHubInfo();
+        : (
+            isArchived: false,
+            isFork: false,
+            isPrivate: false,
+            defaultBranch: 'main',
+            autoMergeAllowed: false,
+            hasAutosubmitLabel: true,
+            hasRulesetOrProtection: false,
+            requiredChecks: <String>[],
+            defaultBranchRulesetId: null,
+            defaultBranchRequiredChecks: <String>[],
+          );
 
     return RepoAlignmentStatus(
       name: name,
@@ -525,19 +536,6 @@ class RepoAlignScanner {
         content.contains('autosubmit');
     return (hasDependabot: true, hasCanonicalDependabot: hasCanonical);
   }
-
-  _GitHubInfo _defaultGitHubInfo() => (
-    isArchived: false,
-    isFork: false,
-    isPrivate: false,
-    defaultBranch: 'main',
-    autoMergeAllowed: false,
-    hasAutosubmitLabel: true,
-    hasRulesetOrProtection: false,
-    requiredChecks: <String>[],
-    defaultBranchRulesetId: null,
-    defaultBranchRequiredChecks: <String>[],
-  );
 
   _GitHubInfo _scanGitHubRemote(String name) {
     var isArchived = false;

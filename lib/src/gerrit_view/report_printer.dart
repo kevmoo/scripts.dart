@@ -122,49 +122,6 @@ void _printConflatedBranchRow(
   print('    $branchCol $changeIdCol $shaCol $treeCol $dateCol');
 }
 
-void _printConflatedIssues(
-  Map<int, List<String>> conflatedBranches,
-  Map<int, RemoteCL> remoteCLs,
-  Map<String, CommitDetails> branchDetails,
-  String gerritHost,
-  String gerritProject,
-  String? currentBranch,
-  String actualRepoRoot,
-) {
-  for (final entry in conflatedBranches.entries) {
-    final issue = entry.key;
-    final branchesList = entry.value;
-    final remote = remoteCLs[issue];
-    final subject = remote?.subject ?? 'Unknown CL';
-
-    final urlLine = remote != null
-        ? '    URL:        https://$gerritHost/c/$gerritProject/+/$issue\n'
-        : '';
-    final shaLine = remote != null
-        ? '    Remote SHA: ${remote.currentRevision}\n'
-        : '';
-    final conflatedLabel = styleDim.wrap(
-      'The following ${branchesList.length} branches target this CL:',
-    );
-    print('''
-  ${red.wrap('• CONFLATED CL:')} $issue ($subject)
-$urlLine$shaLine    $conflatedLabel
-    ${'Branch'.padRight(25)} ${'Change-Id'.padRight(12)} ${'Commit SHA'.padRight(12)} ${'Tree (Content)'.padRight(15)} ${'Last Commit'.padRight(15)}
-    --------------------------------------------------------------------''');
-
-    for (final branch in branchesList) {
-      _printConflatedBranchRow(
-        branch,
-        branchDetails[branch],
-        remote,
-        actualRepoRoot,
-        currentBranch,
-      );
-    }
-    print('');
-  }
-}
-
 void _printMismatchedChangeIds(
   Map<String, (RemoteCL, CommitDetails)> mismatchedChangeIdBranches,
   String gerritHost,
@@ -208,15 +165,38 @@ void _printSection3ConflatedAndMismatched(
   );
   print('');
 
-  _printConflatedIssues(
-    conflatedBranches,
-    remoteCLs,
-    branchDetails,
-    gerritHost,
-    gerritProject,
-    currentBranch,
-    actualRepoRoot,
-  );
+  for (final entry in conflatedBranches.entries) {
+    final issue = entry.key;
+    final branchesList = entry.value;
+    final remote = remoteCLs[issue];
+    final subject = remote?.subject ?? 'Unknown CL';
+
+    final urlLine = remote != null
+        ? '    URL:        https://$gerritHost/c/$gerritProject/+/$issue\n'
+        : '';
+    final shaLine = remote != null
+        ? '    Remote SHA: ${remote.currentRevision}\n'
+        : '';
+    final conflatedLabel = styleDim.wrap(
+      'The following ${branchesList.length} branches target this CL:',
+    );
+    print('''
+  ${red.wrap('• CONFLATED CL:')} $issue ($subject)
+$urlLine$shaLine    $conflatedLabel
+    ${'Branch'.padRight(25)} ${'Change-Id'.padRight(12)} ${'Commit SHA'.padRight(12)} ${'Tree (Content)'.padRight(15)} ${'Last Commit'.padRight(15)}
+    --------------------------------------------------------------------''');
+
+    for (final branch in branchesList) {
+      _printConflatedBranchRow(
+        branch,
+        branchDetails[branch],
+        remote,
+        actualRepoRoot,
+        currentBranch,
+      );
+    }
+    print('');
+  }
   _printMismatchedChangeIds(
     mismatchedChangeIdBranches,
     gerritHost,
@@ -296,45 +276,6 @@ $actionText
 ''');
 }
 
-void _printSection4ClosedAndAbandoned(
-  Map<String, (int, CommitDetails, ClStatus)> closedClBranches,
-  String gerritHost,
-  String gerritProject,
-  String actualRepoRoot,
-  String defaultBranch,
-  String? currentBranch,
-  Map<String, String> worktreeBranches,
-) {
-  if (closedClBranches.isEmpty) return;
-
-  print(
-    yellow.wrap(
-      styleBold.wrap('🧹 CLEANUP CANDIDATES (Closed/Abandoned CL Branches)')!,
-    )!,
-  );
-  print(
-    styleDim.wrap(
-      '   These local branches point to CLs that are '
-      'merged, abandoned, or closed:',
-    )!,
-  );
-
-  for (final entry in closedClBranches.entries) {
-    _printClosedClBranch(
-      entry.key,
-      entry.value.$1,
-      entry.value.$2,
-      entry.value.$3,
-      gerritHost,
-      gerritProject,
-      actualRepoRoot,
-      defaultBranch,
-      currentBranch,
-      worktreeBranches,
-    );
-  }
-}
-
 void groupAndPrintReport({
   required String actualRepoRoot,
   required String defaultBranch,
@@ -376,13 +317,32 @@ ${styleDim.wrap('Repository: $actualRepoRoot')}
     currentBranch,
     actualRepoRoot,
   );
-  _printSection4ClosedAndAbandoned(
-    closedClBranches,
-    gerritHost,
-    gerritProject,
-    actualRepoRoot,
-    defaultBranch,
-    currentBranch,
-    worktreeBranches,
+  if (closedClBranches.isEmpty) return;
+
+  print(
+    yellow.wrap(
+      styleBold.wrap('🧹 CLEANUP CANDIDATES (Closed/Abandoned CL Branches)')!,
+    )!,
   );
+  print(
+    styleDim.wrap(
+      '   These local branches point to CLs that are '
+      'merged, abandoned, or closed:',
+    )!,
+  );
+
+  for (final entry in closedClBranches.entries) {
+    _printClosedClBranch(
+      entry.key,
+      entry.value.$1,
+      entry.value.$2,
+      entry.value.$3,
+      gerritHost,
+      gerritProject,
+      actualRepoRoot,
+      defaultBranch,
+      currentBranch,
+      worktreeBranches,
+    );
+  }
 }

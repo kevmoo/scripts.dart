@@ -110,12 +110,17 @@ List<String> _buildNextPageArgs({
   required int currentCount,
   required int maxPageSize,
   required String? cursor,
-}) => _buildGraphQLArgs(
-  graphqlQuery: graphqlQuery,
-  searchQuery: searchQuery,
-  pageSize: math.min(maxPageSize, limit - currentCount),
-  cursor: cursor,
-);
+}) => <String>[
+  'api',
+  'graphql',
+  '-f',
+  'query=$graphqlQuery',
+  '-F',
+  'q=$searchQuery',
+  '-F',
+  'limit=${math.min(maxPageSize, limit - currentCount)}',
+  if (cursor != null) ...['-F', 'cursor=$cursor'],
+];
 
 String? _processGraphQLPage(
   ProcessResult result,
@@ -140,23 +145,6 @@ String? _processGraphQLPage(
   }
   return pageInfo.endCursor;
 }
-
-List<String> _buildGraphQLArgs({
-  required String graphqlQuery,
-  required String searchQuery,
-  required int pageSize,
-  String? cursor,
-}) => <String>[
-  'api',
-  'graphql',
-  '-f',
-  'query=$graphqlQuery',
-  '-F',
-  'q=$searchQuery',
-  '-F',
-  'limit=$pageSize',
-  if (cursor != null) ...['-F', 'cursor=$cursor'],
-];
 
 Map<String, dynamic> _decodeAndValidateGraphQL(
   ProcessResult result, {

@@ -279,7 +279,12 @@ Future<void> _cleanBranches(
   String defaultBranch, {
   bool check = false,
 }) async {
-  await _fetchAndPrune(gitDir);
+  print(styleDim.wrap('Fetching and pruning...') ?? 'Fetching and pruning...');
+  try {
+    await gitDir.fetch(prune: true);
+  } catch (e) {
+    printError('Warning: failed to fetch and prune: $e');
+  }
   final branches = await _categorizeBranches(gitDir, defaultBranch);
   final (:goneBranches, :activeRemoteBranches, :ghAvailable, :recentPrs) =
       await _resolveGitHubStatus(gitDir, branches);
@@ -346,15 +351,6 @@ Future<void> _cleanBranches(
     );
     closedHeadingPrinted = printed.closedHeadingPrinted;
     conflictHeadingPrinted = printed.conflictHeadingPrinted;
-  }
-}
-
-Future<void> _fetchAndPrune(GitDir gitDir) async {
-  print(styleDim.wrap('Fetching and pruning...') ?? 'Fetching and pruning...');
-  try {
-    await gitDir.fetch(prune: true);
-  } catch (e) {
-    printError('Warning: failed to fetch and prune: $e');
   }
 }
 

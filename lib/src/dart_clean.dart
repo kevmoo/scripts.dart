@@ -261,8 +261,6 @@ Future<({String reason, int? ownerPid})> _resolveOwnerReason(
   return (reason: 'Orphaned', ownerPid: null);
 }
 
-typedef _PidAncestry = ({int pid, List<({int pid, String command})> ancestry});
-
 Future<List<_ProcessNode>> _buildTree(
   List<DartProcess> processes,
   ProcessInspector inspector,
@@ -293,9 +291,10 @@ Future<List<_ProcessNode>> _buildTree(
   // 3. Fetch ancestries concurrently
   final pool = Pool(4);
   final ancestriesList = await pool
-      .forEach(parentToPid.values, (pid) => _fetchPidAncestry(pid, inspector))
-      .where((r) => r != null)
-      .cast<_PidAncestry>()
+      .forEach(
+        parentToPid.values,
+        (pid) async => (pid: pid, ancestry: await inspector.ancestry(pid)),
+      )
       .toList();
 
   final ancestries = Map.fromEntries(
@@ -310,14 +309,6 @@ Future<List<_ProcessNode>> _buildTree(
     ancestries,
     inspector,
   );
-}
-
-Future<_PidAncestry?> _fetchPidAncestry(
-  int pid,
-  ProcessInspector inspector,
-) async {
-  final ancestry = await inspector.ancestry(pid);
-  return (pid: pid, ancestry: ancestry);
 }
 
 Future<List<_ProcessNode>> _linkProcessNodes(
