@@ -4,40 +4,18 @@ import 'dart:io';
 import 'package:args/args.dart';
 import 'package:io/ansi.dart';
 
-import 'gh_view/extract_ci_detail.dart';
 import 'gh_view/github_queries.dart';
+import 'gh_view/models.dart';
 import 'gh_view/report_renderer.dart';
 import 'local_repo_scanner.dart';
 import 'process_utils.dart';
 import 'shared/gh_args.dart';
 import 'shared/gh_pr_ref.dart';
 
-export 'gh_view/extract_ci_detail.dart'
-    show
-        CiStatus,
-        GhViewException,
-        ReviewDecision,
-        extractCiDetail,
-        extractCiStatus;
 export 'gh_view/github_queries.dart';
 export 'gh_view/report_renderer.dart';
 export 'local_repo_scanner.dart' show normalizeRepoName;
 export 'shared/gh_pr_ref.dart' show GhPrRef;
-
-/// GitHub GraphQL `MergeableState` values.
-extension type const MergeableState(String value) implements String {
-  static const mergeable = MergeableState('MERGEABLE');
-  static const conflicting = MergeableState('CONFLICTING');
-  static const unknown = MergeableState('UNKNOWN');
-}
-
-/// GitHub GraphQL `MergeStateStatus` values.
-extension type const MergeStateStatus(String value) implements String {
-  static const blocked = MergeStateStatus('BLOCKED');
-  static const clean = MergeStateStatus('CLEAN');
-  static const hasHooks = MergeStateStatus('HAS_HOOKS');
-  static const unknown = MergeStateStatus('UNKNOWN');
-}
 
 /// Representation of an open GitHub Pull Request.
 class GhPr extends GhPrRef {
@@ -485,6 +463,13 @@ Map<String, String> _parseEnrichedContextJson(String rawOutput) {
   }
 }
 
+String? _lookupContext(GhPr pr, Map<String, String>? contextMap) {
+  if (contextMap == null || contextMap.isEmpty) return null;
+  return contextMap[pr.url] ??
+      contextMap['${pr.repository}#${pr.number}'] ??
+      contextMap['#${pr.number}'];
+}
+
 /// Main execution function for `gh-view`.
 Future<void> runGhView({
   required GhViewOptions options,
@@ -522,19 +507,14 @@ Future<void> runGhView({
       ? await _discoverLocalRepositories(options.localRoot)
       : null;
   final prs = await Future.wait(
-    rawPrs.map((pr) {
-      final context = (contextMap == null || contextMap.isEmpty)
-          ? null
-          : (contextMap[pr.url] ??
-                contextMap['${pr.repository}#${pr.number}'] ??
-                contextMap['#${pr.number}']);
-      return _attachLocalStatus(
+    rawPrs.map(
+      (pr) => _attachLocalStatus(
         pr,
         localRepos,
-        context: context,
+        context: _lookupContext(pr, contextMap),
         processRunner: runner,
-      );
-    }),
+      ),
+    ),
   );
 
   if (options.json) {

@@ -2,7 +2,7 @@ import 'dart:io';
 
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
-import 'gh_clean_options.dart';
+import 'models.dart';
 
 const _trunkCandidates = ['main', 'master', 'trunk', 'dev'];
 

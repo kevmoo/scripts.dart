@@ -281,19 +281,7 @@ class OrientationGatherer {
     String? remoteRepo,
     required int sampleLimit,
   }) async {
-    var repoSlug = remoteRepo;
-    if (repoSlug == null) {
-      try {
-        final repoViewOut = await runCmd('gh', [
-          'repo',
-          'view',
-          '--json',
-          'nameWithOwner',
-        ], workingDirectory: targetDir);
-        final json = jsonDecode(repoViewOut) as Map<String, dynamic>;
-        repoSlug = json['nameWithOwner'] as String?;
-      } catch (_) {}
-    }
+    final repoSlug = await _resolveRepoSlug(targetDir, remoteRepo);
     final repoArgs = repoSlug != null ? ['-R', repoSlug] : <String>[];
 
     final maintainers = <String>{};
@@ -362,6 +350,22 @@ class OrientationGatherer {
       sampleIssueTitles: issueTitles,
       samplePrTitles: prTitles,
     );
+  }
+
+  Future<String?> _resolveRepoSlug(String targetDir, String? remoteRepo) async {
+    if (remoteRepo != null) return remoteRepo;
+    try {
+      final repoViewOut = await runCmd('gh', [
+        'repo',
+        'view',
+        '--json',
+        'nameWithOwner',
+      ], workingDirectory: targetDir);
+      final json = jsonDecode(repoViewOut) as Map<String, dynamic>;
+      return json['nameWithOwner'] as String?;
+    } catch (_) {
+      return null;
+    }
   }
 
   Future<void> _fetchMergedPrs(

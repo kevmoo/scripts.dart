@@ -5,7 +5,6 @@ import 'package:args/args.dart';
 
 import 'pr_context.dart';
 
-export 'fetch_pr_sync_status.dart' show PrSyncStatus, fetchPrSyncStatus;
 export 'pr_context.dart'
     show
         CommandRunner,

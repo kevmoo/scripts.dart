@@ -4,23 +4,19 @@ import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 
 import 'gerrit_view/gerrit_queries.dart';
+import 'gerrit_view/models.dart';
 import 'gerrit_view/report_printer.dart';
 import 'git_extensions.dart';
 
-export 'gerrit_view/gerrit_queries.dart'
-    show
-        AlignmentResult,
-        AlignmentState,
-        ClStatus,
-        CleanupSafety,
-        CommitDetails,
-        GerritViewException,
-        RemoteCL,
-        ThreadSummary,
-        computeGerritNextAction,
-        extractGerritMessagesTelemetry,
-        parseGerritCommentsJson;
 export 'gerrit_view/report_printer.dart';
+
+typedef _BranchAnalysis = ({
+  Map<String, (RemoteCL, CommitDetails, AlignmentResult)> alignedBranches,
+  Map<String, (int, CommitDetails, ClStatus)> closedClBranches,
+  Map<int, List<String>> conflatedBranches,
+  Map<String, (RemoteCL, CommitDetails)> mismatchedChangeIdBranches,
+  Map<int, RemoteCL> remoteOnlyCLs,
+});
 
 AlignmentResult calculateAlignment(
   String repoPath,
@@ -402,6 +398,60 @@ Map<int, RemoteCL> _findRemoteOnlyCLs(
   };
 }
 
+_BranchAnalysis _buildBranchGroups(
+  String actualRepoRoot,
+  Map<int, RemoteCL> remoteCLs,
+  Map<String, int> localBranchIssues,
+  Map<String, CommitDetails> branchDetails,
+  Map<int, ClStatus> closedStatuses,
+) {
+  final alignedBranches =
+      <String, (RemoteCL, CommitDetails, AlignmentResult)>{};
+  final closedClBranches = <String, (int, CommitDetails, ClStatus)>{};
+  final mismatchedChangeIdBranches = <String, (RemoteCL, CommitDetails)>{};
+  final conflatedBranches = _identifyConflatedBranches(
+    localBranchIssues,
+    remoteCLs,
+  );
+
+  for (final branch in localBranchIssues.keys) {
+    final issue = localBranchIssues[branch]!;
+    final details = branchDetails[branch];
+    if (details == null) continue;
+
+    final remote = remoteCLs[issue];
+    if (remote == null) {
+      closedClBranches[branch] = (
+        issue,
+        details,
+        closedStatuses[issue] ?? ClStatus.unknown,
+      );
+      continue;
+    }
+
+    if (details.changeId.isNotEmpty && details.changeId != remote.changeId) {
+      mismatchedChangeIdBranches[branch] = (remote, details);
+      continue;
+    }
+
+    if (conflatedBranches.containsKey(issue)) continue;
+
+    alignedBranches[branch] = (
+      remote,
+      details,
+      calculateAlignment(actualRepoRoot, branch, details, remote),
+    );
+  }
+
+  return (
+    alignedBranches: alignedBranches,
+    closedClBranches: closedClBranches,
+    conflatedBranches: conflatedBranches,
+    mismatchedChangeIdBranches: mismatchedChangeIdBranches,
+    remoteOnlyCLs: _findRemoteOnlyCLs(remoteCLs, localBranchIssues),
+  );
+}
+
 final _changeIdRegex = RegExp(
   r'^Change-Id:\s+(I[a-fA-F0-9]+)\s*$',
   multiLine: true,
@@ -514,43 +564,13 @@ Future<void> runGerritView({String? gerritRepo}) async {
     }
   }
 
-  final alignedBranches =
-      <String, (RemoteCL, CommitDetails, AlignmentResult)>{};
-  final closedClBranches = <String, (int, CommitDetails, ClStatus)>{};
-  final mismatchedChangeIdBranches = <String, (RemoteCL, CommitDetails)>{};
-  final conflatedBranches = _identifyConflatedBranches(
-    localBranchIssues,
+  final analysis = _buildBranchGroups(
+    actualRepoRoot,
     remoteCLs,
+    localBranchIssues,
+    branchDetails,
+    closedStatuses,
   );
-
-  for (final branch in localBranchIssues.keys) {
-    final issue = localBranchIssues[branch]!;
-    final details = branchDetails[branch];
-    if (details == null) continue;
-
-    final remote = remoteCLs[issue];
-    if (remote == null) {
-      closedClBranches[branch] = (
-        issue,
-        details,
-        closedStatuses[issue] ?? ClStatus.unknown,
-      );
-      continue;
-    }
-
-    if (details.changeId.isNotEmpty && details.changeId != remote.changeId) {
-      mismatchedChangeIdBranches[branch] = (remote, details);
-      continue;
-    }
-
-    if (conflatedBranches.containsKey(issue)) continue;
-
-    alignedBranches[branch] = (
-      remote,
-      details,
-      calculateAlignment(actualRepoRoot, branch, details, remote),
-    );
-  }
 
   groupAndPrintReport(
     actualRepoRoot: actualRepoRoot,
@@ -558,11 +578,11 @@ Future<void> runGerritView({String? gerritRepo}) async {
     currentBranch: currentBranch,
     gerritHost: gerritHost,
     gerritProject: gerritProject,
-    alignedBranches: alignedBranches,
-    closedClBranches: closedClBranches,
-    conflatedBranches: conflatedBranches,
-    mismatchedChangeIdBranches: mismatchedChangeIdBranches,
-    remoteOnlyCLs: _findRemoteOnlyCLs(remoteCLs, localBranchIssues),
+    alignedBranches: analysis.alignedBranches,
+    closedClBranches: analysis.closedClBranches,
+    conflatedBranches: analysis.conflatedBranches,
+    mismatchedChangeIdBranches: analysis.mismatchedChangeIdBranches,
+    remoteOnlyCLs: analysis.remoteOnlyCLs,
     remoteCLs: remoteCLs,
     branchDetails: branchDetails,
   );

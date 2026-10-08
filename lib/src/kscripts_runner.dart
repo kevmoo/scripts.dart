@@ -11,6 +11,7 @@ import 'check_kscripts_staleness.dart';
 import 'dart_clean.dart';
 import 'gerrit_view.dart';
 import 'gh_clean.dart';
+import 'gh_clean/gh_clean_options.dart';
 import 'gh_issues.dart';
 import 'gh_orient.dart';
 import 'gh_view.dart';
@@ -25,8 +26,6 @@ import 'repo_align/repo_align_runner.dart';
 import 'shared/gh_args.dart';
 import 'testable_print.dart';
 import 'tighten.dart';
-
-export 'check_kscripts_staleness.dart' show checkKScriptsStaleness;
 
 /// Top-level description for `kscripts --help` (must match `README.md`).
 const kscriptsDescription =
@@ -249,15 +248,7 @@ Future<void> runKScriptsCli(
     executablePath: executablePath,
   );
   if (invokedAs != null && findKScriptSubcommand(invokedAs) == null) {
-    setError(
-      message:
-          'kscripts was invoked as "$invokedAs", but this build of kscripts '
-          'has no "$invokedAs" subcommand.\n'
-          'The dotfiles are newer than the installed binary. Refresh it with '
-          '"upkeep update dart_install", or directly:\n\n'
-          "  dart install 'kevmoo_scripts@{git: https://github.com/kevmoo/scripts.dart}'",
-      exitCode: ExitCode.config.code,
-    );
+    _reportStaleShim(invokedAs);
     return;
   }
 
@@ -294,6 +285,18 @@ Future<void> runKScriptsCli(
   }
 
   await subcommand.run(args.sublist(1));
+}
+
+void _reportStaleShim(String name) {
+  setError(
+    message:
+        'kscripts was invoked as "$name", but this build of kscripts has no '
+        '"$name" subcommand.\n'
+        'The dotfiles are newer than the installed binary. Refresh it with '
+        '"upkeep update dart_install", or directly:\n\n'
+        "  dart install 'kevmoo_scripts@{git: https://github.com/kevmoo/scripts.dart}'",
+    exitCode: ExitCode.config.code,
+  );
 }
 
 void _reportUnknownSubcommand(String commandName) {

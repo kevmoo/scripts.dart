@@ -1,6 +1,5 @@
-import 'dart:convert';
-
 import '../shared/graphql_utils.dart' show isBotLogin;
+import 'fetch_pr_sync_status.dart';
 import 'github_cli.dart';
 
 typedef TriageData = ({
@@ -13,92 +12,6 @@ typedef TriageData = ({
   List<PrCheckRun> pendingChecks,
   Map<String, String> checkLogs,
 });
-
-const _prViewFields =
-    'number,title,state,author,reviewDecision,reviewRequests,mergeable,'
-    'mergeStateStatus,baseRefName,headRefName,headRefOid,url';
-
-Future<(TriageData, PrConflictAnalysis)> fetchTriageData(
-  PrContext context,
-) async {
-  print(
-    'Fetching details for PR #${context.prNumber} from '
-    '${context.owner}/${context.repo}...',
-  );
-  print('Target directory: ${context.workingDir}');
-  final viewOutput = await runCommand('gh', [
-    '-R',
-    '${context.owner}/${context.repo}',
-    'pr',
-    'view',
-    context.prNumber,
-    '--json',
-    _prViewFields,
-  ], workingDirectory: context.workingDir);
-  final prData = jsonDecode(viewOutput) as Map<String, dynamic>;
-
-  final syncStatus = await fetchPrSyncStatus(
-    context,
-    remoteBranch: prData['headRefName']?.toString(),
-    remoteHeadSha: prData['headRefOid']?.toString(),
-  );
-
-  if (syncStatus.warning != null) {
-    print('\nWARNING: ${syncStatus.warning}\n');
-  }
-
-  final conflictAnalysis = await analyzePrConflicts(context, prData);
-  if (conflictAnalysis.isConflicting) {
-    print(
-      '\nWARNING: PR #${context.prNumber} has MERGE CONFLICTS with '
-      'origin/${conflictAnalysis.baseRefName}!\n',
-    );
-  }
-
-  print('Fetching review comments and threads...');
-  final graphData = await fetchPrGraphQLData(context);
-  final unresolvedThreads = graphData.reviewThreads
-      .where((t) => !t.isResolved)
-      .toList();
-  final reviewComments = graphData.reviews
-      .where((r) => r.body.trim().isNotEmpty)
-      .toList();
-  final generalComments = graphData.comments
-      .where((c) => c.body.trim().isNotEmpty)
-      .toList();
-
-  final prAuthor = _extractPrAuthorLogin(prData);
-  prData['humanReviewers'] = _collectHumanReviewersFromGraphData(
-    graphData,
-    prAuthor,
-  );
-  prData['approvedReviewers'] = _collectApprovedReviewers(
-    graphData.reviews,
-    prAuthor,
-  ).toList();
-
-  print('Fetching check runs...');
-  final checks = await fetchPrChecks(context);
-  final failedChecks = checks.where((c) => c.isFail).toList();
-  final pendingChecks = checks.where((c) => c.isPending).toList();
-
-  final headSha = prData['headRefOid']?.toString() ?? '';
-  final checkLogs = await _fetchFailedCheckLogs(context, failedChecks, headSha);
-
-  return (
-    (
-      prData: prData,
-      syncStatus: syncStatus,
-      unresolvedThreads: unresolvedThreads,
-      reviewComments: reviewComments,
-      generalComments: generalComments,
-      failedChecks: failedChecks,
-      pendingChecks: pendingChecks,
-      checkLogs: checkLogs,
-    ),
-    conflictAnalysis,
-  );
-}
 
 String _extractPrAuthorLogin(Map<String, dynamic> prData) =>
     switch (prData['author']) {
@@ -129,6 +42,20 @@ Set<String> _collectApprovedReviewers(
       .toSet();
 }
 
+/// Derives the non-author human reviewers who have not approved and the
+/// reviewers whose latest review state is `APPROVED`, from [graphData].
+({List<String> humanReviewers, List<String> approvedReviewers})
+summarizeReviewers(PrGraphData graphData, Map<String, dynamic> prData) {
+  final prAuthor = _extractPrAuthorLogin(prData);
+  return (
+    humanReviewers: _collectHumanReviewersFromGraphData(graphData, prAuthor),
+    approvedReviewers: _collectApprovedReviewers(
+      graphData.reviews,
+      prAuthor,
+    ).toList(),
+  );
+}
+
 List<String> _collectHumanReviewersFromGraphData(
   PrGraphData graphData,
   String prAuthor,
@@ -145,29 +72,6 @@ List<String> _collectHumanReviewersFromGraphData(
             !approved.contains(login),
       )
       .toList();
-}
-
-Future<Map<String, String>> _fetchFailedCheckLogs(
-  PrContext context,
-  List<PrCheckRun> failedChecks,
-  String headSha,
-) async {
-  final checkLogs = <String, String>{};
-  for (final check in failedChecks) {
-    final checkName = check.name;
-    print('Fetching failed logs for check "$checkName"...');
-    try {
-      final logOutput = await fetchFailedCheckLog(
-        context,
-        check,
-        headSha: headSha,
-      );
-      checkLogs[checkName] = truncateLog(logOutput);
-    } catch (e) {
-      checkLogs[checkName] = 'Failed to fetch logs: $e';
-    }
-  }
-  return checkLogs;
 }
 
 PrConflictAnalysis _defaultConflictAnalysis(Map<String, dynamic> prData) {

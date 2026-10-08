@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 
 import '../gh_view.dart';
 import '../shared/markdown_table.dart';
+import 'models.dart';
 
 /// Renders GitHub Flavored Markdown report.
 String renderMarkdownReport(List<GhPr> prs, {DateTime? currentTime}) {

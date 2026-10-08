@@ -1,25 +1,15 @@
 import 'dart:io';
 
+import 'gh_clean/cleanup_actions.dart';
+import 'gh_clean/fetch_landed_prs.dart';
 import 'gh_clean/gh_clean_options.dart';
 import 'gh_clean/github_queries.dart';
-import 'gh_clean/plan_cleanup.dart';
+import 'gh_clean/models.dart';
 import 'gh_clean/report_formatter.dart';
 import 'local_repo_scanner.dart';
 import 'process_utils.dart';
 
-export 'gh_clean/gh_clean_options.dart'
-    show
-        CleanAction,
-        ClosedUnmergedPr,
-        GhCleanException,
-        GhCleanOptions,
-        LandedPr,
-        PrCleanResult,
-        UnlinkedWorktree,
-        isProtectedBranch;
 export 'gh_clean/github_queries.dart';
-export 'gh_clean/plan_cleanup.dart'
-    show executeCleanup, planCleanup, resolveTrunkBranch;
 export 'gh_clean/report_formatter.dart';
 export 'local_repo_scanner.dart'
     show findMatchingWorktree, findMatchingWorktreeForPr;

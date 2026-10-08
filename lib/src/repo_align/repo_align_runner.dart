@@ -61,9 +61,7 @@ class RepoAlignRunner {
 
     for (final r in activeResults) {
       final strictIcon = _strictModeIcon(r);
-      final lbIcon = r.hasLowerBound
-          ? '✅'
-          : (r.kind == RepoKind.publishedPackage ? '❌' : '-');
+      final lbIcon = _lowerBoundIcon(r);
       final ccIcon = _complexityIcon(r);
       final asIcon = r.hasAutosubmit ? '✅' : '❌';
       final dbIcon = r.hasDependabot ? '✅' : '❌';
@@ -84,6 +82,12 @@ class RepoAlignRunner {
     if (r.hasFullStrictMode) return '✅';
     if (r.strictCasts || r.strictInference || r.strictRawTypes) return '⚠️';
     return '❌';
+  }
+
+  String _lowerBoundIcon(RepoAlignmentStatus r) {
+    if (r.hasLowerBound) return '✅';
+    if (r.kind == RepoKind.publishedPackage) return '❌';
+    return '-';
   }
 
   String _complexityIcon(RepoAlignmentStatus r) {

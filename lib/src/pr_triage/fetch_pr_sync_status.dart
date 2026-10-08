@@ -28,15 +28,10 @@ Future<PrSyncStatus> fetchPrSyncStatus(
     runCommand: runCommand,
   );
   final localBranch = await _resolveLocalBranch(context.workingDir, runCommand);
-  String localHeadSha;
-  try {
-    localHeadSha = (await runCommand('git', [
-      'rev-parse',
-      'HEAD',
-    ], workingDirectory: context.workingDir)).trim();
-  } catch (_) {
-    localHeadSha = '';
-  }
+  final localHeadSha = await _resolveLocalHeadSha(
+    context.workingDir,
+    runCommand,
+  );
 
   PrSyncStatus buildStatus({
     required bool isSynced,
@@ -137,6 +132,20 @@ Future<String> _resolveLocalBranch(
     } catch (_) {
       return '';
     }
+  }
+}
+
+Future<String> _resolveLocalHeadSha(
+  String workingDir,
+  CommandRunner runCommand,
+) async {
+  try {
+    return (await runCommand('git', [
+      'rev-parse',
+      'HEAD',
+    ], workingDirectory: workingDir)).trim();
+  } catch (_) {
+    return '';
   }
 }
 

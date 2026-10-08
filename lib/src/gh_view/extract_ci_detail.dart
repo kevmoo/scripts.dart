@@ -1,40 +1,4 @@
-import '../shared/gh_args.dart';
-
-/// Exception thrown by `gh-view` operations.
-class GhViewException extends CliException {
-  const new(super.message, {super.exitCode = 1});
-}
-
-/// GitHub GraphQL `PullRequestReviewDecision` values.
-extension type const ReviewDecision(String value) implements String {
-  static const approved = ReviewDecision('APPROVED');
-  static const changesRequested = ReviewDecision('CHANGES_REQUESTED');
-  static const reviewRequired = ReviewDecision('REVIEW_REQUIRED');
-  static const none = ReviewDecision('NONE');
-}
-
-/// GitHub StatusCheckRollup / CI rollup state values (plus synthetic `TREE_BROKEN`).
-extension type const CiStatus(String value) implements String {
-  static const success = CiStatus('SUCCESS');
-  static const failure = CiStatus('FAILURE');
-  static const error = CiStatus('ERROR');
-  static const timedOut = CiStatus('TIMED_OUT');
-  static const cancelled = CiStatus('CANCELLED');
-  static const startupFailure = CiStatus('STARTUP_FAILURE');
-  static const pending = CiStatus('PENDING');
-  static const treeBroken = CiStatus('TREE_BROKEN');
-  static const actionRequired = CiStatus('ACTION_REQUIRED');
-  static const none = CiStatus('NONE');
-
-  bool get isPassing => this == success || this == treeBroken;
-
-  bool get isFailureConclusion =>
-      this == failure ||
-      this == error ||
-      this == timedOut ||
-      this == cancelled ||
-      this == startupFailure;
-}
+import 'models.dart';
 
 CiStatus extractCiStatus(String repository, Map<String, dynamic>? commits) {
   final commitNodes = commits?['nodes'] as List<dynamic>?;

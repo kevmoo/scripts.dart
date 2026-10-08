@@ -68,13 +68,7 @@ class ProcFsProcessInspector({final String procPath = '/proc'})
         : (commFromStat ?? '<unknown>');
 
     final cmdline = await _readProcCmdline('$procPath/$pid/cmdline', name);
-    var env = const <String>[];
-    try {
-      final envFile = File('$procPath/$pid/environ');
-      if (await envFile.exists()) {
-        env = _splitNulSeparated(await envFile.readAsBytes());
-      }
-    } catch (_) {}
+    final env = await _readProcEnviron('$procPath/$pid/environ');
     final cwd = await _readProcCwd('$procPath/$pid/cwd');
 
     return ProcessInfo(
@@ -165,6 +159,17 @@ class ProcFsProcessInspector({final String procPath = '/proc'})
       return parts.isNotEmpty ? parts.join(' ') : fallbackName;
     } catch (_) {
       return fallbackName;
+    }
+  }
+
+  Future<List<String>> _readProcEnviron(String path) async {
+    try {
+      final file = File(path);
+      if (!await file.exists()) return const [];
+      final bytes = await file.readAsBytes();
+      return _splitNulSeparated(bytes);
+    } catch (_) {
+      return const [];
     }
   }
 

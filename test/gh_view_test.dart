@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/gh_view.dart';
+import 'package:kevmoo_scripts/src/gh_view/extract_ci_detail.dart';
+import 'package:kevmoo_scripts/src/gh_view/models.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:test/scaffolding.dart';
 

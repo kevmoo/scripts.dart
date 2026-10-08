@@ -3,7 +3,8 @@ import 'dart:convert';
 import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
 
-import '../gh_clean.dart';
+import 'gh_clean_options.dart';
+import 'models.dart';
 
 /// Renders and prints the `gh-clean` report according to [options].
 void outputGhCleanReport(

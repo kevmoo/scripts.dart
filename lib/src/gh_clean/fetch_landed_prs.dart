@@ -1,7 +1,8 @@
-import '../gh_clean.dart';
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
+import '../shared/gh_pr_ref.dart';
 import '../shared/graphql_utils.dart';
+import 'models.dart';
 
 /// Builds the GraphQL search query for merged PRs.
 String buildLandedSearchQuery({

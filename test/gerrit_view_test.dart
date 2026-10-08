@@ -1,7 +1,7 @@
 @TestOn('vm')
 library;
 
-import 'package:kevmoo_scripts/src/gerrit_view.dart';
+import 'package:kevmoo_scripts/src/gerrit_view/gerrit_queries.dart';
 import 'package:test/test.dart';
 
 void main() {
