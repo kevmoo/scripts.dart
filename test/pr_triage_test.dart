@@ -873,6 +873,142 @@ CONFLICT (content): Merge conflict in lib/src/git_extensions.dart
         contains('gh pr edit 500 -R flutter/flutter --add-reviewer alice'),
       );
     });
+
+    test('surfaces CANCELLED check runs as failures and resolved threads '
+        'whose latest comment is by a non-author human reviewer', () {
+      const cancelledCheck = (
+        name: 'Linux web_engine_tests',
+        state: 'CANCELLED',
+        bucket: 'cancel',
+        link: 'https://github.com/flutter/flutter/actions/runs/1/job/9',
+        workflow: 'CI',
+      );
+      expect(cancelledCheck.isCancelled, isTrue);
+      expect(cancelledCheck.isFail, isTrue);
+
+      final allThreads = <PrReviewThread>[
+        (
+          id: 'PRRT_resolved_author_last',
+          isResolved: true,
+          comments: [
+            (
+              databaseId: '101',
+              path: 'lib/a.dart',
+              line: 10,
+              body: 'Nit here',
+              author: 'alice',
+              createdAt: '2026-10-01T00:00:00Z',
+              url: 'https://github.com/o/r/pull/501#discussion_r101',
+            ),
+            (
+              databaseId: '102',
+              path: 'lib/a.dart',
+              line: 10,
+              body: 'Fixed!',
+              author: 'kevmoo',
+              createdAt: '2026-10-01T00:05:00Z',
+              url: 'https://github.com/o/r/pull/501#discussion_r102',
+            ),
+          ],
+        ),
+        (
+          id: 'PRRT_resolved_reviewer_last',
+          isResolved: true,
+          comments: [
+            (
+              databaseId: '201',
+              path: 'lib/b.dart',
+              line: 24,
+              body: 'Done in latest commit.',
+              author: 'kevmoo',
+              createdAt: '2026-10-01T00:00:00Z',
+              url: 'https://github.com/o/r/pull/501#discussion_r201',
+            ),
+            (
+              databaseId: '202',
+              path: 'lib/b.dart',
+              line: 24,
+              body: 'Wait, does this handle empty buffers too?',
+              author: 'alice',
+              createdAt: '2026-10-01T00:10:00Z',
+              url: 'https://github.com/o/r/pull/501#discussion_r202',
+            ),
+          ],
+        ),
+        (
+          id: 'PRRT_resolved_bot_last',
+          isResolved: true,
+          comments: [
+            (
+              databaseId: '301',
+              path: 'lib/c.dart',
+              line: 5,
+              body: 'Automated suggestion',
+              author: 'gemini-code-assist[bot]',
+              createdAt: '2026-10-01T00:00:00Z',
+              url: 'https://github.com/o/r/pull/501#discussion_r301',
+            ),
+          ],
+        ),
+      ];
+
+      final resolvedFollowUps = filterResolvedThreadsWithReviewerReplies(
+        allThreads,
+        prAuthor: 'kevmoo',
+      );
+      expect(resolvedFollowUps, hasLength(1));
+      expect(
+        resolvedFollowUps.single.id,
+        equals('PRRT_resolved_reviewer_last'),
+      );
+
+      final report = buildTriageReport((
+        prData: <String, dynamic>{
+          'number': 501,
+          'title': 'Check cancelled & resolved reviewer follow-ups',
+          'url': 'https://github.com/o/r/pull/501',
+          'author': {'login': 'kevmoo'},
+          'headRefName': 'feat-checks',
+          'headRefOid': 'abc1234',
+          'reviewDecision': 'REVIEW_REQUIRED',
+          'mergeable': 'MERGEABLE',
+        },
+        syncStatus: (
+          localBranch: 'feat-checks',
+          remoteBranch: 'feat-checks',
+          localHeadSha: 'abc1234',
+          remoteHeadSha: 'abc1234',
+          isSynced: true,
+          syncState: 'in_sync',
+          warning: null,
+        ),
+        unresolvedThreads: const <PrReviewThread>[],
+        reviewComments: const <PrReview>[],
+        generalComments: const <PrComment>[],
+        failedChecks: const <PrCheckRun>[cancelledCheck],
+        pendingChecks: const <PrCheckRun>[],
+        checkLogs: const <String, String>{
+          'Linux web_engine_tests':
+              'The job running on runner has exceeded '
+              'the maximum execution time of 360 minutes.',
+        },
+      ), resolvedThreadsWithReviewerReplies: resolvedFollowUps);
+
+      expect(report, isNot(contains('All checks passing!')));
+      expect(report, contains('### 🚫 Linux web_engine_tests (CANCELLED)'));
+      expect(
+        report,
+        contains('## Resolved Threads with Latest Reviewer Follow-Up (1) 💬'),
+      );
+      expect(
+        report,
+        contains(
+          'Thread `PRRT_resolved_reviewer_last`, Latest Comment `202` '
+          'by @alice',
+        ),
+      );
+      expect(report, contains('Wait, does this handle empty buffers too?'));
+    });
   });
 }
 
