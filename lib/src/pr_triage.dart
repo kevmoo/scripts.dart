@@ -138,109 +138,6 @@ Future<void> _runTriage(ArgResults results) async {
   stdout.write(report);
 }
 
-const _prViewFields =
-    'number,title,state,author,reviewDecision,reviewRequests,mergeable,'
-    'mergeStateStatus,baseRefName,headRefName,headRefOid,url';
-
-Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
-  PrContext context,
-) async {
-  print(
-    'Fetching details for PR #${context.prNumber} from '
-    '${context.owner}/${context.repo}...',
-  );
-  print('Target directory: ${context.workingDir}');
-  final viewOutput = await runCommand('gh', [
-    '-R',
-    '${context.owner}/${context.repo}',
-    'pr',
-    'view',
-    context.prNumber,
-    '--json',
-    _prViewFields,
-  ], workingDirectory: context.workingDir);
-  final prData = jsonDecode(viewOutput) as Map<String, dynamic>;
-
-  final syncStatus = await fetchPrSyncStatus(
-    context,
-    remoteBranch: prData['headRefName']?.toString(),
-    remoteHeadSha: prData['headRefOid']?.toString(),
-  );
-
-  if (syncStatus.warning != null) {
-    print('\nWARNING: ${syncStatus.warning}\n');
-  }
-
-  final conflictAnalysis = await analyzePrConflicts(context, prData);
-  if (conflictAnalysis.isConflicting) {
-    print(
-      '\nWARNING: PR #${context.prNumber} has MERGE CONFLICTS with '
-      'origin/${conflictAnalysis.baseRefName}!\n',
-    );
-  }
-
-  print('Fetching review comments and threads...');
-  final graphData = await fetchPrGraphQLData(context);
-  final unresolvedThreads = graphData.reviewThreads
-      .where((t) => !t.isResolved)
-      .toList();
-  final reviewComments = graphData.reviews
-      .where((r) => r.body.trim().isNotEmpty)
-      .toList();
-  final generalComments = graphData.comments
-      .where((c) => c.body.trim().isNotEmpty)
-      .toList();
-
-  final reviewers = summarizeReviewers(graphData, prData);
-  prData['humanReviewers'] = reviewers.humanReviewers;
-  prData['approvedReviewers'] = reviewers.approvedReviewers;
-
-  print('Fetching check runs...');
-  final checks = await fetchPrChecks(context);
-  final failedChecks = checks.where((c) => c.isFail).toList();
-  final pendingChecks = checks.where((c) => c.isPending).toList();
-
-  final headSha = prData['headRefOid']?.toString() ?? '';
-  final checkLogs = await _fetchFailedCheckLogs(context, failedChecks, headSha);
-
-  return (
-    (
-      prData: prData,
-      syncStatus: syncStatus,
-      unresolvedThreads: unresolvedThreads,
-      reviewComments: reviewComments,
-      generalComments: generalComments,
-      failedChecks: failedChecks,
-      pendingChecks: pendingChecks,
-      checkLogs: checkLogs,
-    ),
-    conflictAnalysis,
-  );
-}
-
-Future<Map<String, String>> _fetchFailedCheckLogs(
-  PrContext context,
-  List<PrCheckRun> failedChecks,
-  String headSha,
-) async {
-  final checkLogs = <String, String>{};
-  for (final check in failedChecks) {
-    final checkName = check.name;
-    print('Fetching failed logs for check "$checkName"...');
-    try {
-      final logOutput = await fetchFailedCheckLog(
-        context,
-        check,
-        headSha: headSha,
-      );
-      checkLogs[checkName] = truncateLog(logOutput);
-    } catch (e) {
-      checkLogs[checkName] = 'Failed to fetch logs: $e';
-    }
-  }
-  return checkLogs;
-}
-
 ({String threadId, String? commentId, String? bodyText}) _parseResolveArgs(
   List<String> positional,
 ) {
@@ -377,4 +274,107 @@ Future<void> _handleReRequestCommand(
     dismissMessage: parsed.dismissMessage,
   );
   print('Successfully re-requested review from $mentions.');
+}
+
+const _prViewFields =
+    'number,title,state,author,reviewDecision,reviewRequests,mergeable,'
+    'mergeStateStatus,baseRefName,headRefName,headRefOid,url';
+
+Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
+  PrContext context,
+) async {
+  print(
+    'Fetching details for PR #${context.prNumber} from '
+    '${context.owner}/${context.repo}...',
+  );
+  print('Target directory: ${context.workingDir}');
+  final viewOutput = await runCommand('gh', [
+    '-R',
+    '${context.owner}/${context.repo}',
+    'pr',
+    'view',
+    context.prNumber,
+    '--json',
+    _prViewFields,
+  ], workingDirectory: context.workingDir);
+  final prData = jsonDecode(viewOutput) as Map<String, dynamic>;
+
+  final syncStatus = await fetchPrSyncStatus(
+    context,
+    remoteBranch: prData['headRefName']?.toString(),
+    remoteHeadSha: prData['headRefOid']?.toString(),
+  );
+
+  if (syncStatus.warning != null) {
+    print('\nWARNING: ${syncStatus.warning}\n');
+  }
+
+  final conflictAnalysis = await analyzePrConflicts(context, prData);
+  if (conflictAnalysis.isConflicting) {
+    print(
+      '\nWARNING: PR #${context.prNumber} has MERGE CONFLICTS with '
+      'origin/${conflictAnalysis.baseRefName}!\n',
+    );
+  }
+
+  print('Fetching review comments and threads...');
+  final graphData = await fetchPrGraphQLData(context);
+  final unresolvedThreads = graphData.reviewThreads
+      .where((t) => !t.isResolved)
+      .toList();
+  final reviewComments = graphData.reviews
+      .where((r) => r.body.trim().isNotEmpty)
+      .toList();
+  final generalComments = graphData.comments
+      .where((c) => c.body.trim().isNotEmpty)
+      .toList();
+
+  final reviewers = summarizeReviewers(graphData, prData);
+  prData['humanReviewers'] = reviewers.humanReviewers;
+  prData['approvedReviewers'] = reviewers.approvedReviewers;
+
+  print('Fetching check runs...');
+  final checks = await fetchPrChecks(context);
+  final failedChecks = checks.where((c) => c.isFail).toList();
+  final pendingChecks = checks.where((c) => c.isPending).toList();
+
+  final headSha = prData['headRefOid']?.toString() ?? '';
+  final checkLogs = await _fetchFailedCheckLogs(context, failedChecks, headSha);
+
+  return (
+    (
+      prData: prData,
+      syncStatus: syncStatus,
+      unresolvedThreads: unresolvedThreads,
+      reviewComments: reviewComments,
+      generalComments: generalComments,
+      failedChecks: failedChecks,
+      pendingChecks: pendingChecks,
+      checkLogs: checkLogs,
+    ),
+    conflictAnalysis,
+  );
+}
+
+Future<Map<String, String>> _fetchFailedCheckLogs(
+  PrContext context,
+  List<PrCheckRun> failedChecks,
+  String headSha,
+) async {
+  final checkLogs = <String, String>{};
+  for (final check in failedChecks) {
+    final checkName = check.name;
+    print('Fetching failed logs for check "$checkName"...');
+    try {
+      final logOutput = await fetchFailedCheckLog(
+        context,
+        check,
+        headSha: headSha,
+      );
+      checkLogs[checkName] = truncateLog(logOutput);
+    } catch (e) {
+      checkLogs[checkName] = 'Failed to fetch logs: $e';
+    }
+  }
+  return checkLogs;
 }

@@ -3,7 +3,7 @@ import 'dart:io';
 import '../gh_view.dart';
 import '../process_utils.dart';
 import '../shared/graphql_utils.dart';
-import 'extract_ci_detail.dart';
+import 'ci_status.dart';
 import 'models.dart';
 
 const _pullRequestsGraphqlQuery = r'''

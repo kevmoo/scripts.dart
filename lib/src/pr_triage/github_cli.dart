@@ -256,18 +256,7 @@ Future<String> fetchFailedCheckLog(
     checkRunId ??= matchedCheckRun?['id']?.toString();
   }
 
-  var annotations = const <String>[];
-  if (checkRunId != null) {
-    try {
-      final annOutput = await ghRepoApi('check-runs/$checkRunId/annotations');
-      final annList = jsonDecode(annOutput) as List<dynamic>;
-      annotations = annList
-          .whereType<Map<dynamic, dynamic>>()
-          .map(_formatCheckAnnotation)
-          .nonNulls
-          .toList();
-    } catch (_) {}
-  }
+  final annotations = await _fetchCheckRunAnnotations(checkRunId, ghRepoApi);
   final logBody = runId != null
       ? await _fetchActionsRunLog(
           context,
@@ -626,6 +615,24 @@ Future<(String?, String?)> _resolveLocalRepoOwner(
     return (localOwner, localRepo);
   } catch (_) {
     return (null, null);
+  }
+}
+
+Future<List<String>> _fetchCheckRunAnnotations(
+  String? checkRunId,
+  Future<String> Function(String) ghRepoApi,
+) async {
+  if (checkRunId == null) return const [];
+  try {
+    final annOutput = await ghRepoApi('check-runs/$checkRunId/annotations');
+    final annList = jsonDecode(annOutput) as List<dynamic>;
+    return annList
+        .whereType<Map<dynamic, dynamic>>()
+        .map(_formatCheckAnnotation)
+        .nonNulls
+        .toList();
+  } catch (_) {
+    return const [];
   }
 }
 

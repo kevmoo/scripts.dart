@@ -3,7 +3,7 @@ import 'dart:io';
 
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
-import 'cleanup_actions.dart';
+import 'branch_policy.dart';
 import 'fetch_landed_prs.dart';
 import 'models.dart';
 

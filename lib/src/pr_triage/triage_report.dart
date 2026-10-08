@@ -109,6 +109,15 @@ String? _extractRequestId(Object? item) => switch (item) {
   _ => null,
 };
 
+List<String> _parseRequestedReviewerIds(Object? rawRequests) {
+  if (rawRequests is! List) return const [];
+  return rawRequests
+      .map(_extractRequestId)
+      .whereType<String>()
+      .where((s) => s.isNotEmpty)
+      .toList();
+}
+
 Set<String> _resolveApprovedReviewers(TriageData data, String prAuthor) {
   final explicitApproved = _prDataList(data.prData['approvedReviewers'])
       .toSet();
@@ -155,14 +164,7 @@ _extractTriageReviewerQueue(TriageData data) {
   }
 
   final prAuthor = _extractPrAuthorLogin(prData);
-  final rawRequests = prData['reviewRequests'];
-  final requested = rawRequests is List
-      ? rawRequests
-            .map(_extractRequestId)
-            .whereType<String>()
-            .where((s) => s.isNotEmpty)
-            .toList()
-      : const <String>[];
+  final requested = _parseRequestedReviewerIds(prData['reviewRequests']);
   final humanReviewers = _collectTriageHumanReviewers(data, prAuthor);
   final isApproved = prData['reviewDecision']?.toString() == 'APPROVED';
   final unrequestedHumans = isApproved

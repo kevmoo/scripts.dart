@@ -4,17 +4,12 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import 'relay_whoami/relay_environment.dart';
 import 'relay_whoami/relay_models.dart';
 import 'relay_whoami/relay_whoami_options.dart';
 import 'testable_print.dart';
 
 export 'relay_whoami/relay_models.dart';
-export 'relay_whoami/relay_whoami_options.dart'
-    show
-        RelayEnvironment,
-        RelayWhoamiOptions,
-        parseRelayWhoamiArgs,
-        relayWhoamiDescription;
 
 /// Entrypoint for `kscripts relay-whoami`.
 Future<void> runRelayWhoamiCli(List<String> args) async {

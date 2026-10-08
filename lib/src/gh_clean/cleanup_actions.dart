@@ -2,22 +2,8 @@ import 'dart:io';
 
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
+import 'branch_policy.dart';
 import 'models.dart';
-
-const _trunkCandidates = ['main', 'master', 'trunk', 'dev'];
-
-/// Resolves the default/trunk branch name for [localRepo].
-String resolveTrunkBranch(LocalRepoInfo localRepo, {String? preferredTrunk}) {
-  if (preferredTrunk != null && isProtectedBranch(preferredTrunk)) {
-    return preferredTrunk;
-  }
-  for (final candidate in _trunkCandidates) {
-    if (localRepo.branches.any((b) => b.name == candidate)) {
-      return candidate;
-    }
-  }
-  return 'main';
-}
 
 String _resolveTrunkBranchForPr(LandedPr pr, LocalRepoInfo? localRepo) {
   if (localRepo == null) {

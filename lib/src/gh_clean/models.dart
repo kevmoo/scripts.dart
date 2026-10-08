@@ -1,6 +1,7 @@
 import '../local_repo_scanner.dart';
 import '../shared/gh_args.dart';
 import '../shared/gh_pr_ref.dart';
+import 'branch_policy.dart';
 
 /// Exception thrown by `gh-clean` operations.
 class GhCleanException extends CliException {
@@ -41,7 +42,7 @@ class LandedPr extends GhPrRef {
       headRepository!.isNotEmpty &&
       headRefName.isNotEmpty &&
       headRefName != baseRefName &&
-      !_isTrunkBranchName(headRefName) &&
+      !isTrunkBranchName(headRefName) &&
       (headRepository!.toLowerCase() != repository.toLowerCase() ||
           !isProtectedBranch(headRefName)) &&
       (headRepoPermission == 'ADMIN' || headRepoPermission == 'WRITE');
@@ -85,26 +86,3 @@ typedef ClosedUnmergedPr = ({
   int? commitsAhead,
   bool shaMatchesPrHead,
 });
-
-bool _isTrunkBranchName(String branch) {
-  final lower = branch.toLowerCase().trim();
-  const trunkNames = {
-    'main',
-    'master',
-    'trunk',
-    'dev',
-    'beta',
-    'stable',
-    'release',
-    'head',
-  };
-  return trunkNames.contains(lower);
-}
-
-bool isProtectedBranch(String branch) {
-  final lower = branch.toLowerCase().trim();
-  if (lower.startsWith('release/') || lower.startsWith('release-')) {
-    return true;
-  }
-  return _isTrunkBranchName(lower);
-}
