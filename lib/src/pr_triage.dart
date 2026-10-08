@@ -130,8 +130,14 @@ Future<void> _runTriage(ArgResults results) async {
     onFail: _failTriage,
   );
 
-  final (data, conflictAnalysis) = await _fetchTriageData(context);
-  final report = buildTriageReport(data, conflictAnalysis: conflictAnalysis);
+  final (data, conflictAnalysis, resolvedFollowUps) = await _fetchTriageData(
+    context,
+  );
+  final report = buildTriageReport(
+    data,
+    conflictAnalysis: conflictAnalysis,
+    resolvedThreadsWithReviewerReplies: resolvedFollowUps,
+  );
 
   print('\n================== REPORT ==================\n');
   stdout.write(report);
@@ -290,7 +296,7 @@ const _prViewFields =
     'number,title,state,author,reviewDecision,reviewRequests,mergeable,'
     'mergeStateStatus,baseRefName,headRefName,headRefOid,url';
 
-Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
+Future<(TriageData, PrConflictAnalysis, List<PrReviewThread>)> _fetchTriageData(
   PrContext context,
 ) async {
   print(
@@ -340,6 +346,10 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
       .toList();
 
   final prAuthor = _extractPrAuthorLogin(prData);
+  final resolvedFollowUps = filterResolvedThreadsWithReviewerReplies(
+    graphData.reviewThreads,
+    prAuthor: prAuthor,
+  );
   prData['humanReviewers'] = _collectHumanReviewersFromGraphData(
     graphData,
     prAuthor,
@@ -369,6 +379,7 @@ Future<(TriageData, PrConflictAnalysis)> _fetchTriageData(
       checkLogs: checkLogs,
     ),
     conflictAnalysis,
+    resolvedFollowUps,
   );
 }
 
@@ -381,6 +392,17 @@ String _extractPrAuthorLogin(Map<String, dynamic> prData) =>
 
 bool _isNonAuthorHumanReviewer(String login, String prAuthor) =>
     login.isNotEmpty && login != prAuthor && !isBotLogin(login);
+
+/// Filters resolved review threads whose final comment was authored by a
+/// non-author human reviewer (so reviewer follow-up notes inside resolved
+/// threads are surfaced during triage).
+List<PrReviewThread> filterResolvedThreadsWithReviewerReplies(
+  Iterable<PrReviewThread> reviewThreads, {
+  required String prAuthor,
+}) => reviewThreads.where((thread) {
+  if (!thread.isResolved || thread.comments.isEmpty) return false;
+  return _isNonAuthorHumanReviewer(thread.comments.last.author, prAuthor);
+}).toList();
 
 Set<String> _collectApprovedReviewers(
   Iterable<PrReview> reviews,
@@ -610,6 +632,7 @@ String _formatReviewDecisionSection(
 String buildTriageReport(
   TriageData data, {
   PrConflictAnalysis? conflictAnalysis,
+  List<PrReviewThread> resolvedThreadsWithReviewerReplies = const [],
 }) {
   final prData = data.prData;
   final syncStatus = data.syncStatus;
@@ -658,6 +681,10 @@ $syncWarningBlock$conflictWarningBlock$reviewerQueueWarningBlock''');
     _writeMergeConflictsSection(report, conflict);
   }
   _writeUnresolvedThreads(report, data.unresolvedThreads);
+  _writeResolvedThreadsWithReviewerReplies(
+    report,
+    resolvedThreadsWithReviewerReplies,
+  );
   _writeReviewComments(
     report,
     data.reviewComments,
@@ -772,6 +799,38 @@ void _writeUnresolvedThreads(
   }
 }
 
+void _writeResolvedThreadsWithReviewerReplies(
+  StringBuffer report,
+  List<PrReviewThread> threads,
+) {
+  if (threads.isEmpty) return;
+
+  report.write(
+    '## Resolved Threads with Latest Reviewer Follow-Up '
+    '(${threads.length}) 💬\n\n',
+  );
+  for (var i = 0; i < threads.length; i++) {
+    final thread = threads[i];
+    if (thread.comments.isEmpty) continue;
+
+    final first = thread.comments.first;
+    final last = thread.comments.last;
+    final commentsMarkdown = thread.comments
+        .map((c) => _formatBlockquoteComment(c.author, c.createdAt, c.body))
+        .join('\n\n');
+
+    _writeMarkdownItem(
+      report,
+      header:
+          'Resolved Thread #${i + 1} (Thread `${thread.id}`, Latest Comment '
+          '`${last.databaseId}` by @${last.author}): `${first.path}` '
+          '(Line ${first.line})',
+      url: last.url,
+      bodyMarkdown: commentsMarkdown,
+    );
+  }
+}
+
 String _formatReviewQueueBadge(
   PrReview review, {
   required Set<String> requestedReviewers,
@@ -863,8 +922,11 @@ void _writeFailedChecks(
   }
 
   for (final check in failedChecks) {
-    final icon = check.isActionRequired ? '⚠️' : '❌';
-    final suffix = check.isActionRequired ? ' (ACTION_REQUIRED)' : '';
+    final (icon, suffix) = check.isActionRequired
+        ? ('⚠️', ' (ACTION_REQUIRED)')
+        : check.isCancelled
+        ? ('🚫', ' (${check.state.toUpperCase()})')
+        : ('❌', '');
     report.write('''
 ### $icon ${check.name}$suffix
 Link: ${check.link}
