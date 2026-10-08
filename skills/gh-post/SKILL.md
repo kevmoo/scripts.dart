@@ -81,6 +81,11 @@ kscripts gh-orient -R <owner/repo>
   issue title prefixes (`request:`, `[analyzer]`, `area/foo:`), PR title
   prefixes (`feat(scope):`, `fix(scope):`, `chore:`), repository label
   vocabulary, and detected issue/PR form schemas (`.yml` field IDs).
+- **No Unsolicited `@mention` Guardrail**: On GitHub, inline `@username`
+  mentions act as the CC mechanism and immediately trigger public notifications
+  and issue subscriptions. Use maintainer handles from `gh-orient` _strictly_
+  for internal context—**NEVER** add unsolicited `cc @username` mentions to
+  issue or PR bodies unless explicitly instructed by the user.
 - **Slop Contagion Guardrail**: Use orientation output _strictly_ for taxonomy,
   prefixes, and template adherence. Do NOT adopt decorative slop, emojis, or
   conversational fluff found in historical repository posts.
@@ -94,8 +99,12 @@ before touching the GitHub CLI, explicitly namespaced by repository:
 - **For Issues**: `draft_github_<owner>_<repo>_issue.md`
 - **For Pull Requests**: `draft_github_<owner>_<repo>_pr.md`
 
-Always provide `ArtifactMetadata` with `RequestFeedback: false` and
-`UserFacing: true` (gating execution via Step 4's `ask_question`). Consult
+Always include `# <Proposed Title>` at **Line 1** of the draft artifact
+(followed by a blank line on Line 2) so the user reviews the exact title
+alongside the body, and strip lines 1–2 (`tail -n +3`) when passing
+`--body-file` to `gh issue create` or `gh pr create`. Always provide
+`ArtifactMetadata` with `RequestFeedback: false` and `UserFacing: true` (gating
+execution via Step 4's `ask_question`). Consult
 [`references/templates.md`](references/templates.md) for the complete Bug
 Report, Feature Proposal, Pull Request templates, title pattern tables, and
 GitHub YAML Issue Form field mappings.
@@ -105,6 +114,20 @@ GitHub YAML Issue Form field mappings.
 Maintainers suffer from low-effort LLM fatigue. A good submission takes under 15
 seconds to triage. Strictly enforce:
 
+- **Problem-First Line 1 (Unlabelled BLUF / Inverted Pyramid)**: Sentence 1 of
+  the issue body (Line 3 of the draft artifact, right below
+  `# <Proposed Title>`) must state the exact broken behavior, defect, or
+  capability gap immediately—do not add a `### Summary` or `### Context` header
+  above it, never print literal `"BLUF:"` labels, and never bury the problem
+  behind historical backstory (_"Commit X and PR Y added..."_). Put historical
+  context in a supporting bullet or inside `<details>`.
+- **Tight Declarative Prose**: Write like an engineer stating facts, not a
+  landing page selling them. Use short, declarative sentences and bullet points
+  rather than multi-clause narrative paragraphs, dramatized severity adjectives,
+  or throat-clearing transitions.
+- **No Unsolicited `cc @username` Mentions**: Never append `cc @user1 @user2` to
+  issue or PR descriptions unless the user explicitly asks to mention specific
+  people.
 - **No Decorative Emojis on GitHub**: Never prefix published GitHub titles,
   headers, or bullet points with emojis (`🚀`, `🐛`, `📋`, `💡`, `✨`, `⚠️`).
 - **No Gratuitous Dividers**: Do not insert `---` horizontal rules between every
@@ -118,33 +141,31 @@ seconds to triage. Strictly enforce:
   given maintainer. Split distinct owners/subsystems into separate issues.
 - **No Speculative Architecture Essays**:
   - In bug reports: State the observed defect, provide exact error logs/repro
-    steps, and limit proposed fixes to 1–2 factual sentences (or omit entirely).
+    steps or code permalinks, and limit proposed fixes to 1–3 concrete bullets
+    defining what "done" looks like.
   - **Progressive Disclosure (`Tight Human Summary + <details>`) & AI
-    Encapsulation**: Whenever an issue includes multiple root causes,
-    import/bundle chains, benchmark tables, or AI-gathered code traces /
-    inventories, keep the visible top-level gist `<= 8–12` lines (1-sentence
-    trigger + 2–3 actionable bullets with exact commit/line permalinks + bolded
-    `**from X to Y (Zx smaller/faster)**` impact bullets). Encapsulate the deep
-    technical breakdown, code traces, and full tables inside a
+    Encapsulation**: On GitHub (where `<details>` collapse blocks render
+    natively), keep the visible top-level gist `<= 8–12` lines (1-sentence
+    problem statement + tight bullets with commit/line permalinks + concrete
+    proposed fix or measured impact). Encapsulate verbatim CLI repro outputs,
+    stack traces, code traces, and full benchmark tables inside a
     `<details><summary><b>Detailed Breakdown, Repro Steps & Measurements (AI-assisted)</b></summary>`
     block (always leave a blank line immediately after `</summary>` and before
     `</details>` so GitHub Flavored Markdown renders inner tables and code
-    blocks).
+    blocks, and never put repetitive narrative prose inside `<details>`).
   - In PRs: Explain strictly the rationale ("why") and the isolated diff ("what
     changed").
 - **No Inline Multiline Shell Escapes**: Never pass multiline Markdown inline
   via `--body "line 1\nline 2"`. Always use `--body-file`.
 - **Manual Web Form Mode**: If the user asks for a link to the repo's issue form
-  to paste manually, strip `**Target Repository**:` / `**Proposed Title**:` from
-  `draft_github_<owner>_<repo>_issue.md` so the file is 100% copy-pasteable body
-  text, and provide a pre-filled
+  to paste manually, provide a pre-filled
   `https://github.com/<owner>/<repo>/issues/new?title=...` URL artifact.
 
 #### Explicit 3D Paranoia Header for PR Draft Previews (`OQ3`)
 
 At the top of every PR draft artifact preview
-(`draft_github_<owner>_<repo>_pr.md`) and in chat, display the computed **3D
-Paranoia Classification** line:
+(`draft_github_<owner>_<repo>_pr.md`, immediately below `# <Proposed Title>`)
+and in chat, display the computed **3D Paranoia Classification** line:
 
 ```markdown
 🛡️ Paranoia Tier: Ring <0..4B> (<Label>) · Confidence: <High|Low> · Door: <🚪 One-Way | 🔄 Two-Way>
@@ -156,9 +177,9 @@ Paranoia Classification** line:
 | **Confidence** | `High` (Pure Dart, CLI, package & framework code) · `Low` (Unfamiliar C++, VM internals, WIMP/Skwasm/engine plumbing)                                                                                                                                                                                                                                    |
 | **Door Type**  | `🚪 One-Way` (Public `api.txt` / CLI flag / JSON schema delta, SemVer `-wip` bump, DB migration, CI release workflow) · `🔄 Two-Way` (Internal `lib/src/` refactors, isolated tests, docs)                                                                                                                                                               |
 
-_Note_: Strip the `🛡️ Paranoia Tier:` preview banner when writing
-`/tmp/post_body.md` in Step 5 so the published GitHub PR body starts cleanly at
-`### Rationale`.
+_Note_: Strip the `# <Proposed Title>` line and the `🛡️ Paranoia Tier:` preview
+banner when passing `--body-file` in Step 5 so the published GitHub PR body
+starts cleanly at `### Rationale`.
 
 #### Conditional `### Flow / Surface Delta` Rubric for PRs (`FU3`)
 
@@ -186,11 +207,11 @@ Separate **Layer A (Internal Pre-Chew Brief for the human author)** from **Layer
 B (Outbound GitHub Payload)**:
 
 1. **Layer A (Internal Pre-Flight Brief)**: Before running `gh issue create` or
-   `gh pr create`, emit a concise internal explanation (`<= 50` lines in chat or
-   above the draft separator) covering (1) title & audience/routing rationale,
-   (2) major code changes or verified root causes by file, and (3) test coverage
-   executed. Never leak Layer A's internal forensic trace into the published
-   GitHub body unless encapsulated inside a `<details>` appendix.
+   `gh pr create`, emit a concise internal explanation (`<= 50` lines in chat)
+   covering (1) title & audience/routing rationale, (2) major code changes or
+   verified root causes by file, and (3) test coverage executed. Never leak
+   Layer A's internal forensic trace into the published GitHub body unless
+   encapsulated inside a `<details>` appendix.
 2. **Layer B (Outbound Payload Approval)**: Halt execution and prompt the user
    via `ask_question` so they can pre-chew/adjust the human gist or approve
    submission:
@@ -201,13 +222,15 @@ B (Outbound GitHub Payload)**:
 
 1. **Pre-PR Check (For PRs in `~/github/kevmoo/*`)**: Run `kscripts pr-check`
    before creating a PR.
-2. **Write Body to Temporary File & Submit**:
+2. **Strip Draft Header & Submit via `--body-file -`**:
    ```bash
-   # Write body (stripping local preview header) to /tmp/post_body.md, then:
-   gh issue create -R owner/repo --title "[subsystem] Imperative Title" --body-file /tmp/post_body.md
-   # OR for Pull Requests:
-   gh pr create --title "feat(scope): imperative summary" --body-file /tmp/post_body.md
-   rm /tmp/post_body.md
+   # For Issues (strip Line 1 '# <Proposed Title>' + Line 2 blank line):
+   tail -n +3 <draft_artifact_path> | gh issue create -R owner/repo \
+     --title "[subsystem] Imperative Title" --body-file -
+
+   # For Pull Requests (strip '# <Proposed Title>' + '🛡️ Paranoia Tier:' header):
+   tail -n +5 <draft_artifact_path> | gh pr create \
+     --title "feat(scope): imperative summary" --body-file -
    ```
 3. **Verify Output**: Confirm submission succeeded and output the clickable
    link.
