@@ -162,29 +162,13 @@ class RepoAlignRunner {
     );
 
     for (final r in targets) {
-      _fixSingleRepo(
-        r,
-        fixLints: shouldFixLints,
-        fixCi: shouldFixCi,
-        fixGitHub: shouldFixGitHub,
-        dryRun: dryRun,
-      );
+      print('\nProcessing ${cyan.wrap(r.name)} (${r.kind.name})...');
+      if (shouldFixLints) _fixAnalysisOptions(r, dryRun: dryRun);
+      if (shouldFixCi) _fixCiWorkflows(r, dryRun: dryRun);
+      if (shouldFixGitHub) _fixGitHubSettings(r, dryRun: dryRun);
     }
 
     print('\n${green.wrap('✅ Remediation pass completed.')}\n');
-  }
-
-  void _fixSingleRepo(
-    RepoAlignmentStatus r, {
-    required bool fixLints,
-    required bool fixCi,
-    required bool fixGitHub,
-    required bool dryRun,
-  }) {
-    print('\nProcessing ${cyan.wrap(r.name)} (${r.kind.name})...');
-    if (fixLints) _fixAnalysisOptions(r, dryRun: dryRun);
-    if (fixCi) _fixCiWorkflows(r, dryRun: dryRun);
-    if (fixGitHub) _fixGitHubSettings(r, dryRun: dryRun);
   }
 
   void _fixAnalysisOptions(RepoAlignmentStatus r, {required bool dryRun}) {

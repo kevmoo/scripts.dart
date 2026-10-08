@@ -1,0 +1,88 @@
+import '../local_repo_scanner.dart';
+import '../shared/gh_args.dart';
+import '../shared/gh_pr_ref.dart';
+import 'branch_policy.dart';
+
+/// Exception thrown by `gh-clean` operations.
+class GhCleanException extends CliException {
+  const new(super.message, {super.exitCode = 1});
+}
+
+/// Representation of a merged GitHub Pull Request.
+class LandedPr extends GhPrRef {
+  final String? mergeSha;
+  final DateTime? mergedAt;
+  final DateTime? closedAt;
+  final bool headRefExists;
+  final String? headRepository;
+  final String? headRepoPermission;
+
+  const new({
+    required super.number,
+    required super.title,
+    required super.url,
+    required super.repository,
+    required super.repoUrl,
+    required super.headRefName,
+    required super.headRefOid,
+    required super.baseRefName,
+    this.mergeSha,
+    this.mergedAt,
+    this.closedAt,
+    this.headRefExists = false,
+    this.headRepository,
+    this.headRepoPermission,
+  });
+
+  /// Whether the remote head branch still exists on GitHub and can be
+  /// deleted by the current viewer.
+  bool get canDeleteRemoteHeadBranch =>
+      headRefExists &&
+      headRepository != null &&
+      headRepository!.isNotEmpty &&
+      headRefName.isNotEmpty &&
+      headRefName != baseRefName &&
+      !isTrunkBranchName(headRefName) &&
+      (headRepository!.toLowerCase() != repository.toLowerCase() ||
+          !isProtectedBranch(headRefName)) &&
+      (headRepoPermission == 'ADMIN' || headRepoPermission == 'WRITE');
+}
+
+/// A single cleanup action executed on a repository.
+typedef CleanAction = ({String description, bool success, String? error});
+
+/// Full status and cleanup result for a landed PR.
+typedef PrCleanResult = ({
+  LandedPr pr,
+  LocalRepoInfo? localRepo,
+  List<String> plannedActions,
+  List<CleanAction> executedActions,
+  String status,
+});
+
+/// Information about a local secondary worktree that has no associated PR
+/// on GitHub.
+typedef UnlinkedWorktree = ({
+  String repository,
+  String worktreePath,
+  String branch,
+  String sha,
+  int? commitsAhead,
+  String? lastCommitDate,
+  String? lastCommitSubject,
+});
+
+/// Information about a local branch or worktree whose GitHub PR was closed
+/// without merging (`is:closed is:unmerged`).
+typedef ClosedUnmergedPr = ({
+  String repository,
+  int number,
+  String title,
+  String url,
+  String branch,
+  String headRefOid,
+  String localSha,
+  String? worktreePath,
+  int? commitsAhead,
+  bool shaMatchesPrHead,
+});

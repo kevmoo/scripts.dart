@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/pr_triage.dart';
+import 'package:kevmoo_scripts/src/pr_triage/fetch_pr_sync_status.dart';
+import 'package:kevmoo_scripts/src/pr_triage/triage_report.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';

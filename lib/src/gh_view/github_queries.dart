@@ -3,6 +3,8 @@ import 'dart:io';
 import '../gh_view.dart';
 import '../process_utils.dart';
 import '../shared/graphql_utils.dart';
+import 'ci_status.dart';
+import 'models.dart';
 
 const _pullRequestsGraphqlQuery = r'''
 query($q: String!, $limit: Int!, $cursor: String) {
@@ -206,12 +208,11 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
       (lastReviewerActivityAt == null ||
           lastAuthorCommentAt.isAfter(lastReviewerActivityAt));
 
-  final activeReviewers = _resolveActiveReviewers(
-    humanRequested: requested.humanReviewers,
-    humanParticipants: reviewerActivity.humanParticipants,
-    mentionedUsers: authorComment.mentionedUsers,
-    isAlreadyPinged: isAlreadyPinged,
-  );
+  final activeReviewers = <String>{
+    if (isAlreadyPinged) ...authorComment.mentionedUsers,
+    ...requested.humanReviewers,
+    ...reviewerActivity.humanParticipants,
+  }.toList();
 
   final threads = _extractReviewThreads(
     node['reviewThreads'] as Map<String, dynamic>?,
@@ -456,22 +457,6 @@ List<String> _extractApprovedReviewers(
       .where((e) => e.value == 'APPROVED')
       .map((e) => e.key)
       .toList();
-}
-
-List<String> _resolveActiveReviewers({
-  required List<String> humanRequested,
-  required List<String> humanParticipants,
-  required List<String> mentionedUsers,
-  required bool isAlreadyPinged,
-}) {
-  if (isAlreadyPinged && mentionedUsers.isNotEmpty) {
-    return {
-      ...mentionedUsers,
-      ...humanRequested,
-      ...humanParticipants,
-    }.toList();
-  }
-  return {...humanRequested, ...humanParticipants}.toList();
 }
 
 ({int total, int unresolved}) _extractReviewThreads(

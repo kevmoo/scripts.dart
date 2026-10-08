@@ -1,4 +1,5 @@
 import 'package:kevmoo_scripts/src/relay_whoami.dart';
+import 'package:kevmoo_scripts/src/relay_whoami/relay_whoami_options.dart';
 import 'package:test/test.dart';
 
 void main() {

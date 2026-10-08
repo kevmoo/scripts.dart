@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:checks/checks.dart';
 import 'package:io/io.dart';
+import 'package:kevmoo_scripts/src/check_kscripts_staleness.dart';
 import 'package:kevmoo_scripts/src/kscripts_runner.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;

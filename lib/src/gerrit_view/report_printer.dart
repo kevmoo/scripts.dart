@@ -1,6 +1,7 @@
 import 'package:io/ansi.dart';
 
 import '../gerrit_view.dart';
+import 'models.dart';
 
 String _formatClTriageLines(RemoteCL remote) {
   final reviewerStr = remote.reviewers.isEmpty

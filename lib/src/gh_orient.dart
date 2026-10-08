@@ -327,12 +327,16 @@ class OrientationGatherer {
     final detectedTemplates = <String>[];
     final templateSchemas = <String, List<String>>{};
 
-    await _scanTemplates(
-      targetDir,
-      remoteRepo,
-      detectedTemplates,
-      templateSchemas,
-    );
+    if (remoteRepo != null) {
+      await _scanRemoteTemplates(
+        targetDir,
+        remoteRepo,
+        detectedTemplates,
+        templateSchemas,
+      );
+    } else {
+      _scanLocalTemplates(targetDir, detectedTemplates, templateSchemas);
+    }
 
     return RepositoryOrientation(
       environment: 'GitHub',
@@ -412,24 +416,6 @@ class OrientationGatherer {
       if (login != null && login.isNotEmpty && !isBotAccount(login)) {
         maintainers.add(login);
       }
-    }
-  }
-
-  Future<void> _scanTemplates(
-    String targetDir,
-    String? remoteRepo,
-    List<String> detectedTemplates,
-    Map<String, List<String>> templateSchemas,
-  ) async {
-    if (remoteRepo != null) {
-      await _scanRemoteTemplates(
-        targetDir,
-        remoteRepo,
-        detectedTemplates,
-        templateSchemas,
-      );
-    } else {
-      _scanLocalTemplates(targetDir, detectedTemplates, templateSchemas);
     }
   }
 

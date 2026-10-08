@@ -1,6 +1,8 @@
 import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/gh_clean.dart';
+import 'package:kevmoo_scripts/src/gh_clean/models.dart';
 import 'package:kevmoo_scripts/src/gh_view.dart';
+import 'package:kevmoo_scripts/src/gh_view/models.dart';
 import 'package:kevmoo_scripts/src/local_repo_scanner.dart';
 import 'package:test/scaffolding.dart';
 

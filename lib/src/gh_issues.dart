@@ -368,19 +368,6 @@ Future<GhIssue> _enrichSingleIssue(
   }
 }
 
-Future<List<GhIssue>> _enrichWithTimelinePrs(
-  List<GhIssue> issues, {
-  required ProcessRunner runner,
-}) {
-  final pool = Pool(8);
-  return Future.wait(
-    issues.map(
-      (issue) =>
-          pool.withResource(() => _enrichSingleIssue(issue, runner: runner)),
-    ),
-  );
-}
-
 /// Fetches assigned issues via GitHub GraphQL.
 Future<List<GhIssue>> fetchAssignedIssues({
   required String user,
@@ -417,7 +404,13 @@ Future<List<GhIssue>> fetchAssignedIssues({
     return parsedIssues;
   }
 
-  return _enrichWithTimelinePrs(parsedIssues, runner: runner);
+  final pool = Pool(8);
+  return Future.wait(
+    parsedIssues.map(
+      (issue) =>
+          pool.withResource(() => _enrichSingleIssue(issue, runner: runner)),
+    ),
+  );
 }
 
 String _formatLinkedPrsMarkdown(GhIssue issue) {
