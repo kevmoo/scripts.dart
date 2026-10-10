@@ -177,6 +177,8 @@ kscripts gh-orient [options]
 -R, --repo     Target GitHub repository slug in owner/repo format
 -l, --limit    Sample limit for recent issues and PRs
                (defaults to "20")
+-p, --paths    Repository-relative paths the draft references; enables the
+               owner/visitor audience signal
     --json     Output result as machine-readable JSON
 -h, --help     Print this usage information.
 ```
