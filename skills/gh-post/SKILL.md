@@ -134,18 +134,24 @@ the record of your work:
    review. Body: one reader, repro + evidence + permalinks. Keep the visible
    gist to `<= 8–12` lines.
 3. **Report the delta, not the tour.** Open with what is wrong or what changes.
-   An `owner` audience already knows how their code works today, so a
-   "currently, X does Y" opener is cut; a `visitor` audience gets one orienting
-   line plus a permalink.
+   An `owner` audience already knows how their code works today and what stays
+   unchanged, so cut both "currently, X does Y" openers and "existing mechanics
+   X, Y, Z remain sound" summaries; a `visitor` audience gets one orienting line
+   plus a permalink.
 4. **Fill a slot only if it changes a decision.** Delete empty template
    sections, headers over single paragraphs, parenthetical asides, `---`
    dividers, decorative emojis, pleasantries, and speculative architecture
    essays. One audience and one owner per post: split distinct subsystems/teams
    into separate issues. Limit proposed fixes to 1–3 concrete bullets.
-5. **Anchor, verify, then cold-read.** Every claim carries a permalink
-   (`blob/<commit>/<file>#L<start>-L<end>`); inference is labeled as inference;
-   PR bodies state what changed and how it was verified within the first 3
-   lines. Encapsulate verbatim CLI output, stack traces, code traces, and full
+5. **Anchor, verify, then cold-read.** Every claim carries a GitHub `https://`
+   permalink
+   (`https://github.com/<owner>/<repo>/blob/<commit>/<file>#L<start>-L<end>`) or
+   a plain backtick repository-relative path (`` `lib/src/foo.dart` ``)—never a
+   local `file://` workstation URL, since `--body-file` pipes the draft verbatim
+   to GitHub. Inference is labeled as inference; PR bodies state what changed
+   and how it was verified within the first 3 lines (do not add a second
+   `### Verification` section repeating the opening `Verified:` line).
+   Encapsulate verbatim CLI output, stack traces, code traces, and full
    benchmark tables inside
    `<details><summary><b>Detailed Breakdown, Repro Steps & Measurements (AI-assisted)</b></summary>`
    (blank line after `</summary>` and before `</details>`; no narrative prose
@@ -184,11 +190,12 @@ _Note_: Strip the `# <Proposed Title>` line and the `🛡️ Paranoia Tier:` pre
 banner when passing `--body-file` in Step 5 so the published GitHub PR body
 begins with the one-sentence change summary.
 
-#### Conditional `### Flow / Surface Delta` Rubric for PRs (`FU3`)
+#### Conditional `Flow / Surface Delta` Rubric for PRs (`FU3`)
 
-Include a compact ASCII flow or Mermaid diagram under `### Flow / Surface Delta`
-(between `### Summary of Changes` and `### Verification`) **only** when at least
-one trigger holds:
+Include a compact ASCII flow, `diff`, Mermaid diagram, or benchmark delta table
+inside
+`<details><summary><b>Flow / Surface Delta and design notes (AI-assisted)</b></summary>`
+(below the file-level change bullets) **only** when at least one trigger holds:
 
 1. **Public API / CLI / Config Surface Changes**: `api.txt` changes, new or
    modified CLI flags/subcommands, exit codes, or config/JSON schemas (render a
@@ -201,8 +208,8 @@ one trigger holds:
    performance changes (render a compact `Before vs. After` delta table).
 
 **Omission Rule**: If none of the three triggers hold (e.g., isolated bug fix,
-single-file refactor, test/doc update), **omit** `### Flow / Surface Delta`
-entirely.
+single-file refactor, test/doc update), **omit** the `Flow / Surface Delta`
+block entirely.
 
 ### Step 3.5: Cold Read (Hard Gate for Issue and PR Bodies)
 
@@ -217,9 +224,11 @@ the role and N=3, the file path) and nothing else from this conversation.
    line 1 so the reader sees what GitHub shows.
 2. **Role** from Step 2: issue + `owner` → `--role owner`; issue + `visitor` →
    `--role triager`; any PR → `--role reviewer`.
-3. **Gate**: proceed only on `decide_in_n`. On `decide_later` or
-   `cannot_decide`, move the deciding sentence to the first body line, apply the
-   `cut_list`, add the `missing` facts, and re-run once.
+3. **Gate**: proceed only when `verdict` is `decide_in_n` and `cut_list` has no
+   entries outside repository-required PR checklists (such as CLA / tree-hygiene
+   checklists). Otherwise move the deciding sentence to the first body line,
+   apply the `cut_list` (preserving repository-required PR checklists), add the
+   `missing` facts, and re-run once.
 4. **Skip** for comments and replies of `<= 50` words.
 
 ### Step 4: Two-Layer Pre-Chew Gate & Concise Change Explanation (Hard Stop)
