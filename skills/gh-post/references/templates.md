@@ -104,42 +104,39 @@ Addressing these reduces:
 Include `# <Proposed Title>` on Line 1 and the **Explicit 3D Paranoia Header**
 on Line 3 of the local artifact preview (`draft_github_<owner>_<repo>_pr.md`)
 for user review, and strip lines 1–4 (`tail -n +5`) when passing `--body-file -`
-to `gh pr create` so the published GitHub PR description begins cleanly at
-`### Rationale`.
+to `gh pr create` so the published GitHub PR description begins with the
+one-sentence change summary. A reviewer decides from that first paragraph: what
+changed, why, and how it was verified. Do not add a `### Rationale` header over
+the opening paragraph or a second `### Verification` section that repeats the
+opening `Verified:` line, and use `https://github.com/...` permalinks or plain
+backtick repository-relative paths (never `file://` local workstation URLs).
 
 ````markdown
 # feat(scope): imperative summary
 
 🛡️ Paranoia Tier: Ring <0..4B> (<Label>) · Confidence: <High|Low> · Door: <🚪 One-Way | 🔄 Two-Way>
 
-### Rationale
+<What changed and why, in one sentence.> Verified: <exact command or CI job and pass count>. Fixes #<issue_number>.
 
-1–2 sentences explaining why this change is needed.
+- `<repo/relative/path.dart>`: <Concrete change 1>
+- `<repo/relative/test_path.dart>`: <Concrete change 2; touch only what the task requires>
 
-### Summary of Changes
-
-- Bulleted description of the concrete code changes
-- Touch only what the task requires; no orphaned imports or unrelated diffs
-
-### Flow / Surface Delta
+<details>
+<summary><b>Flow / Surface Delta and verification details (AI-assisted)</b></summary>
 
 <!-- Include ONLY when at least one FU3 trigger holds:
      (1) public API/CLI/config surface changes,
-     (2) >= 3 files have altered control-flow or state routing, or
-     (3) benchmark/hot-path architecture changes.
-     Otherwise omit this entire section. -->
+     (2) >= 3 files have altered control-flow or state routing,
+     (3) benchmark/hot-path architecture changes, or
+     (4) multi-step repro commands / raw logs exceed the one-line Verified summary.
+     Otherwise omit this entire block. -->
 
 ```text
 Before: CLI -> parseArgs() -> runCheck()
 After:  CLI -> parseArgs() -> resolveBaseline() -> runCheck(baseline)
 ```
 
-### Verification
-
-- Executed `dart test` with 100% pass
-- Verified edge case `<repro_condition>` passes
-
-Fixes #<issue_number>
+</details>
 ````
 
 ### Conditional `### Flow / Surface Delta` Examples (`FU3`)

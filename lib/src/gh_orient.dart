@@ -5,6 +5,7 @@ import 'package:args/args.dart';
 import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 
+import 'gh_orient_audience.dart';
 import 'testable_print.dart';
 
 /// Description for `kscripts gh-orient --help` (must match `README.md`).
@@ -68,6 +69,7 @@ bool isBotAccount(String login) {
       l.contains('bot-') ||
       l.contains('gemini-') ||
       l.contains('codecov') ||
+      l.contains('autoroll') ||
       l == 'github-actions';
 }
 
@@ -149,6 +151,7 @@ class RepositoryOrientation {
   final Map<String, List<String>> templateSchemas;
   final List<String> sampleIssueTitles;
   final List<String> samplePrTitles;
+  final AudienceSignal? audience;
 
   new({
     required this.environment,
@@ -161,6 +164,7 @@ class RepositoryOrientation {
     this.templateSchemas = const {},
     this.sampleIssueTitles = const [],
     this.samplePrTitles = const [],
+    this.audience,
   });
 
   Map<String, dynamic> toJson() => {
@@ -174,6 +178,7 @@ class RepositoryOrientation {
     if (templateSchemas.isNotEmpty) 'templateSchemas': templateSchemas,
     'sampleIssueTitles': sampleIssueTitles,
     'samplePrTitles': samplePrTitles,
+    if (audience != null) 'audience': audience!.toJson(),
   };
 
   String toMarkdown() {
@@ -188,6 +193,9 @@ class RepositoryOrientation {
         '- **Active Maintainers / Reviewers**: '
         '${maintainers.take(8).map((m) => '@$m').join(', ')}',
       );
+    }
+    if (audience != null) {
+      buffer.writeln(audience!.toMarkdown());
     }
     if (commonIssuePrefixes.isNotEmpty) {
       buffer.writeln(
@@ -256,6 +264,7 @@ class OrientationGatherer {
     String? workingDirectory,
     String? repo,
     int sampleLimit = 20,
+    List<String> paths = const [],
   }) async {
     final targetDir = workingDirectory ?? Directory.current.path;
 
@@ -264,6 +273,7 @@ class OrientationGatherer {
         targetDir,
         remoteRepo: repo,
         sampleLimit: sampleLimit,
+        paths: paths,
       );
     }
 
@@ -273,18 +283,20 @@ class OrientationGatherer {
       return _gatherGoogle3(targetDir, sampleLimit: sampleLimit);
     }
 
-    return _gatherGitHub(targetDir, sampleLimit: sampleLimit);
+    return _gatherGitHub(targetDir, sampleLimit: sampleLimit, paths: paths);
   }
 
   Future<RepositoryOrientation> _gatherGitHub(
     String targetDir, {
     String? remoteRepo,
     required int sampleLimit,
+    List<String> paths = const [],
   }) async {
     final repoSlug = await _resolveRepoSlug(targetDir, remoteRepo);
     final repoArgs = repoSlug != null ? ['-R', repoSlug] : <String>[];
 
     final maintainers = <String>{};
+    final prAuthors = <String>{};
     final prTitles = <String>[];
     final prPrefixCounts = <String, int>{};
     final prLabels = <String>{};
@@ -294,9 +306,17 @@ class OrientationGatherer {
       repoArgs,
       sampleLimit,
       maintainers,
+      prAuthors,
       prTitles,
       prPrefixCounts,
       prLabels,
+    );
+
+    final pathAuthorCounts = await _countPathAuthors(
+      targetDir,
+      repoSlug: repoSlug,
+      remote: remoteRepo != null,
+      paths: paths,
     );
 
     final issueTitles = <String>[];
@@ -349,6 +369,10 @@ class OrientationGatherer {
       templateSchemas: templateSchemas,
       sampleIssueTitles: issueTitles,
       samplePrTitles: prTitles,
+      audience: deriveAudience(
+        distinctPrAuthors: prAuthors.length,
+        pathAuthorCounts: pathAuthorCounts,
+      ),
     );
   }
 
@@ -373,6 +397,7 @@ class OrientationGatherer {
     List<String> repoArgs,
     int sampleLimit,
     Set<String> maintainers,
+    Set<String> prAuthors,
     List<String> prTitles,
     Map<String, int> prPrefixCounts,
     Set<String> prLabels,
@@ -394,6 +419,7 @@ class OrientationGatherer {
       for (final pr in prsList) {
         if (pr is! Map<String, dynamic>) continue;
         _addMaintainer(maintainers, pr['author']);
+        _addMaintainer(prAuthors, pr['author']);
 
         final reviews = pr['reviews'] as List<dynamic>?;
         if (reviews != null) {
@@ -408,6 +434,45 @@ class OrientationGatherer {
         prLabels.addAll(_extractLabels(pr['labels'] as List<dynamic>?));
       }
     } catch (_) {}
+  }
+
+  /// Counts recent commit authors on [paths]: `git log` for a local checkout,
+  /// the commits API for a remote repository. Empty when no paths were given
+  /// or the lookup fails.
+  Future<Map<String, int>> _countPathAuthors(
+    String targetDir, {
+    required String? repoSlug,
+    required bool remote,
+    required List<String> paths,
+  }) async {
+    if (paths.isEmpty) return const {};
+    try {
+      if (!remote) {
+        final out = await runCmd('git', [
+          'log',
+          '-n',
+          '50',
+          '--format=%aN',
+          '--',
+          ...paths,
+        ], workingDirectory: targetDir);
+        return countAuthors(out.split('\n'));
+      }
+      if (repoSlug == null) return const {};
+      final lines = <String>[];
+      for (final path in paths) {
+        final out = await runCmd('gh', [
+          'api',
+          'repos/$repoSlug/commits?path=$path&per_page=50',
+          '--jq',
+          '.[] | (.author.login // .commit.author.name)',
+        ], workingDirectory: targetDir);
+        lines.addAll(out.split('\n'));
+      }
+      return countAuthors(lines);
+    } catch (_) {
+      return const {};
+    }
   }
 
   void _addMaintainer(Set<String> maintainers, dynamic authorMap) {
@@ -633,6 +698,13 @@ ArgParser buildGhOrientArgParser() => ArgParser()
     defaultsTo: '20',
     help: 'Sample limit for recent issues and PRs',
   )
+  ..addMultiOption(
+    'paths',
+    abbr: 'p',
+    help:
+        'Repository-relative paths the draft references; enables the '
+        'owner/visitor audience signal',
+  )
   ..addFlag(
     'json',
     negatable: false,
@@ -671,6 +743,7 @@ Future<void> runGhOrientCli(List<String> args) async {
   final repo = results.option('repo');
   final limitStr = results.option('limit') ?? '20';
   final limit = int.tryParse(limitStr) ?? 20;
+  final paths = results.multiOption('paths');
   final asJson = results.flag('json');
 
   final gatherer = OrientationGatherer();
@@ -679,6 +752,7 @@ Future<void> runGhOrientCli(List<String> args) async {
       workingDirectory: workingDir,
       repo: repo,
       sampleLimit: limit,
+      paths: paths,
     );
 
     if (asJson) {

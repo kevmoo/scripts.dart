@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:kevmoo_scripts/src/gh_orient.dart';
+import 'package:kevmoo_scripts/src/gh_orient_audience.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -147,8 +148,132 @@ body:
         orientation.detectedTemplates,
         contains('.github/pull_request_template.md'),
       );
+      // One distinct PR author and no paths: owner-triaged repository.
+      expect(orientation.audience?.mode, equals('owner'));
+      expect(orientation.audience?.topPathShare, isNull);
+    });
+
+    test(
+      'reports owner audience with path authorship on a small repo',
+      () async {
+        final gatherer = OrientationGatherer(runCmd: _mockLocalRepoRunner);
+        final orientation = await gatherer.gather(
+          workingDirectory: '/tmp/repo',
+          paths: ['lib/src/core.dart'],
+        );
+
+        final audience = orientation.audience!;
+        expect(audience.mode, equals('owner'));
+        expect(audience.distinctPrAuthors, equals(2));
+        expect(audience.topPathShare, closeTo(0.75, 0.001));
+        expect(audience.topPathAuthors.first, equals('alice (3)'));
+        expect(orientation.toMarkdown(), contains('- **Audience**: owner ('));
+        expect(orientation.toJson()['audience'], isA<Map<String, dynamic>>());
+      },
+    );
+
+    test('reports visitor audience on a large distributed repo', () async {
+      final gatherer = OrientationGatherer(runCmd: _mockLargeRepoRunner);
+      final orientation = await gatherer.gather(
+        repo: 'big/project',
+        paths: ['packages/foo/lib/foo.dart'],
+      );
+
+      final audience = orientation.audience!;
+      expect(audience.mode, equals('visitor'));
+      expect(audience.distinctPrAuthors, equals(8));
+      expect(audience.topPathShare, closeTo(0.4, 0.001));
+      expect(audience.evidence, contains('8 distinct merged-PR authors'));
     });
   });
+
+  group('deriveAudience unit tests', () {
+    test('small repository is owner-triaged regardless of paths', () {
+      expect(deriveAudience(distinctPrAuthors: 3).mode, equals('owner'));
+      expect(deriveAudience(distinctPrAuthors: 4).mode, equals('visitor'));
+    });
+
+    test('dominant path author flips a mid-sized repo to owner', () {
+      final dominant = deriveAudience(
+        distinctPrAuthors: 6,
+        pathAuthorCounts: {'alice': 5, 'bob': 4, 'carol': 1},
+      );
+      expect(dominant.mode, equals('owner'));
+      expect(dominant.evidence, contains('alice 50%'));
+
+      final spread = deriveAudience(
+        distinctPrAuthors: 6,
+        pathAuthorCounts: {'alice': 4, 'bob': 4, 'carol': 2},
+      );
+      expect(spread.mode, equals('visitor'));
+
+      final large = deriveAudience(
+        distinctPrAuthors: 7,
+        pathAuthorCounts: {'alice': 9, 'bob': 1},
+      );
+      expect(large.mode, equals('visitor'));
+    });
+
+    test('many path authors veto a bot-shrunk PR author sample', () {
+      // flutter/flutter shape: 20 merged PRs mostly from autorollers leave
+      // 2 distinct humans, but the touched file has 8 recent authors.
+      final busy = deriveAudience(
+        distinctPrAuthors: 2,
+        pathAuthorCounts: {
+          'a': 3,
+          'b': 2,
+          'c': 2,
+          'd': 1,
+          'e': 1,
+          'f': 1,
+          'g': 1,
+          'h': 1,
+        },
+      );
+      expect(busy.mode, equals('visitor'));
+      expect(busy.evidence, contains('paths: 8 authors, top a 25%'));
+    });
+
+    test('autoroll accounts are bots', () {
+      expect(isBotAccount('engine-flutter-autoroll'), isTrue);
+      expect(isBotAccount('skia-flutter-autoroll'), isTrue);
+    });
+
+    test('countAuthors ignores blanks and null logins', () {
+      expect(
+        countAuthors(['alice', '', 'null', 'alice', ' bob ']),
+        equals({'alice': 2, 'bob': 1}),
+      );
+    });
+  });
+}
+
+Future<String> _mockLargeRepoRunner(
+  String command,
+  List<String> args, {
+  String? workingDirectory,
+}) async {
+  if (command == 'gh' && args.contains('pr')) {
+    return jsonEncode([
+      for (var i = 0; i < 8; i++)
+        {
+          'title': 'fix(pkg$i): change $i',
+          'author': {'login': 'dev$i'},
+          'reviews': <Object>[],
+          'labels': <Object>[],
+        },
+    ]);
+  }
+  if (command == 'gh' && args.contains('issue')) {
+    return jsonEncode(<Object>[]);
+  }
+  if (command == 'gh' && args.any((a) => a.contains('/commits?path='))) {
+    return 'carol\ncarol\ncarol\ncarol\ndave\ndave\ndave\nerin\nerin\nfrank\n';
+  }
+  if (command == 'gh' && args.contains('api')) {
+    return jsonEncode(<Object>[]);
+  }
+  throw Exception('Unexpected command: $command ${args.join(' ')}');
 }
 
 Future<String> _mockLocalRepoRunner(
@@ -156,6 +281,9 @@ Future<String> _mockLocalRepoRunner(
   List<String> args, {
   String? workingDirectory,
 }) async {
+  if (command == 'git' && args.contains('log')) {
+    return 'alice\nalice\nalice\nbob\n';
+  }
   if (command == 'gh' && args.contains('view')) {
     return jsonEncode({'nameWithOwner': 'octocat/Hello-World'});
   }
