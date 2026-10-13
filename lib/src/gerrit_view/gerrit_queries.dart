@@ -83,6 +83,26 @@ ThreadSummary parseGerritCommentsJson(
   );
 }
 
+bool _hasNegativeCodeReview(List<String> crVotes) =>
+    crVotes.any((v) => v.endsWith(':-1') || v.endsWith(':-2'));
+
+bool _hasPositiveCodeReview(List<String> crVotes) =>
+    crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'));
+
+String _computeMissingReviewersString(
+  List<String> reviewers,
+  List<String> crVotes,
+) {
+  final missing = reviewers
+      .where(
+        (r) => !crVotes.any(
+          (v) => v.startsWith(r) && (v.endsWith(':+1') || v.endsWith(':+2')),
+        ),
+      )
+      .toList();
+  return missing.isNotEmpty ? ' (Awaiting: ${missing.join(', ')})' : '';
+}
+
 String computeGerritNextAction({
   required List<String> reviewers,
   required List<String> crVotes,
@@ -92,10 +112,9 @@ String computeGerritNextAction({
   required List<String> unsatisfiedRequirements,
 }) {
   if (threads.unresolvedReviewerLeaves > 0) {
-    final count = threads.unresolvedReviewerLeaves;
-    return '❌ Address $count unresolved reviewer comment(s)';
+    return '❌ Address ${threads.unresolvedReviewerLeaves} unresolved reviewer comment(s)';
   }
-  if (crVotes.any((v) => v.endsWith(':-1') || v.endsWith(':-2'))) {
+  if (_hasNegativeCodeReview(crVotes)) {
     return '❌ Address negative Code-Review (${crVotes.join(', ')})';
   }
   if (cqStatus.startsWith('❌')) {
@@ -109,19 +128,10 @@ String computeGerritNextAction({
     final reqs = unsatisfiedRequirements.isNotEmpty
         ? unsatisfiedRequirements.join(', ')
         : 'Missing submit requirements';
-    final missing = reviewers
-        .where(
-          (r) => !crVotes.any(
-            (v) => v.startsWith(r) && (v.endsWith(':+1') || v.endsWith(':+2')),
-          ),
-        )
-        .toList();
-    final missingStr = missing.isNotEmpty
-        ? ' (Awaiting: ${missing.join(', ')})'
-        : '';
+    final missingStr = _computeMissingReviewersString(reviewers, crVotes);
     return '❌ Unsatisfied: $reqs$missingStr';
   }
-  if (crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'))) {
+  if (_hasPositiveCodeReview(crVotes)) {
     return '🚀 Approved (${crVotes.join(', ')})';
   }
   if (reviewers.isEmpty) {
@@ -317,7 +327,8 @@ RemoteCL? _parseRemoteClItem(
 
 const _changesQuerySuffix =
     'changes/?q=owner:self+status:open'
-    '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS&o=MESSAGES&o=SUBMITTABLE&o=SUBMIT_REQUIREMENTS';
+    '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS'
+    '&o=MESSAGES&o=SUBMITTABLE&o=SUBMIT_REQUIREMENTS';
 
 Map<int, RemoteCL> fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
   print(styleDim.wrap('Querying active CLs from Gerrit...')!);
