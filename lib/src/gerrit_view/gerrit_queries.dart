@@ -113,7 +113,8 @@ String computeGerritNextAction({
   required List<String> unsatisfiedRequirements,
 }) {
   if (threads.unresolvedReviewerLeaves > 0) {
-    return '❌ Address ${threads.unresolvedReviewerLeaves} unresolved reviewer comment(s)';
+    final count = threads.unresolvedReviewerLeaves;
+    return '❌ Address $count unresolved reviewer comment(s)';
   }
   if (_hasNegativeCodeReview(crVotes)) {
     return '❌ Address negative Code-Review (${crVotes.join(', ')})';
@@ -123,7 +124,8 @@ String computeGerritNextAction({
   }
   if (threads.unresolvedAuthorLeaves > 0) {
     final target = reviewers.isEmpty ? 'Reviewer' : reviewers.join(', ');
-    return '🔔 Ping $target (${threads.unresolvedAuthorLeaves} open thread(s))';
+    final count = threads.unresolvedAuthorLeaves;
+    return '🔔 Ping $target ($count open thread(s))';
   }
   if (submittable == false) {
     final reqs = unsatisfiedRequirements.isNotEmpty
