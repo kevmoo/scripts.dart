@@ -95,9 +95,10 @@ String _computeMissingReviewersString(
 ) {
   final missing = reviewers
       .where(
-        (r) => !crVotes.any(
-          (v) => v.startsWith(r) && (v.endsWith(':+1') || v.endsWith(':+2')),
-        ),
+        (r) => !crVotes.any((v) {
+          if (!v.startsWith(r)) return false;
+          return v.endsWith(':+1') || v.endsWith(':+2');
+        }),
       )
       .toList();
   return missing.isNotEmpty ? ' (Awaiting: ${missing.join(', ')})' : '';
