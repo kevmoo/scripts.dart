@@ -83,17 +83,40 @@ ThreadSummary parseGerritCommentsJson(
   );
 }
 
+bool _hasNegativeCodeReview(List<String> crVotes) =>
+    crVotes.any((v) => v.endsWith(':-1') || v.endsWith(':-2'));
+
+bool _hasPositiveCodeReview(List<String> crVotes) =>
+    crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'));
+
+String _computeMissingReviewersString(
+  List<String> reviewers,
+  List<String> crVotes,
+) {
+  final missing = reviewers
+      .where(
+        (r) => !crVotes.any((v) {
+          if (!v.startsWith(r)) return false;
+          return v.endsWith(':+1') || v.endsWith(':+2');
+        }),
+      )
+      .toList();
+  return missing.isNotEmpty ? ' (Awaiting: ${missing.join(', ')})' : '';
+}
+
 String computeGerritNextAction({
   required List<String> reviewers,
   required List<String> crVotes,
   required String cqStatus,
   required ThreadSummary threads,
+  required bool? submittable,
+  required List<String> unsatisfiedRequirements,
 }) {
   if (threads.unresolvedReviewerLeaves > 0) {
     final count = threads.unresolvedReviewerLeaves;
     return '❌ Address $count unresolved reviewer comment(s)';
   }
-  if (crVotes.any((v) => v.endsWith(':-1') || v.endsWith(':-2'))) {
+  if (_hasNegativeCodeReview(crVotes)) {
     return '❌ Address negative Code-Review (${crVotes.join(', ')})';
   }
   if (cqStatus.startsWith('❌')) {
@@ -101,9 +124,17 @@ String computeGerritNextAction({
   }
   if (threads.unresolvedAuthorLeaves > 0) {
     final target = reviewers.isEmpty ? 'Reviewer' : reviewers.join(', ');
-    return '🔔 Ping $target (${threads.unresolvedAuthorLeaves} open thread(s))';
+    final count = threads.unresolvedAuthorLeaves;
+    return '🔔 Ping $target ($count open thread(s))';
   }
-  if (crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'))) {
+  if (submittable == false) {
+    final reqs = unsatisfiedRequirements.isNotEmpty
+        ? unsatisfiedRequirements.join(', ')
+        : 'Missing submit requirements';
+    final missingStr = _computeMissingReviewersString(reviewers, crVotes);
+    return '❌ Unsatisfied: $reqs$missingStr';
+  }
+  if (_hasPositiveCodeReview(crVotes)) {
     return '🚀 Approved (${crVotes.join(', ')})';
   }
   if (reviewers.isEmpty) {
@@ -260,11 +291,24 @@ RemoteCL? _parseRemoteClItem(
       number,
       ownerId,
     );
+
+    final submittable = item['submittable'] as bool?;
+    final unsatisfiedRequirements = <String>[];
+    final submitReqs =
+        item['submit_requirements'] as List<dynamic>? ?? const [];
+    for (final req in submitReqs) {
+      if (req is Map<String, dynamic> && req['status'] == 'UNSATISFIED') {
+        final name = req['name'] as String?;
+        if (name != null) unsatisfiedRequirements.add(name);
+      }
+    }
     final nextAction = computeGerritNextAction(
       reviewers: reviewers,
       crVotes: crVotes,
       cqStatus: cqStatus,
       threads: threads,
+      submittable: submittable,
+      unsatisfiedRequirements: unsatisfiedRequirements,
     );
     return (
       number: number,
@@ -286,7 +330,8 @@ RemoteCL? _parseRemoteClItem(
 
 const _changesQuerySuffix =
     'changes/?q=owner:self+status:open'
-    '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS&o=MESSAGES';
+    '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS'
+    '&o=MESSAGES&o=SUBMITTABLE&o=SUBMIT_REQUIREMENTS';
 
 Map<int, RemoteCL> fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
   print(styleDim.wrap('Querying active CLs from Gerrit...')!);

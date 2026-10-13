@@ -146,6 +146,8 @@ void main() {
         reviewers: ['Nicholas Shahan'],
         crVotes: const [],
         cqStatus: '✅ Passed (2026-05-29)',
+        submittable: true,
+        unsatisfiedRequirements: [],
         threads: (
           totalThreads: 2,
           unresolvedReviewerLeaves: 1,
@@ -162,6 +164,8 @@ void main() {
           reviewers: ['Slava Egorov', 'Lasse Nielsen'],
           crVotes: ['Lasse Nielsen:+1'],
           cqStatus: '✅ Passed (2026-08-30)',
+          submittable: true,
+          unsatisfiedRequirements: [],
           threads: (
             totalThreads: 47,
             unresolvedReviewerLeaves: 0,
@@ -177,6 +181,8 @@ void main() {
           reviewers: ['Slava Egorov', 'Lasse Nielsen'],
           crVotes: ['Lasse Nielsen:+1', 'Slava Egorov:-1'],
           cqStatus: '✅ Passed (2026-08-30)',
+          submittable: true,
+          unsatisfiedRequirements: [],
           threads: (
             totalThreads: 47,
             unresolvedReviewerLeaves: 0,
@@ -195,6 +201,8 @@ void main() {
         reviewers: const [],
         crVotes: const [],
         cqStatus: '✅ Passed (2026-08-30)',
+        submittable: true,
+        unsatisfiedRequirements: [],
         threads: (
           totalThreads: 4,
           unresolvedReviewerLeaves: 0,
