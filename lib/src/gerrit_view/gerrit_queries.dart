@@ -96,12 +96,41 @@ String _computeMissingReviewersString(
   final missing = reviewers
       .where(
         (r) => !crVotes.any((v) {
-          if (!v.startsWith(r)) return false;
+          if (!v.startsWith('$r:')) return false;
           return v.endsWith(':+1') || v.endsWith(':+2');
         }),
       )
       .toList();
   return missing.isNotEmpty ? ' (Awaiting: ${missing.join(', ')})' : '';
+}
+
+/// Extracts `UNSATISFIED` requirement names from Gerrit `submit_requirements`.
+List<String> extractUnsatisfiedRequirements(Map<String, dynamic> item) {
+  final unsatisfied = <String>[];
+  final submitReqs = item['submit_requirements'] as List<dynamic>? ?? const [];
+  for (final req in submitReqs) {
+    if (req is Map<String, dynamic> && req['status'] == 'UNSATISFIED') {
+      final name = req['name'] as String?;
+      if (name != null && name.isNotEmpty) unsatisfied.add(name);
+    }
+  }
+  return unsatisfied;
+}
+
+String _formatApprovedOrUnsatisfiedAction({
+  required List<String> reviewers,
+  required List<String> crVotes,
+  required bool? submittable,
+  required List<String> unsatisfiedRequirements,
+}) {
+  if (submittable == false) {
+    final reqs = unsatisfiedRequirements.isNotEmpty
+        ? unsatisfiedRequirements.join(', ')
+        : 'Missing submit requirements';
+    final missingStr = _computeMissingReviewersString(reviewers, crVotes);
+    return '❌ Unsatisfied: $reqs$missingStr';
+  }
+  return '🚀 Approved (${crVotes.join(', ')})';
 }
 
 String computeGerritNextAction({
@@ -127,15 +156,13 @@ String computeGerritNextAction({
     final count = threads.unresolvedAuthorLeaves;
     return '🔔 Ping $target ($count open thread(s))';
   }
-  if (submittable == false) {
-    final reqs = unsatisfiedRequirements.isNotEmpty
-        ? unsatisfiedRequirements.join(', ')
-        : 'Missing submit requirements';
-    final missingStr = _computeMissingReviewersString(reviewers, crVotes);
-    return '❌ Unsatisfied: $reqs$missingStr';
-  }
   if (_hasPositiveCodeReview(crVotes)) {
-    return '🚀 Approved (${crVotes.join(', ')})';
+    return _formatApprovedOrUnsatisfiedAction(
+      reviewers: reviewers,
+      crVotes: crVotes,
+      submittable: submittable,
+      unsatisfiedRequirements: unsatisfiedRequirements,
+    );
   }
   if (reviewers.isEmpty) {
     return '⚠️ Add Reviewer (0 assigned)';
@@ -293,15 +320,7 @@ RemoteCL? _parseRemoteClItem(
     );
 
     final submittable = item['submittable'] as bool?;
-    final unsatisfiedRequirements = <String>[];
-    final submitReqs =
-        item['submit_requirements'] as List<dynamic>? ?? const [];
-    for (final req in submitReqs) {
-      if (req is Map<String, dynamic> && req['status'] == 'UNSATISFIED') {
-        final name = req['name'] as String?;
-        if (name != null) unsatisfiedRequirements.add(name);
-      }
-    }
+    final unsatisfiedRequirements = extractUnsatisfiedRequirements(item);
     final nextAction = computeGerritNextAction(
       reviewers: reviewers,
       crVotes: crVotes,
