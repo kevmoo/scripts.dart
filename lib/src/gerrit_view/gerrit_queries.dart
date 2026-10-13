@@ -88,6 +88,8 @@ String computeGerritNextAction({
   required List<String> crVotes,
   required String cqStatus,
   required ThreadSummary threads,
+  required bool? submittable,
+  required List<String> unsatisfiedRequirements,
 }) {
   if (threads.unresolvedReviewerLeaves > 0) {
     final count = threads.unresolvedReviewerLeaves;
@@ -102,6 +104,22 @@ String computeGerritNextAction({
   if (threads.unresolvedAuthorLeaves > 0) {
     final target = reviewers.isEmpty ? 'Reviewer' : reviewers.join(', ');
     return '🔔 Ping $target (${threads.unresolvedAuthorLeaves} open thread(s))';
+  }
+  if (submittable == false) {
+    final reqs = unsatisfiedRequirements.isNotEmpty
+        ? unsatisfiedRequirements.join(', ')
+        : 'Missing submit requirements';
+    final missing = reviewers
+        .where(
+          (r) => !crVotes.any(
+            (v) => v.startsWith(r) && (v.endsWith(':+1') || v.endsWith(':+2')),
+          ),
+        )
+        .toList();
+    final missingStr = missing.isNotEmpty
+        ? ' (Awaiting: ${missing.join(', ')})'
+        : '';
+    return '❌ Unsatisfied: $reqs$missingStr';
   }
   if (crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'))) {
     return '🚀 Approved (${crVotes.join(', ')})';
@@ -260,11 +278,24 @@ RemoteCL? _parseRemoteClItem(
       number,
       ownerId,
     );
+
+    final submittable = item['submittable'] as bool?;
+    final unsatisfiedRequirements = <String>[];
+    final submitReqs =
+        item['submit_requirements'] as List<dynamic>? ?? const [];
+    for (final req in submitReqs) {
+      if (req is Map<String, dynamic> && req['status'] == 'UNSATISFIED') {
+        final name = req['name'] as String?;
+        if (name != null) unsatisfiedRequirements.add(name);
+      }
+    }
     final nextAction = computeGerritNextAction(
       reviewers: reviewers,
       crVotes: crVotes,
       cqStatus: cqStatus,
       threads: threads,
+      submittable: submittable,
+      unsatisfiedRequirements: unsatisfiedRequirements,
     );
     return (
       number: number,
@@ -286,7 +317,7 @@ RemoteCL? _parseRemoteClItem(
 
 const _changesQuerySuffix =
     'changes/?q=owner:self+status:open'
-    '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS&o=MESSAGES';
+    '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS&o=MESSAGES&o=SUBMITTABLE&o=SUBMIT_REQUIREMENTS';
 
 Map<int, RemoteCL> fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
   print(styleDim.wrap('Querying active CLs from Gerrit...')!);
