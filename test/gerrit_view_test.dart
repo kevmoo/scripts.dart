@@ -201,8 +201,12 @@ void main() {
         reviewers: const [],
         crVotes: const [],
         cqStatus: '✅ Passed (2026-08-30)',
-        submittable: true,
-        unsatisfiedRequirements: [],
+        submittable: false,
+        unsatisfiedRequirements: const [
+          'Code-Review',
+          'Code-Owners',
+          'Review-Enforcement',
+        ],
         threads: (
           totalThreads: 4,
           unresolvedReviewerLeaves: 0,
@@ -210,6 +214,110 @@ void main() {
         ),
       );
       expect(action, '⚠️ Add Reviewer (0 assigned)');
+    });
+
+    test('reports awaiting review when no +1 votes exist yet', () {
+      final action = computeGerritNextAction(
+        reviewers: const ['Ben Konyi'],
+        crVotes: const [],
+        cqStatus: '✅ Passed (2026-10-12)',
+        submittable: false,
+        unsatisfiedRequirements: const ['Code-Review', 'Review-Enforcement'],
+        threads: (
+          totalThreads: 0,
+          unresolvedReviewerLeaves: 0,
+          unresolvedAuthorLeaves: 0,
+        ),
+      );
+      expect(action, '⏳ Awaiting Review (Ben Konyi)');
+    });
+
+    test(
+      'surfaces unsatisfied requirements when +1 exists and not submittable',
+      () {
+        final coreLibAction = computeGerritNextAction(
+          reviewers: const ['Lasse Nielsen', 'Stephen Adams'],
+          crVotes: const ['Stephen Adams:+1'],
+          cqStatus: 'None',
+          submittable: false,
+          unsatisfiedRequirements: const ['Core-Library-Review'],
+          threads: (
+            totalThreads: 1,
+            unresolvedReviewerLeaves: 0,
+            unresolvedAuthorLeaves: 0,
+          ),
+        );
+        expect(
+          coreLibAction,
+          '❌ Unsatisfied: Core-Library-Review (Awaiting: Lasse Nielsen)',
+        );
+
+        final codeOwnersAction = computeGerritNextAction(
+          reviewers: const ['Lasse Nielsen', 'Slava Egorov', 'Brian Quinlan'],
+          crVotes: const ['Lasse Nielsen:+1'],
+          cqStatus: '✅ Passed (2026-10-12)',
+          submittable: false,
+          unsatisfiedRequirements: const ['Code-Owners'],
+          threads: (
+            totalThreads: 1,
+            unresolvedReviewerLeaves: 0,
+            unresolvedAuthorLeaves: 0,
+          ),
+        );
+        expect(
+          codeOwnersAction,
+          '❌ Unsatisfied: Code-Owners (Awaiting: Slava Egorov, Brian Quinlan)',
+        );
+      },
+    );
+
+    test(
+      'does not conflate prefix reviewer names when computing missing votes',
+      () {
+        final action = computeGerritNextAction(
+          reviewers: const ['Ben', 'Ben Konyi'],
+          crVotes: const ['Ben Konyi:+1'],
+          cqStatus: '✅ Passed (2026-10-12)',
+          submittable: false,
+          unsatisfiedRequirements: const ['Code-Owners'],
+          threads: (
+            totalThreads: 0,
+            unresolvedReviewerLeaves: 0,
+            unresolvedAuthorLeaves: 0,
+          ),
+        );
+        expect(action, '❌ Unsatisfied: Code-Owners (Awaiting: Ben)');
+      },
+    );
+
+    test('reports Approved only when +1 exists and submittable is true', () {
+      final action = computeGerritNextAction(
+        reviewers: const ['Lasse Nielsen', 'Stephen Adams'],
+        crVotes: const ['Stephen Adams:+1'],
+        cqStatus: '✅ Passed (2026-10-12)',
+        submittable: true,
+        unsatisfiedRequirements: const [],
+        threads: (
+          totalThreads: 1,
+          unresolvedReviewerLeaves: 0,
+          unresolvedAuthorLeaves: 0,
+        ),
+      );
+      expect(action, '🚀 Approved (Stephen Adams:+1)');
+    });
+  });
+
+  group('extractUnsatisfiedRequirements', () {
+    test('returns only UNSATISFIED requirement names', () {
+      final reqs = extractUnsatisfiedRequirements({
+        'submit_requirements': [
+          {'name': 'Cherry-Pick', 'status': 'NOT_APPLICABLE'},
+          {'name': 'Code-Review', 'status': 'SATISFIED'},
+          {'name': 'Core-Library-Review', 'status': 'UNSATISFIED'},
+          {'name': 'Code-Owners', 'status': 'UNSATISFIED'},
+        ],
+      });
+      expect(reqs, ['Core-Library-Review', 'Code-Owners']);
     });
   });
 }
