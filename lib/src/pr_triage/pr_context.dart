@@ -328,14 +328,26 @@ final _conflictInFileRegExp = RegExp(r'^CONFLICT \([^)]+\): .* in (.+)$');
   return (files: files.toList(), messages: messages);
 }
 
-/// Inspects a PR's mergeability state and, if `CONFLICTING` or `DIRTY`, uses
-/// local `git fetch`, `git merge-tree`, and `git log` to identify the exact
+/// Inspects a PR's mergeability state (re-polling `gh pr view` if GitHub
+/// initially returns `UNKNOWN`) and, if `CONFLICTING` or `DIRTY`, uses local
+/// `git fetch`, `git merge-tree`, and `git log` to identify the exact
 /// conflicting files and upstream commits on `origin/<baseRefName>`.
 Future<PrConflictAnalysis> analyzePrConflicts(
   PrContext context,
   Map<String, dynamic> prData, {
   CommandRunner runCommand = runCommand,
+  Duration retryDelay = const Duration(seconds: 2),
+  int maxRetries = 2,
 }) async {
+  if (prData['mergeable']?.toString() == 'UNKNOWN') {
+    await _pollUnknownPrMergeable(
+      context,
+      prData,
+      runCommand: runCommand,
+      retryDelay: retryDelay,
+      maxRetries: maxRetries,
+    );
+  }
   final mergeable = prData['mergeable']?.toString() ?? 'UNKNOWN';
   final mergeStateStatus = prData['mergeStateStatus']?.toString() ?? 'UNKNOWN';
   final baseRefName = prData['baseRefName']?.toString() ?? 'main';
@@ -421,4 +433,40 @@ Future<PrConflictAnalysis> analyzePrConflicts(
     conflictMessages: conflictMessages,
     upstreamCommits: upstreamCommits,
   );
+}
+
+Future<void> _pollUnknownPrMergeable(
+  PrContext context,
+  Map<String, dynamic> prData, {
+  required CommandRunner runCommand,
+  required Duration retryDelay,
+  required int maxRetries,
+}) async {
+  for (var attempt = 0; attempt < maxRetries; attempt++) {
+    if (prData['mergeable']?.toString() != 'UNKNOWN') break;
+    if (retryDelay > Duration.zero) {
+      await Future<void>.delayed(retryDelay);
+    }
+    try {
+      final out = await runCommand('gh', [
+        '-R',
+        '${context.owner}/${context.repo}',
+        'pr',
+        'view',
+        context.prNumber,
+        '--json',
+        'mergeable,mergeStateStatus',
+      ], workingDirectory: context.workingDir);
+      final decoded = jsonDecode(out);
+      if (decoded is! Map<String, dynamic>) break;
+      if (decoded['mergeable'] is String) {
+        prData['mergeable'] = decoded['mergeable'];
+      }
+      if (decoded['mergeStateStatus'] is String) {
+        prData['mergeStateStatus'] = decoded['mergeStateStatus'];
+      }
+    } catch (_) {
+      break;
+    }
+  }
 }

@@ -924,6 +924,97 @@ void main() {
         ),
       ).throws<GhViewException>();
     });
+
+    test(
+      're-polls UNKNOWN mergeable PRs in a single batched GraphQL query',
+      () async {
+        final searchData = {
+          'data': {
+            'search': {
+              'issueCount': 2,
+              'nodes': [
+                {
+                  'number': 190797,
+                  'title': 'First unknown mergeable PR',
+                  'url': 'https://github.com/flutter/flutter/pull/190797',
+                  'isDraft': false,
+                  'state': 'OPEN',
+                  'reviewDecision': 'APPROVED',
+                  'mergeable': 'UNKNOWN',
+                  'mergeStateStatus': 'UNKNOWN',
+                  'headRefName': 'branch-1',
+                  'headRefOid': 'sha1',
+                  'baseRefName': 'master',
+                  'updatedAt': '2026-10-13T20:00:00Z',
+                  'repository': {
+                    'nameWithOwner': 'flutter/flutter',
+                    'url': 'https://github.com/flutter/flutter',
+                  },
+                },
+                {
+                  'number': 193937,
+                  'title': 'Second unknown mergeable PR (conflicting)',
+                  'url': 'https://github.com/flutter/flutter/pull/193937',
+                  'isDraft': false,
+                  'state': 'OPEN',
+                  'reviewDecision': 'REVIEW_REQUIRED',
+                  'mergeable': 'UNKNOWN',
+                  'mergeStateStatus': 'UNKNOWN',
+                  'headRefName': 'branch-2',
+                  'headRefOid': 'sha2',
+                  'baseRefName': 'master',
+                  'updatedAt': '2026-10-13T21:00:00Z',
+                  'repository': {
+                    'nameWithOwner': 'flutter/flutter',
+                    'url': 'https://github.com/flutter/flutter',
+                  },
+                },
+              ],
+            },
+          },
+        };
+
+        final batchData = {
+          'data': {
+            'p0': {
+              'pullRequest': {
+                'mergeable': 'MERGEABLE',
+                'mergeStateStatus': 'CLEAN',
+              },
+            },
+            'p1': {
+              'pullRequest': {
+                'mergeable': 'CONFLICTING',
+                'mergeStateStatus': 'DIRTY',
+              },
+            },
+          },
+        };
+
+        final queries = <String>[];
+        final prs = await fetchOpenPullRequests(
+          user: '@me',
+          mergeableRetryDelay: Duration.zero,
+          processRunner: (exe, args, {workingDirectory}) async {
+            final qArg = args.firstWhere((a) => a.startsWith('query='));
+            queries.add(qArg);
+            final payload = qArg.contains('p0:') ? batchData : searchData;
+            return ProcessResult(1234, 0, jsonEncode(payload), '');
+          },
+        );
+
+        check(queries).length.equals(2);
+        check(queries[1]).contains('p0: repository(owner: "flutter"');
+        check(queries[1]).contains('pullRequest(number: 190797)');
+        check(queries[1]).contains('p1: repository(owner: "flutter"');
+        check(queries[1]).contains('pullRequest(number: 193937)');
+        check(prs).length.equals(2);
+        check(prs[0].mergeable).equals(MergeableState.mergeable);
+        check(prs[0].mergeStateStatus).equals(MergeStateStatus.clean);
+        check(prs[1].mergeable).equals(MergeableState.conflicting);
+        check(prs[1].mergeStateStatus).equals(const MergeStateStatus('DIRTY'));
+      },
+    );
   });
 
   group('GhViewOptions.createArgParser', () {

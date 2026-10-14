@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import '../gh_view.dart';
@@ -118,6 +119,8 @@ Future<List<GhPr>> fetchOpenPullRequests({
   int? lastNDays,
   DateTime? currentTime,
   ProcessRunner? processRunner,
+  Duration mergeableRetryDelay = const Duration(seconds: 2),
+  int maxMergeableRetries = 2,
 }) async {
   final runner = processRunner ?? Process.run;
   final searchQuery = _buildSearchQuery(
@@ -137,7 +140,107 @@ Future<List<GhPr>> fetchOpenPullRequests({
         GhViewException(message, exitCode: exitCode),
   );
 
-  return nodes.map(parsePrNode).whereType<GhPr>().toList();
+  final resolvedNodes = await _resolveUnknownMergeableNodes(
+    nodes,
+    runner: runner,
+    retryDelay: mergeableRetryDelay,
+    maxRetries: maxMergeableRetries,
+  );
+
+  return resolvedNodes.map(parsePrNode).whereType<GhPr>().toList();
+}
+
+Future<List<Map<String, dynamic>>> _resolveUnknownMergeableNodes(
+  List<Map<String, dynamic>> nodes, {
+  required ProcessRunner runner,
+  required Duration retryDelay,
+  required int maxRetries,
+}) async {
+  final resolved = List<Map<String, dynamic>>.of(nodes);
+  for (var attempt = 0; attempt < maxRetries; attempt++) {
+    final unknownIndices = _findUnknownMergeableIndices(resolved);
+    if (unknownIndices.isEmpty) break;
+    final query = _buildMergeableBatchQuery(resolved, unknownIndices);
+    if (query == null) break;
+    if (retryDelay > Duration.zero) {
+      await Future<void>.delayed(retryDelay);
+    }
+    try {
+      final res = await runner('gh', ['api', 'graphql', '-f', 'query=$query']);
+      if (res.exitCode != 0) break;
+      _applyMergeableBatchResponse(
+        resolved,
+        unknownIndices,
+        res.stdout as String,
+      );
+    } catch (_) {
+      break;
+    }
+  }
+  return resolved;
+}
+
+List<int> _findUnknownMergeableIndices(List<Map<String, dynamic>> nodes) => [
+  for (var i = 0; i < nodes.length; i++)
+    if (nodes[i]['mergeable'] == MergeableState.unknown.value) i,
+];
+
+({String owner, String repo, int number})? _extractPrCoordinates(
+  Map<String, dynamic> node,
+) {
+  final number = node['number'];
+  final repoMap = node['repository'] as Map<String, dynamic>?;
+  final nameWithOwner = repoMap?['nameWithOwner'] as String? ?? '';
+  final slash = nameWithOwner.indexOf('/');
+  if (number is! int || slash <= 0 || slash >= nameWithOwner.length - 1) {
+    return null;
+  }
+  return (
+    owner: nameWithOwner.substring(0, slash),
+    repo: nameWithOwner.substring(slash + 1),
+    number: number,
+  );
+}
+
+String? _buildMergeableBatchQuery(
+  List<Map<String, dynamic>> nodes,
+  List<int> unknownIndices,
+) {
+  final fields = <String>[];
+  for (final idx in unknownIndices) {
+    final coords = _extractPrCoordinates(nodes[idx]);
+    if (coords == null) continue;
+    fields.add(
+      'p$idx: repository(owner: ${jsonEncode(coords.owner)}, '
+      'name: ${jsonEncode(coords.repo)}) { '
+      'pullRequest(number: ${coords.number}) { mergeable mergeStateStatus } }',
+    );
+  }
+  return fields.isEmpty ? null : 'query { ${fields.join(' ')} }';
+}
+
+void _applyMergeableBatchResponse(
+  List<Map<String, dynamic>> nodes,
+  List<int> unknownIndices,
+  String rawStdout,
+) {
+  final decoded = jsonDecode(rawStdout);
+  if (decoded is! Map<String, dynamic>) return;
+  final data = decoded['data'];
+  if (data is! Map<String, dynamic>) return;
+  for (final idx in unknownIndices) {
+    final repoObj = data['p$idx'];
+    final prObj = repoObj is Map<String, dynamic>
+        ? repoObj['pullRequest']
+        : null;
+    if (prObj is! Map<String, dynamic>) continue;
+    nodes[idx] = {
+      ...nodes[idx],
+      if (prObj['mergeable'] is String) 'mergeable': prObj['mergeable'],
+      if (prObj['mergeStateStatus'] is String)
+        'mergeStateStatus': prObj['mergeStateStatus'],
+    };
+  }
 }
 
 String _buildSearchQuery({

@@ -746,6 +746,61 @@ CONFLICT (content): Merge conflict in lib/src/git_extensions.dart
       },
     );
 
+    test(
+      'analyzePrConflicts re-polls gh pr view when mergeable is UNKNOWN',
+      () async {
+        final context = PrContext(
+          workingDir: '/tmp/repo',
+          prNumber: '190797',
+          owner: 'flutter',
+          repo: 'flutter',
+        );
+        final prData = <String, dynamic>{
+          'mergeable': 'UNKNOWN',
+          'mergeStateStatus': 'UNKNOWN',
+          'baseRefName': 'master',
+          'headRefName': 'feature-branch',
+        };
+        final commands = <String>[];
+        final analysis = await analyzePrConflicts(
+          context,
+          prData,
+          retryDelay: Duration.zero,
+          runCommand: (exe, args, {workingDirectory}) async {
+            final joined = '$exe ${args.join(' ')}';
+            commands.add(joined);
+            if (joined.contains('pr view 190797 --json')) {
+              return jsonEncode({
+                'mergeable': 'CONFLICTING',
+                'mergeStateStatus': 'DIRTY',
+              });
+            }
+            if (joined.startsWith('git merge-tree')) {
+              return 'CONFLICT (content): Merge conflict in lib/foo.dart\n';
+            }
+            if (joined.startsWith('git log')) {
+              return 'abc1234 Upstream change to foo.dart\n';
+            }
+            return '';
+          },
+        );
+
+        expect(
+          commands.first,
+          equals(
+            'gh -R flutter/flutter pr view 190797 '
+            '--json mergeable,mergeStateStatus',
+          ),
+        );
+        expect(prData['mergeable'], equals('CONFLICTING'));
+        expect(prData['mergeStateStatus'], equals('DIRTY'));
+        expect(analysis.isConflicting, isTrue);
+        expect(analysis.mergeable, equals('CONFLICTING'));
+        expect(analysis.mergeStateStatus, equals('DIRTY'));
+        expect(analysis.conflictingFiles, equals(['lib/foo.dart']));
+      },
+    );
+
     test('annotates queued CHANGES_REQUESTED decision, Approved By, '
         're-requested top-level reviews, and superseded reviews', () {
       final report = buildTriageReport((
