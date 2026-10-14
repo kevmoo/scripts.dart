@@ -143,16 +143,18 @@ the record of your work:
    dividers, decorative emojis, pleasantries, and speculative architecture
    essays. One audience and one owner per post: split distinct subsystems/teams
    into separate issues. Limit proposed fixes to 1–3 concrete bullets.
-5. **Anchor, verify, then cold-read.** Every claim carries a GitHub `https://`
-   permalink
+5. **Anchor, verify, then cold-read.** In issues, every claim carries a GitHub
+   `https://` permalink
    (`https://github.com/<owner>/<repo>/blob/<commit>/<file>#L<start>-L<end>`) or
    a plain backtick repository-relative path (`` `lib/src/foo.dart` ``)—never a
    local `file://` workstation URL, since `--body-file` pipes the draft verbatim
-   to GitHub. Inference is labeled as inference; PR bodies state what changed
-   and how it was verified within the first 3 lines (do not add a second
-   `### Verification` section repeating the opening `Verified:` line).
-   Encapsulate verbatim CLI output, stack traces, code traces, and full
-   benchmark tables inside
+   to GitHub. Inference is labeled as inference. In PRs, GitHub already shows
+   the **Files changed** diff tab and **CI check runs**: never list a
+   file-by-file change inventory (`- path/to/file.dart: ...`) or recite routine
+   CI checks (`Verified: dart analyze / dart test`); state only the intent/why,
+   non-obvious callouts or breaking changes, `Fixes #N`, and non-CI verification
+   (e.g. benchmarks or manual UI checks). Encapsulate verbatim CLI output, stack
+   traces, code traces, and full benchmark tables inside
    `<details><summary><b>Detailed Breakdown, Repro Steps & Measurements (AI-assisted)</b></summary>`
    (blank line after `</summary>` and before `</details>`; no narrative prose
    inside). Then run Step 3.5.
@@ -190,26 +192,14 @@ _Note_: Strip the `# <Proposed Title>` line and the `🛡️ Paranoia Tier:` pre
 banner when passing `--body-file` in Step 5 so the published GitHub PR body
 begins with the one-sentence change summary.
 
-#### Conditional `Flow / Surface Delta` Rubric for PRs (`FU3`)
+#### Conditional Benchmark `<details>` Block for PRs (`FU3`)
 
-Include a compact ASCII flow, `diff`, Mermaid diagram, or benchmark delta table
-inside
-`<details><summary><b>Flow / Surface Delta and design notes (AI-assisted)</b></summary>`
-(below the file-level change bullets) **only** when at least one trigger holds:
-
-1. **Public API / CLI / Config Surface Changes**: `api.txt` changes, new or
-   modified CLI flags/subcommands, exit codes, or config/JSON schemas (render a
-   compact `Before -> After` ASCII or `diff` block `<= 12` lines).
-2. **Multi-File Control-Flow or State Routing (`>= 3` files)**: `>= 3`
-   production files have altered control-flow, pipeline stages, or state
-   transitions (render a compact ASCII pipeline or `<= 6-node` Mermaid
-   `flowchart LR` / `sequenceDiagram` with `<= 50 chars` per node label).
-3. **Benchmark / Hot-Path Architecture Changes**: Algorithmic or hot-path
-   performance changes (render a compact `Before vs. After` delta table).
-
-**Omission Rule**: If none of the three triggers hold (e.g., isolated bug fix,
-single-file refactor, test/doc update), **omit** the `Flow / Surface Delta`
-block entirely.
+Include a compact `Before vs. After` benchmark delta table inside
+`<details><summary><b>Benchmark measurements (AI-assisted)</b></summary>`
+**only** when the PR makes algorithmic or hot-path performance changes backed by
+empirical measurements. Never include `<details>` blocks on PRs that merely
+repeat public API diffs or list multi-file control flow already visible in the
+GitHub **Files changed** tab.
 
 ### Step 3.5: Cold Read (Hard Gate for Issue and PR Bodies)
 

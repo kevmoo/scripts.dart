@@ -104,64 +104,40 @@ Addressing these reduces:
 Include `# <Proposed Title>` on Line 1 and the **Explicit 3D Paranoia Header**
 on Line 3 of the local artifact preview (`draft_github_<owner>_<repo>_pr.md`)
 for user review, and strip lines 1–4 (`tail -n +5`) when passing `--body-file -`
-to `gh pr create` so the published GitHub PR description begins with the
-one-sentence change summary. A reviewer decides from that first paragraph: what
-changed, why, and how it was verified. Do not add a `### Rationale` header over
-the opening paragraph or a second `### Verification` section that repeats the
-opening `Verified:` line, and use `https://github.com/...` permalinks or plain
-backtick repository-relative paths (never `file://` local workstation URLs).
+to `gh pr create` so the published GitHub PR description begins with the concise
+intent summary. Because GitHub already shows the **Files changed** diff tab and
+**CI check runs**, never include a file-by-file change inventory
+(`- path/to/file.dart: ...`) or routine CI test/analyzer pass counts
+(`Verified: dart test...`). State only **why** the change is made, any
+**non-obvious callouts / breaking changes / workarounds**,
+`Fixes #<issue_number>`, and **non-CI verification** (such as benchmarks or
+manual UI checks).
 
-````markdown
+```markdown
 # feat(scope): imperative summary
 
 🛡️ Paranoia Tier: Ring <0..4B> (<Label>) · Confidence: <High|Low> · Door: <🚪 One-Way | 🔄 Two-Way>
 
-<What changed and why, in one sentence.> Verified: <exact command or CI job and pass count>. Fixes #<issue_number>.
+<1–3 sentences or short bullets stating the intent/why and any non-obvious design callouts, breaking changes, or intentional workarounds. Omit prose if the title + `Fixes #<issue_number>` already says it all.>
 
-- `<repo/relative/path.dart>`: <Concrete change 1>
-- `<repo/relative/test_path.dart>`: <Concrete change 2; touch only what the task requires>
-
-<details>
-<summary><b>Flow / Surface Delta and verification details (AI-assisted)</b></summary>
-
-<!-- Include ONLY when at least one FU3 trigger holds:
-     (1) public API/CLI/config surface changes,
-     (2) >= 3 files have altered control-flow or state routing,
-     (3) benchmark/hot-path architecture changes, or
-     (4) multi-step repro commands / raw logs exceed the one-line Verified summary.
-     Otherwise omit this entire block. -->
-
-```text
-Before: CLI -> parseArgs() -> runCheck()
-After:  CLI -> parseArgs() -> resolveBaseline() -> runCheck(baseline)
+Fixes #<issue_number>
 ```
 
+### Conditional Benchmark `<details>` Example (`FU3`)
+
+Include a `<details>` block on a PR **only** when reporting empirical
+`Before vs. After` benchmark measurements (never to repeat diffs or file lists):
+
+```markdown
+<details>
+<summary><b>Benchmark measurements (AI-assisted)</b></summary>
+
+| Metric           | Pre-Change | Post-Change | Delta (%) | Speedup |
+| :--------------- | :--------- | :---------- | :-------- | :------ |
+| Cold scan (`ms`) | `420 ms`   | `95 ms`     | `-77.4%`  | `4.42x` |
+
 </details>
-````
-
-### Conditional `### Flow / Surface Delta` Examples (`FU3`)
-
-- **Trigger 1 — Public API / CLI / Config Surface Change (`<= 12` lines)**:
-
-  ```diff
-  - kscripts pr-triage re-request <reviewer_login>
-  + kscripts pr-triage re-request <reviewer_login> [--dismiss <review_id> -m "<reason>"]
-  ```
-
-- **Trigger 2 — Multi-File Control-Flow or State Routing (`>= 3` files, `<= 6`
-  nodes, `<= 50` chars/label)**:
-
-  ```mermaid
-  flowchart LR
-      A["pr_triage.dart"] --> B["github_cli.dart (dismiss)"]
-      B --> C["gh pr edit --add-reviewer"]
-  ```
-
-- **Trigger 3 — Benchmark / Hot-Path Architecture Change**:
-
-  | Metric           | Pre-Change | Post-Change | Delta (%) | Speedup |
-  | :--------------- | :--------- | :---------- | :-------- | :------ |
-  | Cold scan (`ms`) | `420 ms`   | `95 ms`     | `-77.4%`  | `4.42x` |
+```
 
 ## Mapping Standard Sections to GitHub YAML Issue Forms
 
