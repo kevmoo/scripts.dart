@@ -1,7 +1,9 @@
 @TestOn('vm')
 library;
 
+import 'package:kevmoo_scripts/src/gerrit_view.dart';
 import 'package:kevmoo_scripts/src/gerrit_view/gerrit_queries.dart';
+import 'package:kevmoo_scripts/src/gerrit_view/models.dart';
 import 'package:test/test.dart';
 
 void main() {
@@ -318,6 +320,38 @@ void main() {
         ],
       });
       expect(reqs, ['Core-Library-Review', 'Code-Owners']);
+    });
+  });
+
+  group('buildShadowFetchRefs', () {
+    test('includes default branch refspec when closed CL branches exist', () {
+      final refs = buildShadowFetchRefs(
+        {'undead-vm-service': 562902},
+        {
+          'undead-vm-service': (
+            sha: 'abc1234',
+            relativeDate: '1 hour ago',
+            changeId: 'I123456',
+            rawBody: 'msg',
+          ),
+        },
+        const <int, RemoteCL>{},
+        gerritRemote: 'upstream',
+        defaultBranch: 'main',
+        hasClosedBranches: true,
+      );
+      expect(refs, ['refs/heads/main:refs/remotes/upstream/main']);
+    });
+
+    test('omits default branch refspec when no closed CL branches exist', () {
+      final refs = buildShadowFetchRefs(
+        const <String, int>{},
+        const <String, CommitDetails>{},
+        const <int, RemoteCL>{},
+        gerritRemote: 'upstream',
+        defaultBranch: 'main',
+      );
+      expect(refs, isEmpty);
     });
   });
 }

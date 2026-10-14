@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../gh_view.dart';
 import '../process_utils.dart';
+import '../shared/gh_args.dart';
 import '../shared/graphql_utils.dart';
 import 'ci_status.dart';
 import 'models.dart';
@@ -83,7 +84,7 @@ query($q: String!, $limit: Int!, $cursor: String) {
               pushedDate
               statusCheckRollup {
                 state
-                contexts(first: 50) {
+                contexts(first: 100) {
                   nodes {
                     __typename
                     ... on StatusContext {
@@ -251,7 +252,7 @@ String _buildSearchQuery({
 }) {
   final buffer = StringBuffer('is:pr is:open');
   if (user.isNotEmpty) buffer.write(' author:$user');
-  if (repo != null && repo.isNotEmpty) buffer.write(' repo:$repo');
+  writeRepoSearchQualifiers(buffer, repo);
   if (lastNDays != null) {
     final cutoff = (currentTime ?? DateTime.now()).subtract(
       Duration(days: lastNDays),

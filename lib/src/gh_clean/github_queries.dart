@@ -3,6 +3,7 @@ import 'dart:io';
 
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
+import '../shared/gh_args.dart';
 import 'branch_policy.dart';
 import 'fetch_landed_prs.dart';
 import 'models.dart';
@@ -11,14 +12,16 @@ Iterable<({LocalRepoInfo repo, String owner, String name})> _filteredRootRepos(
   List<LocalRepoInfo> localRepos, {
   String? repoFilter,
 }) sync* {
-  final filterLower = repoFilter?.toLowerCase();
+  final filtersLower = {
+    for (final r in splitRepoFilter(repoFilter)) r.toLowerCase(),
+  };
   for (final repo in localRepos) {
     if (!isRootGitRepository(Directory(repo.repoPath)) ||
         isDartSdkRepositoryName(repo.repoName)) {
       continue;
     }
-    if (filterLower != null &&
-        !repo.repoNames.any((n) => n.toLowerCase() == filterLower)) {
+    if (filtersLower.isNotEmpty &&
+        !repo.repoNames.any((n) => filtersLower.contains(n.toLowerCase()))) {
       continue;
     }
     final canonicalRepo = repo.repoNames.firstOrNull;

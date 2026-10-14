@@ -1871,6 +1871,86 @@ void main() {
         check(pr.needsReviewReRequest).isTrue();
       },
     );
+
+    test(
+      'deduplicates re-run CheckRun contexts by name when earlier run failed',
+      () {
+        final commits = <String, dynamic>{
+          'nodes': [
+            {
+              'commit': {
+                'statusCheckRollup': {
+                  'state': 'FAILURE',
+                  'contexts': {
+                    'nodes': [
+                      {
+                        '__typename': 'CheckRun',
+                        'name':
+                            'health / changelog / run changelog health check',
+                        'status': 'COMPLETED',
+                        'conclusion': 'FAILURE',
+                        'text': '- Failed changelog check',
+                      },
+                      {
+                        '__typename': 'CheckRun',
+                        'name': 'analyze (dev)',
+                        'status': 'COMPLETED',
+                        'conclusion': 'SUCCESS',
+                      },
+                      {
+                        '__typename': 'CheckRun',
+                        'name':
+                            'health / changelog / run changelog health check',
+                        'status': 'COMPLETED',
+                        'conclusion': 'SUCCESS',
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          ],
+        };
+
+        check(extractCiStatus('dart-lang/tools', commits))
+            .equals(CiStatus.success);
+        check(extractCiDetail(commits)).isNull();
+      },
+    );
+
+    test('returns pending when superseded failing CheckRun is re-running', () {
+      final commits = <String, dynamic>{
+        'nodes': [
+          {
+            'commit': {
+              'statusCheckRollup': {
+                'state': 'FAILURE',
+                'contexts': {
+                  'nodes': [
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'test (ubuntu-latest)',
+                      'status': 'COMPLETED',
+                      'conclusion': 'FAILURE',
+                    },
+                    {
+                      '__typename': 'CheckRun',
+                      'name': 'test (ubuntu-latest)',
+                      'status': 'IN_PROGRESS',
+                      'conclusion': null,
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        ],
+      };
+
+      check(extractCiStatus('dart-lang/tools', commits))
+          .equals(CiStatus.pending);
+      check(extractCiDetail(commits)).isNull();
+    });
   });
 }
 

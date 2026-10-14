@@ -389,7 +389,7 @@ Future<void> runGhCleanCli(List<String> arguments) async {
 
   final options = GhCleanOptions(
     user: results['user'] as String,
-    repo: results['repo'] as String?,
+    repo: parseRepoOption(results),
     limit: limit,
     lastNDays: lastNDaysResult.value,
     apply: results['apply'] as bool,
@@ -439,7 +439,7 @@ Future<void> runGhIssuesCli(List<String> arguments) async {
 
   final options = GhIssuesOptions(
     user: results['user'] as String,
-    repo: results['repo'] as String?,
+    repo: parseRepoOption(results),
     limit: int.tryParse(results['limit'] as String) ?? 50,
     lastNDays: lastNDaysResult.value,
     createdDays: createdDays,
@@ -466,7 +466,7 @@ Future<void> runGhViewCli(List<String> arguments) async {
 
   final options = GhViewOptions(
     user: results['user'] as String,
-    repo: results['repo'] as String?,
+    repo: parseRepoOption(results),
     limit: int.tryParse(results['limit'] as String) ?? 50,
     lastNDays: lastNDaysResult.value,
     json: results['json'] as bool,
