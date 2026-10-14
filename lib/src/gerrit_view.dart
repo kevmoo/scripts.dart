@@ -538,7 +538,7 @@ Future<void> _fetchRemoteChanges(
   );
   final fetchResult = await Process.start(
     'git',
-    ['fetch', gerritRemote, ...fetchRefs],
+    ['fetch', '--quiet', gerritRemote, ...fetchRefs],
     workingDirectory: actualRepoRoot,
     mode: ProcessStartMode.inheritStdio,
   );
