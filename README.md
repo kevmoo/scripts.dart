@@ -37,24 +37,25 @@ checkout even when the binary is already at that commit.
 
 ## Summary
 
-| Subcommand                        | Script                   | Description                                                            |
-| --------------------------------- | ------------------------ | ---------------------------------------------------------------------- |
-| [`dart-clean`](#dart-clean)       | `bin/dart_clean.dart`    | Find and kill orphaned Dart processes.                                 |
-| [`gerrit-view`](#gerrit-view)     | `bin/gerrit_view.dart`   | Complete overview of your active work on Gerrit.                       |
-| [`gh-clean`](#gh-clean)           | `bin/gh_clean.dart`      | Clean up local branches and worktrees for merged GitHub pull requests. |
-| [`gh-issues`](#gh-issues)         | `bin/gh_issues.dart`     | Complete overview of your open assigned issues on GitHub.              |
-| [`gh-orient`](#gh-orient)         | `bin/gh_orient.dart`     | Orient with repository conventions for issues and pull requests.       |
-| [`gh-view`](#gh-view)             | `bin/gh_view.dart`       | Complete overview of your active pull requests on GitHub.              |
-| [`git-org-clean`](#git-org-clean) | `bin/git_org_clean.dart` | Analyze a GitHub organization for archive/delete candidates.           |
-| [`git-up`](#git-up)               | `bin/git_up.dart`        | Safely switch to and update the default branch.                        |
-| [`kscripts`](#kscripts)           | `bin/kscripts.dart`      | Unified CLI runner for kevmoo_scripts developer utilities.             |
-| [`lint-cleanup`](#lint-cleanup)   | `bin/lint_cleanup.dart`  | Clean up analysis_options.yaml files.                                  |
-| [`pr-check`](#pr-check)           | `bin/pr_check.dart`      | Validate local CI parity before running gh pr create.                  |
-| [`pr-triage`](#pr-triage)         | `bin/pr_triage.dart`     | Triage open PR comments, reviews, and CI check failures.               |
-| [`puppy`](#puppy)                 | `bin/puppy.dart`         | Run a command in all package directories.                              |
-| [`relay-whoami`](#relay-whoami)   | `bin/relay_whoami.dart`  | Cross-machine agent relay identity, envelope, and sync status checker. |
-| [`repo-align`](#repo-align)       | `bin/repo_align.dart`    | Personal GitHub Repositories Alignment & Audit Tool                    |
-| [`tighten`](#tighten)             | `bin/tighten.dart`       | Tighten workspace dependencies.                                        |
+| Subcommand                        | Script                   | Description                                                              |
+| --------------------------------- | ------------------------ | ------------------------------------------------------------------------ |
+| [`dart-clean`](#dart-clean)       | `bin/dart_clean.dart`    | Find and kill orphaned Dart processes.                                   |
+| [`gerrit-view`](#gerrit-view)     | `bin/gerrit_view.dart`   | Complete overview of your active work on Gerrit.                         |
+| [`gh-clean`](#gh-clean)           | `bin/gh_clean.dart`      | Clean up local branches and worktrees for merged GitHub pull requests.   |
+| [`gh-issues`](#gh-issues)         | `bin/gh_issues.dart`     | Complete overview of your open assigned issues on GitHub.                |
+| [`gh-orient`](#gh-orient)         | `bin/gh_orient.dart`     | Orient with repository conventions for issues and pull requests.         |
+| [`gh-view`](#gh-view)             | `bin/gh_view.dart`       | Complete overview of your active pull requests on GitHub.                |
+| [`git-org-clean`](#git-org-clean) | `bin/git_org_clean.dart` | Analyze a GitHub organization for archive/delete candidates.             |
+| [`git-up`](#git-up)               | `bin/git_up.dart`        | Safely switch to and update the default branch.                          |
+| [`kscripts`](#kscripts)           | `bin/kscripts.dart`      | Unified CLI runner for kevmoo_scripts developer utilities.               |
+| [`lint-cleanup`](#lint-cleanup)   | `bin/lint_cleanup.dart`  | Clean up analysis_options.yaml files.                                    |
+| [`pr-check`](#pr-check)           | `bin/pr_check.dart`      | Validate local CI parity before running gh pr create.                    |
+| [`pr-cleanup`](#pr-cleanup)       | `bin/pr_cleanup.dart`    | Unified multi-repo GitHub and Gerrit PR, CL, and worktree cleanup sweep. |
+| [`pr-triage`](#pr-triage)         | `bin/pr_triage.dart`     | Triage open PR comments, reviews, and CI check failures.                 |
+| [`puppy`](#puppy)                 | `bin/puppy.dart`         | Run a command in all package directories.                                |
+| [`relay-whoami`](#relay-whoami)   | `bin/relay_whoami.dart`  | Cross-machine agent relay identity, envelope, and sync status checker.   |
+| [`repo-align`](#repo-align)       | `bin/repo_align.dart`    | Personal GitHub Repositories Alignment & Audit Tool                      |
+| [`tighten`](#tighten)             | `bin/tighten.dart`       | Tighten workspace dependencies.                                          |
 
 ## Agent Skills (`skills/`)
 
@@ -316,6 +317,32 @@ kscripts pr-check [options]
     --[no-]require-wip    Require touched publishable packages at a released version to bump to a -wip version.
                           (defaults to on)
 -h, --help                Print this usage information.
+```
+
+### `pr-cleanup`
+
+Unified multi-repo GitHub and Gerrit PR, CL, and worktree cleanup sweep.
+
+**Usage:**
+
+```shell
+kscripts pr-cleanup [options]
+
+-u, --user             GitHub user to query for PRs.
+                       (defaults to "@me")
+-R, --repo             Filter to specific repository/repositories (e.g. -R dart-lang/tools).
+-l, --limit            Maximum landed PRs to fetch from GitHub (max 100).
+                       (defaults to "50")
+-d, --last-n-days      Include PRs and activity from the last N days (default 14; pass empty/0 to query all).
+                       (defaults to "14")
+    --local-root       Root directory for local Git repositories (default ~/github).
+-p, --dart-sdk         Path to local dart-sdk repository for Gerrit check (default ~/github/dart-sdk).
+    --skip-gerrit      Skip Gerrit Dart SDK inspection even if ~/github/dart-sdk exists.
+    --apply            Execute pruning of Bucket B (safe to prune) worktrees and branches across GitHub and Gerrit.
+    --[no-]markdown    Output a concise Markdown summary.
+                       (defaults to on)
+    --json             Output machine-readable JSON.
+-h, --help             Print this usage information.
 ```
 
 ### `pr-triage`

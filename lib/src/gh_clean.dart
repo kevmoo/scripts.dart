@@ -42,7 +42,7 @@ Future<void> runGhClean({
 
   onProgress?.call('Scanning local Git repositories in $rootPath...');
   final localRepos = scanLocalGitRepositories(rootDir, processRunner: runner);
-  final repoMap = _buildRepoMap(localRepos);
+  final repoMap = buildLocalRepoMap(localRepos);
   onProgress?.call(
     'Indexed ${localRepos.length} local repository checkout(s).',
   );
@@ -81,7 +81,7 @@ Future<void> runGhClean({
   final stashCountCache = <String, int>{};
   final results = [
     for (final pr in allLandedPrs)
-      _processPr(
+      processLandedPr(
         pr,
         repoMap[pr.repository.toLowerCase()],
         options: options,
@@ -154,7 +154,7 @@ Set<String> _collectMatchedWorktreePaths(List<PrCleanResult> results) => {
         wt.path,
 };
 
-Map<String, LocalRepoInfo> _buildRepoMap(List<LocalRepoInfo> localRepos) {
+Map<String, LocalRepoInfo> buildLocalRepoMap(List<LocalRepoInfo> localRepos) {
   final repoMap = <String, LocalRepoInfo>{};
   for (final repo in localRepos) {
     for (final name in repo.repoNames) {
@@ -169,7 +169,7 @@ Map<String, LocalRepoInfo> _buildRepoMap(List<LocalRepoInfo> localRepos) {
   return repoMap;
 }
 
-PrCleanResult _processPr(
+PrCleanResult processLandedPr(
   LandedPr pr,
   LocalRepoInfo? localRepo, {
   required GhCleanOptions options,
