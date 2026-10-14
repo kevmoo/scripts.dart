@@ -19,6 +19,7 @@ import 'git_org_clean.dart';
 import 'git_up.dart';
 import 'lint_cleanup.dart';
 import 'pr_check.dart';
+import 'pr_cleanup.dart';
 import 'pr_triage.dart';
 import 'puppy.dart';
 import 'relay_whoami.dart';
@@ -93,6 +94,11 @@ const kscriptSubcommands = <KScriptSubcommand>[
     name: 'pr-check',
     description: 'Validate local CI parity before running gh pr create.',
     run: runPrCheckCli,
+  ),
+  KScriptSubcommand(
+    name: 'pr-cleanup',
+    description: prCleanupDescription,
+    run: runPrCleanupCli,
   ),
   KScriptSubcommand(
     name: 'pr-triage',
@@ -570,6 +576,23 @@ Future<void> runLintCleanupCli(List<String> arguments) async {
   }
 
   return lintCleanup(packageDirectory: pkgDirectory, rewrite: rewrite);
+}
+
+Future<void> runPrCleanupCli(List<String> arguments) async {
+  final parser = PrCleanupOptions.createArgParser();
+  final results = parseCliArgs(
+    parser,
+    arguments,
+    commandName: 'pr-cleanup',
+    description: prCleanupDescription,
+  );
+  if (results == null) return;
+
+  final options = PrCleanupOptions.parse(results);
+
+  await runCliGuarded(
+    () => runPrCleanup(options: options, onProgress: stderr.writeln),
+  );
 }
 
 Future<void> runPuppyCli(List<String> args) async {

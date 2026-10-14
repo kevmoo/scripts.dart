@@ -538,7 +538,7 @@ Future<void> _fetchRemoteChanges(
   );
   final fetchResult = await Process.start(
     'git',
-    ['fetch', gerritRemote, ...fetchRefs],
+    ['fetch', '--quiet', gerritRemote, ...fetchRefs],
     workingDirectory: actualRepoRoot,
     mode: ProcessStartMode.inheritStdio,
   );
@@ -560,12 +560,53 @@ Future<void> _fetchRemoteChanges(
   );
 }
 
-Future<void> runGerritView({String? gerritRepo}) async {
-  final actualRepoRoot = _resolveRepoInfo(gerritRepo);
-  final (gerritHost, gerritProject, _) = _resolveGerritDetails(actualRepoRoot);
+typedef GerritAnalysisResult = ({
+  String actualRepoRoot,
+  String defaultBranch,
+  String? currentBranch,
+  String gerritHost,
+  String gerritProject,
+  String gerritRemote,
+  Map<int, RemoteCL> remoteCLs,
+  Map<String, CommitDetails> branchDetails,
+  Map<String, (RemoteCL, CommitDetails, AlignmentResult)> alignedBranches,
+  Map<String, (int, CommitDetails, ClStatus)> closedClBranches,
+  Map<int, List<String>> conflatedBranches,
+  Map<String, (RemoteCL, CommitDetails)> mismatchedChangeIdBranches,
+  Map<int, RemoteCL> remoteOnlyCLs,
+  Map<String, String> worktreeBranches,
+});
+
+/// Programmatically analyzes active and closed Gerrit CLs, local branches, and
+/// worktrees for a Gerrit repository (such as `dart-sdk`).
+Future<GerritAnalysisResult?> analyzeGerritWork({
+  String? gerritRepo,
+  bool failSilently = false,
+  void Function(String message)? onProgress,
+}) async {
+  String actualRepoRoot;
+  try {
+    actualRepoRoot = _resolveRepoInfo(gerritRepo);
+  } catch (e) {
+    if (failSilently) return null;
+    rethrow;
+  }
+
+  String gerritHost;
+  String gerritProject;
+  try {
+    final details = _resolveGerritDetails(actualRepoRoot);
+    gerritHost = details.$1;
+    gerritProject = details.$2;
+  } catch (e) {
+    if (failSilently) return null;
+    rethrow;
+  }
+
   final defaultBranch = sniffDefaultBranchSync(actualRepoRoot);
   final currentBranch = _getCurrentBranch(actualRepoRoot);
 
+  onProgress?.call('Querying active CLs from Gerrit ($gerritHost)...');
   final remoteCLs = fetchRemoteCLs(actualRepoRoot, gerritHost);
   final (localBranchIssues, branchDetails) = _discoverLocalBranchIssues(
     actualRepoRoot,
@@ -608,18 +649,42 @@ Future<void> runGerritView({String? gerritRepo}) async {
     closedStatuses,
   );
 
-  groupAndPrintReport(
+  final worktreeBranches = getWorktreeBranches(actualRepoRoot);
+
+  return (
     actualRepoRoot: actualRepoRoot,
     defaultBranch: defaultBranch,
     currentBranch: currentBranch,
     gerritHost: gerritHost,
     gerritProject: gerritProject,
+    gerritRemote: gerritRemote,
+    remoteCLs: remoteCLs,
+    branchDetails: branchDetails,
     alignedBranches: analysis.alignedBranches,
     closedClBranches: analysis.closedClBranches,
     conflatedBranches: analysis.conflatedBranches,
     mismatchedChangeIdBranches: analysis.mismatchedChangeIdBranches,
     remoteOnlyCLs: analysis.remoteOnlyCLs,
-    remoteCLs: remoteCLs,
-    branchDetails: branchDetails,
+    worktreeBranches: worktreeBranches,
+  );
+}
+
+Future<void> runGerritView({String? gerritRepo}) async {
+  final analysis = await analyzeGerritWork(gerritRepo: gerritRepo);
+  if (analysis == null) return;
+
+  groupAndPrintReport(
+    actualRepoRoot: analysis.actualRepoRoot,
+    defaultBranch: analysis.defaultBranch,
+    currentBranch: analysis.currentBranch,
+    gerritHost: analysis.gerritHost,
+    gerritProject: analysis.gerritProject,
+    alignedBranches: analysis.alignedBranches,
+    closedClBranches: analysis.closedClBranches,
+    conflatedBranches: analysis.conflatedBranches,
+    mismatchedChangeIdBranches: analysis.mismatchedChangeIdBranches,
+    remoteOnlyCLs: analysis.remoteOnlyCLs,
+    remoteCLs: analysis.remoteCLs,
+    branchDetails: analysis.branchDetails,
   );
 }
