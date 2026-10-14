@@ -94,9 +94,7 @@ String buildSearchQuery({
   if (user.isNotEmpty) {
     buffer.write(' assignee:$user');
   }
-  if (repo != null && repo.isNotEmpty) {
-    buffer.write(' repo:$repo');
-  }
+  writeRepoSearchQualifiers(buffer, repo);
   if (createdDays != null && createdDays > 0) {
     final cutoff = currentTime.subtract(Duration(days: createdDays));
     final dateStr = cutoff.toIso8601String().substring(0, 10);

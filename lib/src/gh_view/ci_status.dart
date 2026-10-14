@@ -17,9 +17,29 @@ CiStatus extractCiStatus(String repository, Map<String, dynamic>? commits) {
     if (_isActionRequiredOnlyFailure(statusRollup, repository: repository)) {
       return CiStatus.actionRequired;
     }
+    if (_resolveSupersededFailureRollup(statusRollup) case final resolved?) {
+      return resolved;
+    }
   }
 
   return CiStatus(rawState);
+}
+
+CiStatus? _resolveSupersededFailureRollup(Map<String, dynamic>? statusRollup) {
+  final rawNodes = _extractRawRollupContextNodes(statusRollup);
+  if (!rawNodes.any(_isFailingOrActionContext)) return null;
+  final dedupedNodes = _extractRollupContextNodes(statusRollup);
+  if (dedupedNodes.any(_isFailingOrActionContext)) return null;
+  return dedupedNodes.any(_isPendingContext)
+      ? CiStatus.pending
+      : CiStatus.success;
+}
+
+bool _isPendingContext(Map<String, dynamic> ctx) {
+  final status = ctx['status'] as String?;
+  if (status != null && status != 'COMPLETED') return true;
+  final rawState = (ctx['state'] ?? ctx['conclusion']) as String? ?? '';
+  return CiStatus(rawState) == CiStatus.pending;
 }
 
 bool _isActionRequiredOnlyFailure(
@@ -67,12 +87,31 @@ bool _isActionRequiredCheckRealFailure(Map<String, dynamic> ctx) {
       _failureKeywordRegex.hasMatch(title);
 }
 
-List<Map<String, dynamic>> _extractRollupContextNodes(
+List<Map<String, dynamic>> _extractRawRollupContextNodes(
   Map<String, dynamic>? statusRollup,
 ) {
   final contexts = statusRollup?['contexts'] as Map<String, dynamic>?;
   final nodes = contexts?['nodes'] as List<dynamic>? ?? const [];
   return nodes.whereType<Map<String, dynamic>>().toList();
+}
+
+List<Map<String, dynamic>> _extractRollupContextNodes(
+  Map<String, dynamic>? statusRollup,
+) {
+  final rawNodes = _extractRawRollupContextNodes(statusRollup);
+  final byKey = <String, Map<String, dynamic>>{};
+  final unnamed = <Map<String, dynamic>>[];
+  for (final ctx in rawNodes) {
+    final key = ((ctx['name'] ?? ctx['context']) as String? ?? '').trim();
+    if (key.isEmpty) {
+      unnamed.add(ctx);
+    } else {
+      byKey
+        ..remove(key)
+        ..[key] = ctx;
+    }
+  }
+  return [...byKey.values, ...unnamed];
 }
 
 /// Extracts a concise, table-safe summary of failing or action-required
@@ -178,13 +217,12 @@ String? _firstCleanNonTableLine(String raw, String checkName) {
 }
 
 bool _isFlutterTreeStatusOnlyFailure(Map<String, dynamic>? statusRollup) {
-  final contexts = statusRollup?['contexts'] as Map<String, dynamic>?;
-  final contextNodes = contexts?['nodes'] as List<dynamic>? ?? [];
+  final contextNodes = _extractRollupContextNodes(statusRollup);
 
   var hasRealFailure = false;
   var hasTreeStatusFailure = false;
 
-  for (final ctx in contextNodes.whereType<Map<String, dynamic>>()) {
+  for (final ctx in contextNodes) {
     final status = _evaluateFlutterContext(ctx);
     if (status == _FlutterContextStatus.realFailure) {
       hasRealFailure = true;

@@ -494,12 +494,21 @@ CommitDetails? _fetchCommitDetails(String repoPath, String branchName) {
   return null;
 }
 
-List<String> _buildShadowFetchRefs(
+List<String> buildShadowFetchRefs(
   Map<String, int> localBranchIssues,
   Map<String, CommitDetails> branchDetails,
-  Map<int, RemoteCL> remoteCLs,
-) {
-  final fetchRefs = <String>[];
+  Map<int, RemoteCL> remoteCLs, {
+  String? gerritRemote,
+  String? defaultBranch,
+  bool hasClosedBranches = false,
+}) {
+  final fetchRefs = <String>[
+    if (hasClosedBranches &&
+        gerritRemote != null &&
+        defaultBranch != null &&
+        defaultBranch.isNotEmpty)
+      'refs/heads/$defaultBranch:refs/remotes/$gerritRemote/$defaultBranch',
+  ];
   for (final branch in localBranchIssues.keys) {
     final issue = localBranchIssues[branch]!;
     final details = branchDetails[branch];
@@ -514,6 +523,41 @@ List<String> _buildShadowFetchRefs(
     }
   }
   return fetchRefs;
+}
+
+Future<void> _fetchRemoteChanges(
+  String actualRepoRoot,
+  String gerritRemote,
+  String defaultBranch,
+  List<String> fetchRefs, {
+  required bool hasClosedBranches,
+}) async {
+  if (fetchRefs.isEmpty) return;
+  print(
+    styleDim.wrap('Fetching remote changes from Gerrit ($gerritRemote)...')!,
+  );
+  final fetchResult = await Process.start(
+    'git',
+    ['fetch', gerritRemote, ...fetchRefs],
+    workingDirectory: actualRepoRoot,
+    mode: ProcessStartMode.inheritStdio,
+  );
+  if (await fetchResult.exitCode == 0) return;
+
+  if (hasClosedBranches &&
+      _getGitConfig('remote.upstream-sdk.url', actualRepoRoot) != null) {
+    Process.runSync('git', [
+      'fetch',
+      'upstream-sdk',
+      'refs/heads/$defaultBranch:refs/remotes/$gerritRemote/$defaultBranch',
+      '--quiet',
+    ], workingDirectory: actualRepoRoot);
+  }
+  print(
+    yellow.wrap(
+      'Warning: Batch fetch failed. Alignment checks will use local cache.',
+    )!,
+  );
 }
 
 Future<void> runGerritView({String? gerritRepo}) async {
@@ -538,31 +582,23 @@ Future<void> runGerritView({String? gerritRepo}) async {
     gerritHost,
   );
 
-  final fetchRefs = _buildShadowFetchRefs(
+  final gerritRemote = resolveGerritRemoteName(actualRepoRoot);
+  final fetchRefs = buildShadowFetchRefs(
     localBranchIssues,
     branchDetails,
     remoteCLs,
+    gerritRemote: gerritRemote,
+    defaultBranch: defaultBranch,
+    hasClosedBranches: closedStatuses.isNotEmpty,
   );
 
-  if (fetchRefs.isNotEmpty) {
-    final gerritRemote = resolveGerritRemoteName(actualRepoRoot);
-    print(
-      styleDim.wrap('Fetching remote changes from Gerrit ($gerritRemote)...')!,
-    );
-    final fetchResult = await Process.start(
-      'git',
-      ['fetch', gerritRemote, ...fetchRefs],
-      workingDirectory: actualRepoRoot,
-      mode: ProcessStartMode.inheritStdio,
-    );
-    if (await fetchResult.exitCode != 0) {
-      print(
-        yellow.wrap(
-          'Warning: Batch fetch failed. Alignment checks will use local cache.',
-        )!,
-      );
-    }
-  }
+  await _fetchRemoteChanges(
+    actualRepoRoot,
+    gerritRemote,
+    defaultBranch,
+    fetchRefs,
+    hasClosedBranches: closedStatuses.isNotEmpty,
+  );
 
   final analysis = _buildBranchGroups(
     actualRepoRoot,

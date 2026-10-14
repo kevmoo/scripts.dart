@@ -35,6 +35,29 @@ void main() {
       );
     });
 
+    test('builds query with multiple comma-separated repos', () {
+      final q = buildLandedSearchQuery(
+        user: 'kevmoo',
+        repo: 'kevmoo/kevmoo_skills,kevmoo/personal_dotfiles',
+      );
+      check(q).equals(
+        'is:pr is:merged author:kevmoo repo:kevmoo/kevmoo_skills '
+        'repo:kevmoo/personal_dotfiles sort:updated-desc',
+      );
+    });
+
+    test('parses multiple -R flags in GhCleanOptions parser', () {
+      final parser = GhCleanOptions.createArgParser();
+      final results = parser.parse([
+        '-R',
+        'kevmoo/kevmoo_skills',
+        '-R',
+        'kevmoo/personal_dotfiles',
+      ]);
+      check(results['repo'] as List<String>)
+          .deepEquals(['kevmoo/kevmoo_skills', 'kevmoo/personal_dotfiles']);
+    });
+
     test('throws ArgumentError when lastNDays is zero or negative', () {
       check(() => buildLandedSearchQuery(user: 'kevmoo', lastNDays: 0))
           .throws<ArgumentError>();

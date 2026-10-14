@@ -71,6 +71,41 @@ ArgResults? parseCliArgs(
   return (value: parsed, valid: true);
 }
 
+/// Parses the `--repo` (`-R`) multi-option into a comma-separated string, or
+/// `null` if no repositories were specified.
+String? parseRepoOption(ArgResults results) {
+  final raw = results['repo'];
+  if (raw is List<String>) {
+    final trimmed = [
+      for (final part in raw)
+        if (part.trim() case final t when t.isNotEmpty) t,
+    ];
+    return trimmed.isEmpty ? null : trimmed.join(',');
+  }
+  if (raw is String) {
+    final trimmed = raw.trim();
+    return trimmed.isEmpty ? null : trimmed;
+  }
+  return null;
+}
+
+/// Splits a single or comma-separated [repo] filter into normalized
+/// `owner/repo` tokens.
+List<String> splitRepoFilter(String? repo) {
+  if (repo == null || repo.trim().isEmpty) return const [];
+  return [
+    for (final part in repo.split(','))
+      if (part.trim() case final t when t.isNotEmpty) t,
+  ];
+}
+
+/// Appends one or more ` repo:<owner/repo>` qualifiers to [buffer] from [repo].
+void writeRepoSearchQualifiers(StringBuffer buffer, String? repo) {
+  for (final r in splitRepoFilter(repo)) {
+    buffer.write(' repo:$r');
+  }
+}
+
 /// Executes [action] and catches common CLI exceptions ([FormatException],
 /// [UsageException], [CliException], [ProcessException], and unexpected
 /// errors).
@@ -119,7 +154,7 @@ void addCommonGhArgs(
       defaultsTo: '@me',
       help: userHelp ?? 'The GitHub user to inspect.',
     )
-    ..addOption(
+    ..addMultiOption(
       'repo',
       abbr: 'R',
       help: 'Filter $itemType to a specific repository (owner/repo).',

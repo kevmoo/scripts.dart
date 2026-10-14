@@ -1,5 +1,6 @@
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
+import '../shared/gh_args.dart';
 import '../shared/gh_pr_ref.dart';
 import '../shared/graphql_utils.dart';
 import 'models.dart';
@@ -21,7 +22,7 @@ String buildLandedSearchQuery({
 
   final buffer = StringBuffer('is:pr is:merged');
   if (user.isNotEmpty) buffer.write(' author:$user');
-  if (repo != null && repo.isNotEmpty) buffer.write(' repo:$repo');
+  writeRepoSearchQualifiers(buffer, repo);
 
   if (lastNDays != null) {
     final reference = now ?? DateTime.now();
