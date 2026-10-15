@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:checks/checks.dart';
@@ -15,6 +16,42 @@ void main() {
       check(skillsDir.existsSync()).isTrue();
       final subdirs = skillsDir.listSync().whereType<Directory>().toList();
       check(subdirs).isNotEmpty();
+    });
+
+    test('skills.sh.json groups all co-located skills', () {
+      final configFile = File('skills.sh.json');
+      check(configFile.existsSync()).isTrue();
+
+      final decoded =
+          jsonDecode(configFile.readAsStringSync()) as Map<String, Object?>;
+      check(decoded[r'$schema'])
+          .equals('https://skills.sh/schemas/skills.sh.schema.json');
+      check(decoded['notGrouped']).equals('bottom');
+
+      final groupings = (decoded['groupings'] as List<Object?>)
+          .cast<Map<String, Object?>>();
+      check(groupings).isNotEmpty();
+
+      final groupedSkills = <String>{};
+      for (final group in groupings) {
+        check(group['title']).isA<String>().isNotEmpty();
+        check(group['description']).isA<String>().isNotEmpty();
+        final skills = (group['skills'] as List<Object?>).cast<String>();
+        check(skills).isNotEmpty();
+        for (final skill in skills) {
+          check(
+            because: 'Duplicate skill "$skill" in skills.sh.json',
+            groupedSkills.add(skill),
+          ).isTrue();
+        }
+      }
+
+      final actualSkills = skillsDir
+          .listSync()
+          .whereType<Directory>()
+          .map((d) => p.basename(d.path))
+          .toSet();
+      check(groupedSkills).deepEquals(actualSkills);
     });
 
     final skillDirs = skillsDir.existsSync()
