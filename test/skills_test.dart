@@ -34,7 +34,12 @@ void main() {
 
       final groupedSkills = <String>{};
       for (final group in groupings) {
-        check(group['title']).isA<String>().isNotEmpty();
+        final title = group['title'] as String?;
+        check(title).isNotNull().isNotEmpty();
+        check(
+          because: 'Group title "$title" should be 1-3 words',
+          title!.trim().split(RegExp(r'\s+')).length,
+        ).isLessOrEqual(3);
         check(group['description']).isA<String>().isNotEmpty();
         final skills = (group['skills'] as List<Object?>).cast<String>();
         check(skills).isNotEmpty();

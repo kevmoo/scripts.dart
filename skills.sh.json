@@ -3,7 +3,7 @@
   "notGrouped": "bottom",
   "groupings": [
     {
-      "title": "Pull Requests & Issues",
+      "title": "Pull Requests",
       "description": "Skills for drafting high-signal GitHub issues and pull requests and triaging review feedback and CI failures.",
       "skills": [
         "gh-post",
@@ -11,7 +11,7 @@
       ]
     },
     {
-      "title": "Repository & Worktree Hygiene",
+      "title": "Repo Hygiene",
       "description": "Skills for pruning landed pull request worktrees and branches and aligning repository CI workflows, lints, and branch rulesets.",
       "skills": [
         "pr-cleanup",
