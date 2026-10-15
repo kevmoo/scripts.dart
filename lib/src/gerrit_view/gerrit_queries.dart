@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 
 import 'models.dart';
@@ -224,6 +223,18 @@ String _nextCqStatus(
   return current;
 }
 
+/// Parses a Gerrit UTC timestamp (`"YYYY-MM-DD HH:MM:SS.000000000"`) into a
+/// [DateTime].
+DateTime? parseGerritTimestamp(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return null;
+  final trimmed = raw.trim();
+  if (trimmed.contains(' ')) {
+    final iso = trimmed.replaceFirst(' ', 'T');
+    return DateTime.tryParse(iso.endsWith('Z') ? iso : '${iso}Z');
+  }
+  return DateTime.tryParse(trimmed);
+}
+
 (String, String) extractGerritMessagesTelemetry(
   Map<String, dynamic> item,
   int? ownerId,
@@ -337,6 +348,8 @@ RemoteCL? _parseRemoteClItem(
       currentRevision: currentRevision,
       currentRevisionNumber: currentRevisionNumber,
       lastAuthorTouch: lastAuthorTouch,
+      createdAt: parseGerritTimestamp(item['created'] as String?),
+      updatedAt: parseGerritTimestamp(item['updated'] as String?),
       reviewers: reviewers,
       crVotes: crVotes,
       cqStatus: cqStatus,
@@ -353,7 +366,6 @@ const _changesQuerySuffix =
     '&o=MESSAGES&o=SUBMITTABLE&o=SUBMIT_REQUIREMENTS';
 
 Map<int, RemoteCL> fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
-  print(styleDim.wrap('Querying active CLs from Gerrit...')!);
   final gobResult = Process.runSync('gob-curl', [
     'https://$gerritHost/$_changesQuerySuffix',
   ], workingDirectory: actualRepoRoot);

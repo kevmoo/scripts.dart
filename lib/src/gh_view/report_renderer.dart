@@ -611,7 +611,8 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
   final now = currentTime ?? DateTime.now();
   final categorized = categorizePullRequests(prs);
 
-  Map<String, dynamic> prToJson(GhPr pr) => {
+  Map<String, dynamic> prToJson(GhPr pr, String category) => {
+    'category': category,
     'number': pr.number,
     'title': pr.title,
     'url': pr.url,
@@ -631,6 +632,7 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'hasAuthorRespondedSinceLastReview': pr.hasAuthorRespondedSinceLastReview,
     'isAlreadyPinged': pr.isAlreadyPinged,
     'lastAuthorCommentAt': pr.lastAuthorCommentAt?.toIso8601String(),
+    'lastAuthorActivityAt': pr.lastAuthorActivityAt?.toIso8601String(),
     'lastCommitAt': pr.lastCommitAt?.toIso8601String(),
     'lastReviewerActivityAt': pr.lastReviewerActivityAt?.toIso8601String(),
     'totalReviewThreads': pr.totalReviewThreads,
@@ -645,6 +647,7 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'headRefName': pr.headRefName,
     'headRefOid': pr.headRefOid,
     'baseRefName': pr.baseRefName,
+    'createdAt': pr.createdAt?.toIso8601String(),
     'updatedAt': pr.updatedAt.toIso8601String(),
     'touched': formatTimeAgo(pr.updatedAt, currentTime: now),
     'context': pr.context,
@@ -661,6 +664,22 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
           },
   };
 
+  final readyToMergeJson = [
+    for (final pr in categorized.readyToMerge) prToJson(pr, 'readyToMerge'),
+  ];
+  final actionNeededJson = [
+    for (final pr in categorized.actionNeeded) prToJson(pr, 'actionNeeded'),
+  ];
+  final inReviewJson = [
+    for (final pr in categorized.inReview) prToJson(pr, 'inReview'),
+  ];
+  final draftsJson = [
+    for (final pr in categorized.drafts) prToJson(pr, 'drafts'),
+  ];
+  final archivedJson = [
+    for (final pr in categorized.archived) prToJson(pr, 'archived'),
+  ];
+
   final data = {
     'summary': {
       'total': prs.length,
@@ -670,11 +689,18 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
       'drafts': categorized.drafts.length,
       'archived': categorized.archived.length,
     },
-    'readyToMerge': categorized.readyToMerge.map(prToJson).toList(),
-    'actionNeeded': categorized.actionNeeded.map(prToJson).toList(),
-    'inReview': categorized.inReview.map(prToJson).toList(),
-    'drafts': categorized.drafts.map(prToJson).toList(),
-    'archived': categorized.archived.map(prToJson).toList(),
+    'items': [
+      ...readyToMergeJson,
+      ...actionNeededJson,
+      ...inReviewJson,
+      ...draftsJson,
+      ...archivedJson,
+    ],
+    'readyToMerge': readyToMergeJson,
+    'actionNeeded': actionNeededJson,
+    'inReview': inReviewJson,
+    'drafts': draftsJson,
+    'archived': archivedJson,
   };
 
   return const JsonEncoder.withIndent('  ').convert(data);

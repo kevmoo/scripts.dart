@@ -531,18 +531,19 @@ Future<void> _fetchRemoteChanges(
   String defaultBranch,
   List<String> fetchRefs, {
   required bool hasClosedBranches,
+  void Function(String message)? onProgress,
 }) async {
   if (fetchRefs.isEmpty) return;
-  print(
+  onProgress?.call(
     styleDim.wrap('Fetching remote changes from Gerrit ($gerritRemote)...')!,
   );
-  final fetchResult = await Process.start(
-    'git',
-    ['fetch', '--quiet', gerritRemote, ...fetchRefs],
-    workingDirectory: actualRepoRoot,
-    mode: ProcessStartMode.inheritStdio,
-  );
-  if (await fetchResult.exitCode == 0) return;
+  final fetchResult = await Process.run('git', [
+    'fetch',
+    '--quiet',
+    gerritRemote,
+    ...fetchRefs,
+  ], workingDirectory: actualRepoRoot);
+  if (fetchResult.exitCode == 0) return;
 
   if (hasClosedBranches &&
       _getGitConfig('remote.upstream-sdk.url', actualRepoRoot) != null) {
@@ -553,7 +554,7 @@ Future<void> _fetchRemoteChanges(
       '--quiet',
     ], workingDirectory: actualRepoRoot);
   }
-  print(
+  onProgress?.call(
     yellow.wrap(
       'Warning: Batch fetch failed. Alignment checks will use local cache.',
     )!,
@@ -639,6 +640,7 @@ Future<GerritAnalysisResult?> analyzeGerritWork({
     defaultBranch,
     fetchRefs,
     hasClosedBranches: closedStatuses.isNotEmpty,
+    onProgress: onProgress,
   );
 
   final analysis = _buildBranchGroups(
@@ -670,7 +672,10 @@ Future<GerritAnalysisResult?> analyzeGerritWork({
 }
 
 Future<void> runGerritView({String? gerritRepo}) async {
-  final analysis = await analyzeGerritWork(gerritRepo: gerritRepo);
+  final analysis = await analyzeGerritWork(
+    gerritRepo: gerritRepo,
+    onProgress: print,
+  );
   if (analysis == null) return;
 
   groupAndPrintReport(

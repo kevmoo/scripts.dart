@@ -36,6 +36,7 @@ class GhPr extends GhPrRef {
   final bool isRepoArchived;
   final CiStatus ciStatus;
   final String? ciDetail;
+  final DateTime? createdAt;
   final DateTime updatedAt;
   final LocalBranchStatus? localStatus;
   final String? context;
@@ -70,6 +71,7 @@ class GhPr extends GhPrRef {
     required this.isRepoArchived,
     required this.ciStatus,
     this.ciDetail,
+    this.createdAt,
     required this.updatedAt,
     this.localStatus,
     this.context,
@@ -576,6 +578,7 @@ Future<GhPr> _attachLocalStatus(
   isRepoArchived: pr.isRepoArchived,
   ciStatus: pr.ciStatus,
   ciDetail: pr.ciDetail,
+  createdAt: pr.createdAt,
   updatedAt: pr.updatedAt,
   localStatus: await _matchLocalStatus(
     pr,

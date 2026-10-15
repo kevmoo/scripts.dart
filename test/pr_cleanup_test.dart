@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:args/command_runner.dart';
 import 'package:checks/checks.dart';
+import 'package:kevmoo_scripts/src/gerrit_view/gerrit_queries.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/models.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/pr_cleanup_options.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/report_formatter.dart';
@@ -231,6 +232,66 @@ void main() {
       check((decoded['bucketC'] as List).length).equals(0);
       check((decoded['candidateLandedIds'] as List).cast<int>())
           .deepEquals([41]);
+    });
+
+    test('includes createdAt, updatedAt, and activity timestamps in Markdown '
+        'and JSON', () {
+      final now = DateTime.utc(2026, 10, 15, 20);
+      final created = DateTime.utc(2026, 10, 3, 12);
+      final updated = DateTime.utc(2026, 10, 15, 18);
+      final authorAct = DateTime.utc(2026, 10, 15, 17);
+      final reviewerAct = DateTime.utc(2026, 10, 15, 18);
+
+      final result = PrSweepResult(
+        bucketA: [
+          BucketAItem(
+            source: 'github',
+            number: 42,
+            title: 'Test PR with dates',
+            repository: 'kevmoo/test',
+            url: 'https://github.com/kevmoo/test/pull/42',
+            branch: 'test-branch',
+            ciBadge: '🟢 Passing',
+            reviewBadge: '⏳ In Review Queue',
+            author: 'kevmoo',
+            isDraft: false,
+            createdAt: created,
+            updatedAt: updated,
+            lastAuthorActivityAt: authorAct,
+            lastReviewerActivityAt: reviewerAct,
+          ),
+        ],
+        bucketB: const [],
+        bucketC: const [],
+        candidateLandedIds: const [],
+        timestamp: now,
+      );
+
+      final md = formatMarkdownReport(result);
+      check(md)
+        ..contains('Opened / Touched')
+        ..contains(
+          'Opened:&nbsp;2026-10-03<br>Touched:&nbsp;🟢&nbsp;2h&nbsp;ago',
+        );
+
+      final decoded =
+          jsonDecode(formatJsonReport(result)) as Map<String, dynamic>;
+      final item = (decoded['bucketA'] as List).single as Map<String, dynamic>;
+      check(item['createdAt']).equals(created.toIso8601String());
+      check(item['updatedAt']).equals(updated.toIso8601String());
+      check(item['lastAuthorActivityAt']).equals(authorAct.toIso8601String());
+      check(item['lastReviewerActivityAt'])
+          .equals(reviewerAct.toIso8601String());
+    });
+  });
+
+  group('parseGerritTimestamp', () {
+    test('parses Gerrit UTC timestamp strings to DateTime', () {
+      final parsed = parseGerritTimestamp('2026-10-08 02:30:11.000000000');
+      check(parsed).isNotNull();
+      check(parsed!.toUtc()).equals(DateTime.utc(2026, 10, 8, 2, 30, 11));
+      check(parseGerritTimestamp(null)).isNull();
+      check(parseGerritTimestamp('')).isNull();
     });
   });
 }

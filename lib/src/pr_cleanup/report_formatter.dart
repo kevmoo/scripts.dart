@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:path/path.dart' as p;
 
+import '../gh_view.dart' show formatTouchedMarkdown;
 import 'models.dart';
 
 /// Formats the PR sweep report as concise Markdown.
@@ -17,7 +18,7 @@ String formatMarkdownReport(PrSweepResult result, {bool applied = false}) {
 
   _formatSummaryTable(buffer, result);
   _formatBucketBSection(buffer, result.bucketB);
-  _formatBucketASection(buffer, result.bucketA);
+  _formatBucketASection(buffer, result.bucketA, now: result.timestamp);
   _formatBucketCSection(buffer, result.bucketC);
   _formatLandedIdsSection(buffer, result.candidateLandedIds);
 
@@ -86,7 +87,11 @@ String _formatItemPrOrCl(String source, int? number) {
   return source == 'gerrit' ? 'CL $number' : '#$number';
 }
 
-void _formatBucketASection(StringBuffer buffer, List<BucketAItem> bucketA) {
+void _formatBucketASection(
+  StringBuffer buffer,
+  List<BucketAItem> bucketA, {
+  required DateTime now,
+}) {
   buffer
     ..writeln()
     ..writeln('## 🚫 Bucket A — Active / Hands-Off')
@@ -98,22 +103,47 @@ void _formatBucketASection(StringBuffer buffer, List<BucketAItem> bucketA) {
 
   buffer
     ..writeln(
-      '| Target | Repository | Title | Status & Badges | Local Worktree |',
+      '| Target | Repository | Title | Status & Badges | Opened / Touched | '
+      'Local Worktree |',
     )
-    ..writeln('| :--- | :--- | :--- | :--- | :--- |');
+    ..writeln('| :--- | :--- | :--- | :--- | :--- | :--- |');
   for (final item in bucketA) {
     final idLabel = _formatItemPrOrCl(item.source, item.number);
     final link = '[**$idLabel**](${item.url})';
     final badges =
         'CI:&nbsp;${item.ciBadge}<br>Review:&nbsp;${item.reviewBadge}';
+    final dates = _formatBucketADates(item, now);
     final wt = item.worktreePath != null
         ? '[`${p.basename(item.worktreePath!)}`](file://${item.worktreePath})'
         : '⚪ None';
     final cleanTitle = item.title.replaceAll('|', r'\|');
     buffer.writeln(
-      '| $link | `${item.repository}` | $cleanTitle | $badges | $wt |',
+      '| $link | `${item.repository}` | $cleanTitle | $badges | $dates | '
+      '$wt |',
     );
   }
+}
+
+String _formatBucketADates(BucketAItem item, DateTime now) {
+  final parts = <String>[];
+  if (item.createdAt != null) {
+    parts.add('Opened:&nbsp;${_formatIsoDate(item.createdAt!)}');
+  }
+  if (item.updatedAt != null) {
+    final touched = formatTouchedMarkdown(
+      item.updatedAt!,
+      currentTime: now,
+    ).replaceAll(' ', '&nbsp;');
+    parts.add('Touched:&nbsp;$touched');
+  }
+  return parts.isEmpty ? '⚪ None' : parts.join('<br>');
+}
+
+String _formatIsoDate(DateTime dt) {
+  final y = dt.year.toString().padLeft(4, '0');
+  final m = dt.month.toString().padLeft(2, '0');
+  final d = dt.day.toString().padLeft(2, '0');
+  return '$y-$m-$d';
 }
 
 void _formatBucketCSection(StringBuffer buffer, List<BucketCItem> bucketC) {

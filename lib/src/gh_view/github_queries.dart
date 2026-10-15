@@ -71,6 +71,7 @@ query($q: String!, $limit: Int!, $cursor: String) {
         headRefName
         headRefOid
         baseRefName
+        createdAt
         updatedAt
         repository {
           nameWithOwner
@@ -275,10 +276,8 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
   final authorMap = node['author'] as Map<String, dynamic>?;
   final prAuthor = authorMap?['login'] as String? ?? '';
 
-  final updatedAtStr = node['updatedAt'] as String?;
-  final updatedAt = updatedAtStr != null
-      ? DateTime.tryParse(updatedAtStr) ?? DateTime.now()
-      : DateTime.now();
+  final createdAt = _extractNodeDateTime(node, 'createdAt');
+  final updatedAt = _extractNodeDateTime(node, 'updatedAt') ?? DateTime.now();
 
   final requested = _extractRequestedReviewers(
     node['reviewRequests'] as Map<String, dynamic>?,
@@ -363,6 +362,7 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     isRepoArchived: repoMap?['isArchived'] as bool? ?? false,
     ciStatus: ciStatus,
     ciDetail: ciDetail,
+    createdAt: createdAt,
     updatedAt: updatedAt,
   );
 }

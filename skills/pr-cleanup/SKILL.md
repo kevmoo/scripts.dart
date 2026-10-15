@@ -45,34 +45,85 @@ from the same remote.
 
 ## 1. Read-Only Pre-Flight Sweep (Always Start Read-Only)
 
-Never pass `--apply` on the initial scan. Execute the 3 read-only collectors in
-parallel to build a unified view of `~/github`:
+Never pass `--apply` on the initial scan. Run the unified parallel collector (or
+the individual subcommands when targeting a single slice) to build a complete
+view of `~/github` and `~/github/dart-sdk`:
 
-1. **Merged/Closed PRs, Stale Worktrees & Dangling Remote Branches**:
+1. **Unified Multi-Repo GitHub & Gerrit Sweep (Recommended)**:
    ```bash
-   kscripts gh-clean -l 50 --markdown
+   kscripts pr-cleanup --markdown
    ```
-2. **Open Active GitHub PRs & Reviewer/CI Next Steps**:
-   ```bash
-   kscripts gh-view -d 14 --markdown
-   ```
-   _(Omit `-d 14` if the user asks for all open PRs regardless of recency, or
-   adjust `-d <days>` to match the user's window)._
-3. **Dart SDK Gerrit Worktrees & CL Status** _(when `~/github/dart-sdk`
-   exists)_:
-   ```bash
-   kscripts gerrit-view -p ~/github/dart-sdk
-   ```
-   _(Automatically resolves `~/github/dart-sdk/core/main/sdk` on bare-clone
-   layouts, matches worktrees and local branches via `Change-Id:` footers,
-   commit SHAs, and `branch.*.gerritissue`, reconstructs `in_reply_to` comment
-   chains so only leaf comments are evaluated for resolution, and outputs
-   reviewers, CQ dry run status, and next steps)._
-4. **Open Assigned GitHub Issues** _(optional — run when asked for broader
-   backlog/next-steps triage)_:
-   ```bash
-   kscripts gh-issues --linked-prs --markdown
-   ```
+   _(Concurrently queries landed GitHub PRs, open GitHub PRs, cross-author and
+   closed-unmerged branches, unlinked local worktrees, and Dart SDK Gerrit CLs,
+   rendering Bucket A with `Opened / Touched` dates, Bucket B, and Bucket C)._
+2. **Targeted Individual Collectors** _(optional when scoping to a single
+   view)_:
+   - **Merged/Closed PRs, Stale Worktrees & Dangling Remote Branches**:
+     ```bash
+     kscripts gh-clean -l 50 --markdown
+     ```
+   - **Open Active GitHub PRs & Reviewer/CI Next Steps**:
+     ```bash
+     kscripts gh-view -d 14 --markdown
+     ```
+     _(Omit `-d 14` if the user asks for all open PRs regardless of recency, or
+     adjust `-d <days>` to match the user's window)._
+   - **Dart SDK Gerrit Worktrees & CL Status** _(when `~/github/dart-sdk`
+     exists)_:
+     ```bash
+     kscripts gerrit-view -p ~/github/dart-sdk
+     ```
+   - **Open Assigned GitHub Issues** _(optional — run when asked for broader
+     backlog/next-steps triage)_:
+     ```bash
+     kscripts gh-issues --linked-prs --markdown
+     ```
+
+### Ad-Hoc Sorting & Filtering with DuckDB (`--json`)
+
+When the user asks for custom sorting, age calculations, or filtering (for
+example, oldest open PRs by `createdAt`, stalest `updatedAt`, or specific
+reviewer/CI states), pipe `--json` into `duckdb -markdown` instead of adding new
+CLI flags:
+
+```bash
+# Project & sort active GitHub PRs + Gerrit CLs (Bucket A) by opened/touched date:
+kscripts pr-cleanup --json | duckdb -markdown -c "
+  WITH a AS (
+    SELECT unnest(bucketA, recursive := true)
+    FROM read_json_auto('/dev/stdin')
+  )
+  SELECT
+    '[' || CASE WHEN source='github' THEN '#' ELSE 'CL ' END || number || '](' || url || ')' AS Target,
+    repository AS Repo,
+    left(title, 42) AS Title,
+    ciBadge AS CI,
+    reviewBadge AS Review,
+    strftime(createdAt::TIMESTAMPTZ, '%Y-%m-%d') AS Opened,
+    strftime(updatedAt::TIMESTAMPTZ, '%Y-%m-%d') AS Touched,
+    date_diff('day', createdAt::TIMESTAMPTZ, now()) AS AgeDays
+  FROM a
+  ORDER BY createdAt ASC;
+"
+
+# Project & filter rich open GitHub PR telemetry from gh-view --json:
+kscripts gh-view --json | duckdb -markdown -c "
+  WITH prs AS (
+    SELECT unnest(items, recursive := true)
+    FROM read_json_auto('/dev/stdin')
+  )
+  SELECT
+    '[#' || number || '](' || url || ')' AS PR,
+    repository AS Repo,
+    category AS Bucket,
+    ciStatus AS CI,
+    strftime(createdAt::TIMESTAMPTZ, '%Y-%m-%d') AS Opened,
+    touched AS Touched
+  FROM prs
+  WHERE NOT isDraft
+  ORDER BY updatedAt ASC;
+"
+```
 
 ## 2. Active Worktree & Session Ownership Cross-Reference
 
