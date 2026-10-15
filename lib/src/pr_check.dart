@@ -387,7 +387,7 @@ final class _PrCheckRunner {
 
     final pkgViolations = <PrCheckViolation>[];
     final verStr = ver.toString();
-    final changelogPath = p.join(relDir, 'CHANGELOG.md');
+    final changelogPath = '${prefix}CHANGELOG.md';
     final changelogVer = pkg.changelog.latestVersion;
     if (pkg.changelog.exists && changelogVer != verStr) {
       pkgViolations.add(
@@ -407,7 +407,7 @@ final class _PrCheckRunner {
     );
     if (versionDart.existsSync() &&
         !versionDart.readAsStringSync().contains(verStr)) {
-      final relVerPath = p.join(relDir, 'lib/src/version.dart');
+      final relVerPath = '${prefix}lib/src/version.dart';
       pkgViolations.add(
         PrCheckViolation(
           check: 'version-dart-sync',

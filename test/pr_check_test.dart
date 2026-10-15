@@ -241,7 +241,8 @@ environment:
     check(report.warnings).length.equals(1);
     check(report.warnings.single)
       ..contains('skip-changelog-check')
-      ..contains('sample_pkg (1.2.1-wip)');
+      ..contains('sample_pkg (1.2.1-wip)')
+      ..contains('without updating CHANGELOG.md.');
   });
 
   test('invokes dart run cognitive_complexity@^<ver> when workflow '
