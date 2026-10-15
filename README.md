@@ -316,6 +316,7 @@ kscripts pr-check [options]
 -b, --base                Base git ref to diff against (defaults to origin/HEAD or main).
     --[no-]require-wip    Require touched publishable packages at a released version to bump to a -wip version.
                           (defaults to on)
+-t, --test                Run "dart test" in touched packages that have a test/ directory.
 -h, --help                Print this usage information.
 ```
 

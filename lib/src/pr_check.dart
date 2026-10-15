@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:args/args.dart';
 import 'package:cli_util/cli_util.dart';
@@ -7,10 +9,18 @@ import 'package:firehose/firehose.dart' as firehose;
 import 'package:io/ansi.dart' as ansi;
 import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
+import 'package:pub_semver/pub_semver.dart';
 
 import 'process_utils.dart';
 import 'shared/gh_args.dart';
 import 'testable_print.dart';
+
+/// Pinned `package:cognitive_complexity` version used for `dart run` checks.
+const cognitiveComplexityPinnedVersion = '2.0.1';
+
+/// Package specification passed to `dart run` for cognitive complexity checks.
+const cognitiveComplexityPackageSpec =
+    'cognitive_complexity@^$cognitiveComplexityPinnedVersion';
 
 /// A single local CI parity violation detected before opening/updating a PR.
 final class PrCheckViolation {
@@ -25,16 +35,33 @@ final class PrCheckViolation {
   });
 }
 
+/// A single pre-PR check that was skipped, along with the reason.
+final class PrCheckSkip {
+  final String check;
+  final String reason;
+
+  const new({required this.check, required this.reason});
+
+  @override
+  String toString() => '$check ($reason)';
+}
+
 /// Summary of a `pr-check` run against a repository worktree.
 final class PrCheckReport {
   final String baseRef;
   final List<String> changedFiles;
   final List<PrCheckViolation> violations;
+  final List<String> passedChecks;
+  final List<PrCheckSkip> skippedChecks;
+  final List<String> warnings;
 
   const new({
     required this.baseRef,
     required this.changedFiles,
     required this.violations,
+    this.passedChecks = const [],
+    this.skippedChecks = const [],
+    this.warnings = const [],
   });
 
   bool get passed => violations.isEmpty;
@@ -60,6 +87,12 @@ ArgParser _buildPrCheckArgParser() => ArgParser()
     defaultsTo: true,
   )
   ..addFlag(
+    'test',
+    abbr: 't',
+    negatable: false,
+    help: 'Run "dart test" in touched packages that have a test/ directory.',
+  )
+  ..addFlag(
     'help',
     abbr: 'h',
     negatable: false,
@@ -70,6 +103,7 @@ ArgParser _buildPrCheckArgParser() => ArgParser()
 Future<void> runPrCheckCli(
   List<String> args, {
   SyncProcessRunner processRunner = defaultSyncProcessRunner,
+  Future<String?> Function()? fetchLatestCognitiveComplexityVersion,
 }) async {
   final parser = _buildPrCheckArgParser();
   final results = parseCliArgs(
@@ -91,12 +125,27 @@ Future<void> runPrCheckCli(
     return;
   }
 
+  final versionFuture = _fetchLatestCognitiveComplexityVersion(
+    processRunner: processRunner,
+    customFetcher: fetchLatestCognitiveComplexityVersion,
+  );
+
   final report = runPrCheck(
     directory: targetDir,
     baseRefOverride: results['base'] as String?,
     requireWip: results['require-wip'] as bool,
+    runTests: results['test'] as bool,
     processRunner: processRunner,
   );
+
+  final latestVersion = await versionFuture.timeout(
+    const Duration(milliseconds: 500),
+    onTimeout: () => null,
+  );
+  final versionNote = checkCognitiveComplexityVersionNote(latestVersion);
+  for (final warning in [...report.warnings, ?versionNote]) {
+    print(ansi.yellow.wrap('💡 [pr-check] $warning'));
+  }
 
   if (!report.passed) {
     setError(
@@ -112,6 +161,70 @@ Future<void> runPrCheckCli(
       '(${report.changedFiles.length} touched file(s) vs ${report.baseRef}).',
     ),
   );
+  if (report.passedChecks.isNotEmpty) {
+    print('  Ran: ${report.passedChecks.join(', ')}');
+  }
+  if (report.skippedChecks.isNotEmpty) {
+    print('  Skipped: ${report.skippedChecks.join(', ')}');
+  }
+}
+
+Future<String?> _fetchLatestCognitiveComplexityVersion({
+  required SyncProcessRunner processRunner,
+  required Future<String?> Function()? customFetcher,
+  Duration timeout = const Duration(seconds: 2),
+}) async {
+  if (customFetcher != null) return customFetcher();
+  if (processRunner != defaultSyncProcessRunner) return null;
+  try {
+    return await Isolate.run(
+      () => _queryPubDevLatestVersion('cognitive_complexity', timeout),
+    ).timeout(timeout, onTimeout: () => null);
+  } catch (_) {
+    return null;
+  }
+}
+
+Future<String?> _queryPubDevLatestVersion(
+  String packageName,
+  Duration timeout,
+) async {
+  final client = HttpClient()..connectionTimeout = timeout;
+  try {
+    final uri = Uri.https('pub.dev', '/api/packages/$packageName');
+    final request = await client.getUrl(uri).timeout(timeout);
+    final response = await request.close().timeout(timeout);
+    if (response.statusCode != HttpStatus.ok) return null;
+    final body = await response.transform(utf8.decoder).join().timeout(timeout);
+    final decoded = jsonDecode(body);
+    if (decoded is! Map<String, Object?>) return null;
+    final latest = decoded['latest'];
+    return latest is Map<String, Object?> && latest['version'] is String
+        ? latest['version'] as String
+        : null;
+  } catch (_) {
+    return null;
+  } finally {
+    client.close(force: true);
+  }
+}
+
+/// Returns an FYI note if [latestVersionStr] is a newer stable release than
+/// [cognitiveComplexityPinnedVersion], or `null` otherwise.
+String? checkCognitiveComplexityVersionNote(String? latestVersionStr) {
+  if (latestVersionStr == null || latestVersionStr.isEmpty) return null;
+  try {
+    final latest = Version.parse(latestVersionStr);
+    final pinned = Version.parse(cognitiveComplexityPinnedVersion);
+    if (!latest.isPreRelease && latest > pinned) {
+      return 'FYI: package:cognitive_complexity $latest is available on '
+          'pub.dev (pr-check pins ^$cognitiveComplexityPinnedVersion; '
+          'revisit cognitiveComplexityPinnedVersion in pr_check.dart).';
+    }
+  } catch (_) {
+    // Ignore malformed version strings.
+  }
+  return null;
 }
 
 String _formatViolations(PrCheckReport report) {
@@ -128,6 +241,15 @@ String _formatViolations(PrCheckReport report) {
       ..writeln(ansi.styleBold.wrap('  • [${v.check}] ${v.message}'))
       ..writeln('    💡 Fix: ${v.remediation}');
   }
+  if (report.passedChecks.isNotEmpty || report.skippedChecks.isNotEmpty) {
+    buf.writeln();
+    if (report.passedChecks.isNotEmpty) {
+      buf.writeln('  Ran (passed): ${report.passedChecks.join(', ')}');
+    }
+    if (report.skippedChecks.isNotEmpty) {
+      buf.writeln('  Skipped: ${report.skippedChecks.join(', ')}');
+    }
+  }
   return buf.toString().trimRight();
 }
 
@@ -136,97 +258,345 @@ PrCheckReport runPrCheck({
   required Directory directory,
   String? baseRefOverride,
   bool requireWip = true,
+  bool runTests = false,
+  String? latestCognitiveComplexityVersion,
   SyncProcessRunner processRunner = defaultSyncProcessRunner,
 }) {
   final repoRoot = _resolveGitTopLevel(directory, processRunner) ?? directory;
-  final violations = <PrCheckViolation>[];
-
-  final dirtyViolation = _checkCleanWorkingTree(repoRoot, processRunner);
-  if (dirtyViolation != null) {
-    violations.add(dirtyViolation);
-  }
-
   final baseRef = _resolveBaseRef(repoRoot, baseRefOverride, processRunner);
   final changedFiles = _collectChangedFiles(repoRoot, baseRef, processRunner);
-  if (changedFiles.isEmpty) {
-    return PrCheckReport(
-      baseRef: baseRef,
-      changedFiles: changedFiles,
-      violations: violations,
-    );
-  }
-
-  final workflowsText = _readWorkflowsContent(repoRoot);
-  final dartBin = _resolveDartBinary();
-
-  final packages = runZoned(
-    () => firehose.Repository(repoRoot).locatePackages(),
-    zoneSpecification: ZoneSpecification(print: (_, _, _, _) {}),
+  final runner = _PrCheckRunner(
+    repoRoot: repoRoot,
+    baseRef: baseRef,
+    changedFiles: changedFiles,
+    workflowsText: changedFiles.isEmpty ? '' : _readWorkflowsContent(repoRoot),
+    dartBin: _resolveDartBinary(),
+    isDartSdk: File(p.join(repoRoot.path, 'tools', 'VERSION')).existsSync(),
+    runSync: processRunner,
   );
-  final changedFilesSet = changedFiles.toSet();
-  for (final pkg in packages) {
-    violations.addAll(
-      _validateSingleFirehosePackage(
-        repoRoot: repoRoot,
-        baseRef: baseRef,
-        pkg: pkg,
-        changedFiles: changedFilesSet,
-        requireWip: requireWip,
-        runSync: processRunner,
-      ),
+  return runner.run(
+    requireWip: requireWip,
+    runTests: runTests,
+    latestCognitiveComplexityVersion: latestCognitiveComplexityVersion,
+  );
+}
+
+final class _PrCheckRunner {
+  final Directory repoRoot;
+  final String baseRef;
+  final List<String> changedFiles;
+  final String workflowsText;
+  final String dartBin;
+  final bool isDartSdk;
+  final SyncProcessRunner runSync;
+
+  final violations = <PrCheckViolation>[];
+  final passedChecks = <String>[];
+  final skippedChecks = <PrCheckSkip>[];
+  final warnings = <String>[];
+
+  new({
+    required this.repoRoot,
+    required this.baseRef,
+    required this.changedFiles,
+    required this.workflowsText,
+    required this.dartBin,
+    required this.isDartSdk,
+    required this.runSync,
+  });
+
+  PrCheckReport run({
+    required bool requireWip,
+    required bool runTests,
+    required String? latestCognitiveComplexityVersion,
+  }) {
+    final versionNote = checkCognitiveComplexityVersionNote(
+      latestCognitiveComplexityVersion,
     );
+    if (versionNote != null) warnings.add(versionNote);
+
+    _recordSingle('git-status', _checkCleanWorkingTree(repoRoot, runSync));
+    if (changedFiles.isEmpty) {
+      _skip('diff-checks', 'no changed files vs $baseRef');
+      return _toReport();
+    }
+
+    _runFirehoseChecks(requireWip: requireWip);
+    _runDartFileChecks(changedFiles.where((f) => f.endsWith('.dart')).toList());
+    _runMarkdownChecks(changedFiles.where((f) => f.endsWith('.md')).toList());
+    _runPackageTestChecks(runTests: runTests);
+    return _toReport();
   }
 
-  final dartFiles = changedFiles.where((f) => f.endsWith('.dart')).toList();
-  if (dartFiles.isNotEmpty &&
-      !File(p.join(repoRoot.path, 'tools', 'VERSION')).existsSync()) {
-    final fmtViolation = _checkDartFormat(
-      repoRoot,
-      dartFiles,
-      dartBin,
-      processRunner,
-    );
-    if (fmtViolation != null) violations.add(fmtViolation);
-
-    final analyzeViolation = _checkDartAnalyzeFatalInfos(
-      repoRoot,
-      dartFiles,
-      dartBin,
-      processRunner,
-    );
-    if (analyzeViolation != null) violations.add(analyzeViolation);
-
-    final ccViolation = _checkCognitiveComplexity(
-      repoRoot,
-      dartFiles,
-      workflowsText,
-      dartBin,
-      processRunner,
-    );
-    if (ccViolation != null) violations.add(ccViolation);
-
-    violations.addAll(
-      _checkBrowserTestOnVm(repoRoot, dartFiles, workflowsText),
-    );
-  }
-
-  final mdFiles = changedFiles.where((f) => f.endsWith('.md')).toList();
-  if (mdFiles.isNotEmpty) {
-    violations.addAll(_checkGitHubMarkdownConventions(repoRoot, mdFiles));
-    final prettierViolation = _checkPrettierMarkdown(
-      repoRoot,
-      mdFiles,
-      workflowsText,
-      processRunner,
-    );
-    if (prettierViolation != null) violations.add(prettierViolation);
-  }
-
-  return PrCheckReport(
+  PrCheckReport _toReport() => PrCheckReport(
     baseRef: baseRef,
     changedFiles: changedFiles,
     violations: violations,
+    passedChecks: passedChecks,
+    skippedChecks: skippedChecks,
+    warnings: warnings,
   );
+
+  void _recordSingle(String checkName, PrCheckViolation? violation) {
+    if (violation != null) {
+      violations.add(violation);
+    } else {
+      passedChecks.add(checkName);
+    }
+  }
+
+  void _recordMulti(String checkName, List<PrCheckViolation> found) {
+    if (found.isNotEmpty) {
+      violations.addAll(found);
+    } else {
+      passedChecks.add(checkName);
+    }
+  }
+
+  void _skip(String checkName, String reason) {
+    skippedChecks.add(PrCheckSkip(check: checkName, reason: reason));
+  }
+
+  void _runFirehoseChecks({required bool requireWip}) {
+    final packages = runZoned(
+      () => firehose.Repository(repoRoot).locatePackages(),
+      zoneSpecification: ZoneSpecification(print: (_, _, _, _) {}),
+    );
+    final changedSet = changedFiles.toSet();
+    var checkedAny = false;
+    for (final pkg in packages) {
+      if (_validateFirehosePackage(pkg, changedSet, requireWip: requireWip)) {
+        checkedAny = true;
+      }
+    }
+    if (!checkedAny) {
+      _skip('firehose', 'no touched publishable packages');
+    }
+  }
+
+  bool _validateFirehosePackage(
+    firehose.Package pkg,
+    Set<String> changedSet, {
+    required bool requireWip,
+  }) {
+    final relDir = p.relative(pkg.directory.path, from: repoRoot.path);
+    final prefix = relDir == '.' ? '' : '$relDir/';
+    final pkgChanged = _packageRelativeChanges(prefix, changedSet);
+    final ver = pkg.version;
+    if (pkgChanged.isEmpty || ver == null) return false;
+
+    final pkgViolations = <PrCheckViolation>[];
+    final verStr = ver.toString();
+    final changelogPath = '${prefix}CHANGELOG.md';
+    final changelogVer = pkg.changelog.latestVersion;
+    if (pkg.changelog.exists && changelogVer != verStr) {
+      pkgViolations.add(
+        PrCheckViolation(
+          check: 'firehose-changelog',
+          message:
+              'package:${pkg.name} pubspec.yaml version ($verStr) does not '
+              'match CHANGELOG.md top entry ($changelogVer).',
+          remediation:
+              'Prepend "## $verStr" to $changelogPath or align pubspec.yaml.',
+        ),
+      );
+    }
+
+    final versionDart = File(
+      p.join(pkg.directory.path, 'lib', 'src', 'version.dart'),
+    );
+    if (versionDart.existsSync() &&
+        !versionDart.readAsStringSync().contains(verStr)) {
+      final relVerPath = '${prefix}lib/src/version.dart';
+      pkgViolations.add(
+        PrCheckViolation(
+          check: 'version-dart-sync',
+          message:
+              'package:${pkg.name} is at $verStr, but '
+              '$relVerPath does not contain $verStr.',
+          remediation: 'Regenerate or update $relVerPath to match $verStr.',
+        ),
+      );
+    }
+
+    final pubspecRel = '${prefix}pubspec.yaml';
+    final baseVer = _readBasePubspecVersion(
+      repoRoot,
+      baseRef,
+      pubspecRel,
+      runSync,
+    );
+    if (requireWip &&
+        pkgChanged.any(_isCodeOrPackageFile) &&
+        !ver.isPreRelease &&
+        (baseVer == null || baseVer == verStr)) {
+      final nextWip = '${ver.major}.${ver.minor}.${ver.patch + 1}-wip';
+      pkgViolations.add(
+        PrCheckViolation(
+          check: 'pubspec-wip-bump',
+          message:
+              'package:${pkg.name} is at released version $verStr without a '
+              '-wip bump in $pubspecRel.',
+          remediation:
+              'Bump $pubspecRel to "version: $nextWip" and add "## $nextWip" '
+              'to $changelogPath.',
+        ),
+      );
+    }
+
+    if (ver.isPreRelease &&
+        !pkgChanged.contains('CHANGELOG.md') &&
+        pkgChanged.any(_isFirehoseChangelogWatchedFile)) {
+      warnings.add(
+        'TIP: package:${pkg.name} ($verStr) modified lib/bin/pubspec without '
+        'updating $changelogPath. Add a changelog entry or apply the '
+        '"skip-changelog-check" PR label.',
+      );
+    }
+
+    _recordMulti('firehose:${pkg.name}', pkgViolations);
+    return true;
+  }
+
+  void _runDartFileChecks(List<String> dartFiles) {
+    if (dartFiles.isEmpty || isDartSdk) {
+      final reason = isDartSdk ? 'Dart SDK repo' : 'no touched .dart files';
+      _skip('dart-format', reason);
+      _skip('dart-analyze-fatal-infos', reason);
+      _skip('cognitive-complexity', reason);
+      _skip('browser-test-on-vm', reason);
+      return;
+    }
+
+    _recordSingle(
+      'dart-format',
+      _checkDartFormat(repoRoot, dartFiles, dartBin, runSync),
+    );
+    _recordSingle(
+      'dart-analyze-fatal-infos',
+      _checkDartAnalyzeFatalInfos(repoRoot, dartFiles, dartBin, runSync),
+    );
+
+    if (!workflowsText.contains('cognitive_complexity')) {
+      _skip('cognitive-complexity', 'not in workflows');
+    } else {
+      final libBinFiles = dartFiles.where(_isLibOrBinDartFile).toList();
+      if (libBinFiles.isEmpty) {
+        _skip('cognitive-complexity', 'no touched lib/ or bin/ .dart files');
+      } else {
+        _recordSingle(
+          'cognitive-complexity',
+          _checkCognitiveComplexity(repoRoot, libBinFiles, dartBin, runSync),
+        );
+      }
+    }
+
+    if (!RegExp(r'\b(chrome|wasm|firefox)\b').hasMatch(workflowsText)) {
+      _skip('browser-test-on-vm', 'no browser/wasm in workflows');
+    } else {
+      final testFiles = dartFiles
+          .where((f) => f.endsWith('_test.dart'))
+          .toList();
+      if (testFiles.isEmpty) {
+        _skip('browser-test-on-vm', 'no touched *_test.dart files');
+      } else {
+        _recordMulti(
+          'browser-test-on-vm',
+          _checkBrowserTestOnVm(repoRoot, testFiles),
+        );
+      }
+    }
+  }
+
+  void _runMarkdownChecks(List<String> mdFiles) {
+    if (mdFiles.isEmpty) {
+      _skip('gfm-markdown', 'no touched .md files');
+      _skip('prettier-markdown', 'no touched .md files');
+      return;
+    }
+
+    _recordMulti(
+      'gfm-markdown',
+      _checkGitHubMarkdownConventions(repoRoot, mdFiles),
+    );
+
+    final hasPrettier =
+        workflowsText.toLowerCase().contains('prettier') ||
+        File(p.join(repoRoot.path, '.prettierrc.json')).existsSync();
+    if (!hasPrettier) {
+      _skip('prettier-markdown', 'no .prettierrc.json or workflow');
+    } else {
+      _recordSingle(
+        'prettier-markdown',
+        _checkPrettierMarkdown(repoRoot, mdFiles, runSync),
+      );
+    }
+  }
+
+  void _runPackageTestChecks({required bool runTests}) {
+    if (!runTests) {
+      _skip('dart-test', 'pass --test to run');
+      return;
+    }
+    if (isDartSdk) {
+      _skip('dart-test', 'Dart SDK repo');
+      return;
+    }
+    final testPkgDirs = _findTouchedTestablePackageDirs(repoRoot, changedFiles);
+    if (testPkgDirs.isEmpty) {
+      _skip('dart-test', 'no touched packages with test/');
+      return;
+    }
+    for (final pkgRelDir in testPkgDirs) {
+      final label = pkgRelDir == '.' ? 'dart-test' : 'dart-test:$pkgRelDir';
+      final workDir = pkgRelDir == '.'
+          ? repoRoot.path
+          : p.join(repoRoot.path, pkgRelDir);
+      final res = runSync(dartBin, ['test'], workingDirectory: workDir);
+      if (res.exitCode == 0) {
+        passedChecks.add(label);
+      } else {
+        final out = '${res.stdout}\n${res.stderr}'.trim();
+        final fixCmd = pkgRelDir == '.'
+            ? 'dart test'
+            : '(cd $pkgRelDir && dart test)';
+        violations.add(
+          PrCheckViolation(
+            check: 'dart-test',
+            message: 'dart test failed in $pkgRelDir:\n$out',
+            remediation: 'Run "$fixCmd" and fix failing tests.',
+          ),
+        );
+      }
+    }
+  }
+}
+
+List<String> _findTouchedTestablePackageDirs(
+  Directory repoRoot,
+  List<String> changedFiles,
+) {
+  final dirs = <String>{};
+  for (final relPath in changedFiles) {
+    if (relPath.startsWith('.github/')) continue;
+    final owningPkg = _findOwningPackageRelDir(repoRoot, relPath);
+    if (owningPkg == null) continue;
+    if (Directory(p.join(repoRoot.path, owningPkg, 'test')).existsSync()) {
+      dirs.add(owningPkg);
+    }
+  }
+  return dirs.toList()..sort();
+}
+
+String? _findOwningPackageRelDir(Directory repoRoot, String relFilePath) {
+  var dir = p.dirname(relFilePath);
+  while (true) {
+    if (File(p.join(repoRoot.path, dir, 'pubspec.yaml')).existsSync()) {
+      return dir;
+    }
+    if (dir == '.' || dir.isEmpty) return null;
+    dir = p.dirname(dir);
+  }
 }
 
 Directory? _resolveGitTopLevel(Directory dir, SyncProcessRunner runSync) {
@@ -346,6 +716,11 @@ bool _isCodeOrPackageFile(String relToPkg) =>
     relToPkg.startsWith('hook/') ||
     relToPkg.startsWith('web/');
 
+bool _isFirehoseChangelogWatchedFile(String relToPkg) =>
+    relToPkg == 'pubspec.yaml' ||
+    relToPkg.startsWith('lib/') ||
+    relToPkg.startsWith('bin/');
+
 String? _readBasePubspecVersion(
   Directory repoRoot,
   String baseRef,
@@ -359,87 +734,10 @@ String? _readBasePubspecVersion(
   if (res.exitCode != 0) return null;
   final out = res.stdout as String;
   if (out.isEmpty) return null;
-  final match = RegExp(r'^version:\s*(\S+)', multiLine: true).firstMatch(out);
-  return match?.group(1);
-}
-
-List<PrCheckViolation> _validateSingleFirehosePackage({
-  required Directory repoRoot,
-  required String baseRef,
-  required firehose.Package pkg,
-  required Set<String> changedFiles,
-  required bool requireWip,
-  required SyncProcessRunner runSync,
-}) {
-  final relDir = p.relative(pkg.directory.path, from: repoRoot.path);
-  final prefix = relDir == '.' ? '' : '$relDir/';
-  final pkgChangedFiles = _packageRelativeChanges(prefix, changedFiles);
-  if (pkgChangedFiles.isEmpty) return const [];
-
-  final violations = <PrCheckViolation>[];
-  final ver = pkg.version;
-  if (ver == null) return violations;
-  final verStr = ver.toString();
-
-  final changelogVer = pkg.changelog.latestVersion;
-  if (pkg.changelog.exists && changelogVer != verStr) {
-    violations.add(
-      PrCheckViolation(
-        check: 'firehose-changelog',
-        message:
-            'package:${pkg.name} pubspec.yaml version ($verStr) does not '
-            'match CHANGELOG.md top entry ($changelogVer).',
-        remediation:
-            'Prepend "## $verStr" to ${p.join(relDir, 'CHANGELOG.md')} '
-            'or align pubspec.yaml.',
-      ),
-    );
-  }
-
-  final versionDart = File(
-    p.join(pkg.directory.path, 'lib', 'src', 'version.dart'),
-  );
-  if (versionDart.existsSync() &&
-      !versionDart.readAsStringSync().contains(verStr)) {
-    final relVerPath = p.join(relDir, 'lib/src/version.dart');
-    violations.add(
-      PrCheckViolation(
-        check: 'version-dart-sync',
-        message:
-            'package:${pkg.name} is at $verStr, but '
-            '$relVerPath does not contain $verStr.',
-        remediation: 'Regenerate or update $relVerPath to match $verStr.',
-      ),
-    );
-  }
-
-  final pubspecRel = prefix.isEmpty ? 'pubspec.yaml' : '${prefix}pubspec.yaml';
-  final touchesPackageSurface = pkgChangedFiles.any(_isCodeOrPackageFile);
-  final baseVer = _readBasePubspecVersion(
-    repoRoot,
-    baseRef,
-    pubspecRel,
-    runSync,
-  );
-  if (requireWip &&
-      touchesPackageSurface &&
-      !ver.isPreRelease &&
-      (baseVer == null || baseVer == verStr)) {
-    final nextWip = '${ver.major}.${ver.minor}.${ver.patch + 1}-wip';
-    violations.add(
-      PrCheckViolation(
-        check: 'pubspec-wip-bump',
-        message:
-            'package:${pkg.name} is at released version $verStr without a '
-            '-wip bump in $pubspecRel.',
-        remediation:
-            'Bump $pubspecRel to "version: $nextWip" and add "## $nextWip" '
-            'to ${p.join(relDir, 'CHANGELOG.md')}.',
-      ),
-    );
-  }
-
-  return violations;
+  return RegExp(
+    r'^version:\s*(\S+)',
+    multiLine: true,
+  ).firstMatch(out)?.group(1);
 }
 
 PrCheckViolation? _checkDartFormat(
@@ -490,42 +788,24 @@ PrCheckViolation? _checkDartAnalyzeFatalInfos(
 
 PrCheckViolation? _checkCognitiveComplexity(
   Directory repoRoot,
-  List<String> dartFiles,
-  String workflowsText,
+  List<String> libBinFiles,
   String dartBin,
   SyncProcessRunner runSync,
 ) {
-  if (!workflowsText.contains('cognitive_complexity')) return null;
-  final libBinFiles = dartFiles.where(_isLibOrBinDartFile).toList();
-  if (libBinFiles.isEmpty) return null;
-
-  final home = Platform.environment['HOME'] ?? '';
-  final ccScript = File(
-    p.join(
-      home,
-      'github',
-      'kevmoo',
-      'analytica.dart',
-      'packages',
-      'cognitive_complexity',
-      'bin',
-      'cognitive_complexity.dart',
-    ),
-  );
-  if (!ccScript.existsSync()) return null;
-
   final res = runSync(dartBin, [
-    ccScript.path,
+    'run',
+    cognitiveComplexityPackageSpec,
     '--fail-threshold',
     '15',
     ...libBinFiles,
   ], workingDirectory: repoRoot.path);
   if (res.exitCode == 0) return null;
+  final out = '${res.stdout}\n${res.stderr}'.trim();
   return PrCheckViolation(
     check: 'cognitive-complexity',
     message:
         'Repository CI enforces cognitive_complexity <= 15, which failed:\n'
-        '${(res.stdout as String).trim()}',
+        '$out',
     remediation:
         'Decompose functions exceeding threshold 15 in '
         '${libBinFiles.join(', ')}.',
@@ -540,18 +820,13 @@ bool _isLibOrBinDartFile(String path) =>
 
 List<PrCheckViolation> _checkBrowserTestOnVm(
   Directory repoRoot,
-  List<String> dartFiles,
-  String workflowsText,
+  List<String> testFiles,
 ) {
-  if (!RegExp(r'\b(chrome|wasm|firefox)\b').hasMatch(workflowsText)) {
-    return const [];
-  }
   final violations = <PrCheckViolation>[];
   final ioImportRegex = RegExp(r'''import\s+['"]dart:(io|ffi)['"]''');
   final testOnVmRegex = RegExp(r'''@TestOn\(\s*['"]vm['"]\s*\)''');
 
-  for (final relPath in dartFiles) {
-    if (!relPath.endsWith('_test.dart')) continue;
+  for (final relPath in testFiles) {
     final content = File(p.join(repoRoot.path, relPath)).readAsStringSync();
     if (ioImportRegex.hasMatch(content) && !testOnVmRegex.hasMatch(content)) {
       violations.add(
@@ -572,14 +847,8 @@ List<PrCheckViolation> _checkBrowserTestOnVm(
 PrCheckViolation? _checkPrettierMarkdown(
   Directory repoRoot,
   List<String> mdFiles,
-  String workflowsText,
   SyncProcessRunner runSync,
 ) {
-  final hasPrettier =
-      workflowsText.toLowerCase().contains('prettier') ||
-      File(p.join(repoRoot.path, '.prettierrc.json')).existsSync();
-  if (!hasPrettier) return null;
-
   final res = runSync('npx', [
     '--yes',
     'prettier@3.9.6',

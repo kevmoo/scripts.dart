@@ -2,8 +2,11 @@ import 'dart:io';
 
 import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/pr_check.dart';
+import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
+
+import 'test_helpers.dart';
 
 void main() {
   late Directory tempDir;
@@ -27,7 +30,11 @@ void main() {
     int formatExit = 0,
     int analyzeExit = 0,
     int prettierExit = 0,
+    int complexityExit = 0,
+    int testExit = 0,
+    List<(String, List<String>, String?)>? recordedCalls,
   }) {
+    recordedCalls?.add((exe, args, workingDirectory));
     if (exe == 'git') {
       if (args.contains('--show-toplevel')) {
         return ProcessResult(0, 0, tempDir.path, '');
@@ -53,6 +60,18 @@ void main() {
         '',
       );
     }
+    if (args.contains('run') &&
+        args.any((a) => a.startsWith('cognitive_complexity@'))) {
+      return ProcessResult(
+        0,
+        complexityExit,
+        'lib/foo.dart:1:1: complexFn score 22 > 15',
+        '',
+      );
+    }
+    if (args.length == 1 && args.single == 'test') {
+      return ProcessResult(0, testExit, 'Some tests failed.', '');
+    }
     if (exe == 'npx') {
       return ProcessResult(0, prettierExit, '[warn] README.md', '');
     }
@@ -74,7 +93,8 @@ void main() {
     check(report.violations.map((v) => v.check)).contains('git-status');
   });
 
-  test('detects firehose pubspec/CHANGELOG mismatch, missing -wip bump, and version.dart drift', () {
+  test('detects firehose pubspec/CHANGELOG mismatch, missing -wip bump, '
+      'and version.dart drift', () {
     File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
 name: sample_pkg
 version: 1.2.0
@@ -153,7 +173,7 @@ void main() {}
   );
 
   test('passes cleanly when published package is at -wip version '
-      'and all checks succeed', () {
+      'and tracks passed vs. skipped checks', () {
     File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
 name: sample_pkg
 version: 1.2.1-wip
@@ -180,7 +200,209 @@ environment:
 
     check(report.passed).isTrue();
     check(report.violations).isEmpty();
+    check(report.warnings).isEmpty();
+    check(report.passedChecks).contains('git-status');
+    check(report.passedChecks).contains('firehose:sample_pkg');
+    check(report.passedChecks).contains('dart-format');
+    check(report.passedChecks).contains('dart-analyze-fatal-infos');
+    check(report.passedChecks).contains('gfm-markdown');
+    check(report.skippedChecks.map((s) => s.toString()).toList())
+      ..contains('cognitive-complexity (not in workflows)')
+      ..contains('browser-test-on-vm (no browser/wasm in workflows)')
+      ..contains('prettier-markdown (no .prettierrc.json or workflow)')
+      ..contains('dart-test (pass --test to run)');
   });
+
+  test('suggests skip-changelog-check label when package is already -wip '
+      'and lib/bin/pubspec changes without CHANGELOG.md update', () {
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: sample_pkg
+version: 1.2.1-wip
+environment:
+  sdk: ^3.5.0
+''');
+    File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## 1.2.1-wip
+''');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'foo.dart')).writeAsStringSync('void main() {}\n');
+
+    final report = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+      ),
+    );
+
+    check(report.passed).isTrue();
+    check(report.warnings).length.equals(1);
+    check(report.warnings.single)
+      ..contains('skip-changelog-check')
+      ..contains('sample_pkg (1.2.1-wip)')
+      ..contains('without updating CHANGELOG.md.');
+  });
+
+  test('invokes dart run cognitive_complexity@^<ver> when workflow '
+      'references cognitive_complexity', () {
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: sample_pkg
+publish_to: none
+environment:
+  sdk: ^3.5.0
+''');
+    final wfDir = Directory(p.join(tempDir.path, '.github', 'workflows'))
+      ..createSync(recursive: true);
+    File(p.join(wfDir.path, 'complexity.yml')).writeAsStringSync('''
+jobs:
+  audit:
+    steps:
+      - uses: kevmoo/analytica.dart/packages/cognitive_complexity@main
+''');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'foo.dart')).writeAsStringSync('void main() {}\n');
+
+    final calls = <(String, List<String>, String?)>[];
+    final failReport = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+        complexityExit: 1,
+        recordedCalls: calls,
+      ),
+    );
+
+    check(failReport.passed).isFalse();
+    check(failReport.violations.map((v) => v.check))
+        .contains('cognitive-complexity');
+    check(
+      calls.any(
+        (c) =>
+            c.$2.length >= 2 &&
+            c.$2[0] == 'run' &&
+            c.$2[1] == cognitiveComplexityPackageSpec,
+      ),
+    ).isTrue();
+  });
+
+  test('checkCognitiveComplexityVersionNote emits FYI only when a newer '
+      'stable version exists', () {
+    check(checkCognitiveComplexityVersionNote(null)).isNull();
+    check(checkCognitiveComplexityVersionNote(cognitiveComplexityPinnedVersion))
+        .isNull();
+    check(checkCognitiveComplexityVersionNote('0.1.0')).isNull();
+    check(checkCognitiveComplexityVersionNote('99.0.0-wip')).isNull();
+    check(checkCognitiveComplexityVersionNote('99.0.0'))
+        .isNotNull()
+        .contains('package:cognitive_complexity 99.0.0 is available');
+  });
+
+  test(
+    'runs dart test only in touched packages with test/ when runTests is true',
+    () {
+      final pkgADir = Directory(p.join(tempDir.path, 'pkgs', 'pkg_a'))
+        ..createSync(recursive: true);
+      File(p.join(pkgADir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: pkg_a
+publish_to: none
+''');
+      Directory(p.join(pkgADir.path, 'test')).createSync();
+      final pkgALib = Directory(p.join(pkgADir.path, 'lib'))..createSync();
+      File(p.join(pkgALib.path, 'a.dart')).writeAsStringSync('int a = 1;\n');
+
+      final pkgBDir = Directory(p.join(tempDir.path, 'pkgs', 'pkg_b'))
+        ..createSync(recursive: true);
+      File(p.join(pkgBDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: pkg_b
+publish_to: none
+''');
+      Directory(p.join(pkgBDir.path, 'test')).createSync();
+      final pkgBLib = Directory(p.join(pkgBDir.path, 'lib'))..createSync();
+      File(p.join(pkgBLib.path, 'b.dart')).writeAsStringSync('int b = 2;\n');
+
+      final calls = <(String, List<String>, String?)>[];
+      final passReport = runPrCheck(
+        directory: tempDir,
+        runTests: true,
+        processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+          exe,
+          args,
+          workingDirectory: workingDirectory,
+          changedFiles: ['pkgs/pkg_a/lib/a.dart'],
+          recordedCalls: calls,
+        ),
+      );
+
+      check(passReport.passed).isTrue();
+      check(passReport.passedChecks).contains('dart-test:pkgs/pkg_a');
+      final testDirsRun = calls
+          .where((c) => c.$2.length == 1 && c.$2.single == 'test')
+          .map((c) => c.$3)
+          .toList();
+      check(testDirsRun).deepEquals([pkgADir.path]);
+
+      final failReport = runPrCheck(
+        directory: tempDir,
+        runTests: true,
+        processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+          exe,
+          args,
+          workingDirectory: workingDirectory,
+          changedFiles: ['pkgs/pkg_a/lib/a.dart'],
+          testExit: 1,
+        ),
+      );
+      check(failReport.passed).isFalse();
+      check(failReport.violations.map((v) => v.check)).contains('dart-test');
+    },
+  );
+
+  test(
+    'runPrCheckCli prints warnings, Ran, and Skipped coverage lines',
+    () async {
+      File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: sample_pkg
+version: 1.2.1-wip
+environment:
+  sdk: ^3.5.0
+''');
+      File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## 1.2.1-wip
+''');
+      final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+      File(p.join(libDir.path, 'foo.dart'))
+          .writeAsStringSync('void main() {}\n');
+
+      late int exitCode;
+      final logs = await capturePrints(() async {
+        exitCode = await wrappedForTesting(
+          () => runPrCheckCli(
+            ['-d', tempDir.path],
+            processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+              exe,
+              args,
+              workingDirectory: workingDirectory,
+              changedFiles: ['lib/foo.dart'],
+            ),
+            fetchLatestCognitiveComplexityVersion: () async => '99.1.0',
+          ),
+        );
+      });
+
+      check(exitCode).equals(0);
+      final out = logs.join('\n');
+      check(out)
+        ..contains('skip-changelog-check')
+        ..contains('package:cognitive_complexity 99.1.0 is available')
+        ..contains('Ran: git-status, firehose:sample_pkg')
+        ..contains('Skipped: cognitive-complexity (not in workflows)');
+    },
+  );
 
   test(
     'detects missing -wip bump even when pubspec.yaml itself is modified',
