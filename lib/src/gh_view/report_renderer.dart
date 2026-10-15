@@ -611,8 +611,8 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
   final now = currentTime ?? DateTime.now();
   final categorized = categorizePullRequests(prs);
 
-  Map<String, dynamic> prToJson(GhPr pr, [String? category]) => {
-    if (category != null) 'category': category,
+  Map<String, dynamic> prToJson(GhPr pr, String category) => {
+    'category': category,
     'number': pr.number,
     'title': pr.title,
     'url': pr.url,
