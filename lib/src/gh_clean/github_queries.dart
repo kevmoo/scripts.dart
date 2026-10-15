@@ -4,6 +4,7 @@ import 'dart:io';
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
 import '../shared/gh_args.dart';
+import '../shared/graphql_utils.dart';
 import 'branch_policy.dart';
 import 'fetch_landed_prs.dart';
 import 'models.dart';
@@ -153,7 +154,12 @@ List<LandedPr> _fetchBatchCrossAuthorPrs(
   for (var i = 0; i < candidates.length; i += batchSize) {
     final batch = candidates.skip(i).take(batchSize).toList();
     final queryStr = _buildBatchCrossAuthorQuery(batch);
-    final result = runner('gh', ['api', 'graphql', '-f', 'query=$queryStr']);
+    final result = runGhWithRetrySync(runner, [
+      'api',
+      'graphql',
+      '-f',
+      'query=$queryStr',
+    ]);
     final data = _tryParseGraphQLData(result.stdout);
     if (data == null) {
       if (result.exitCode != 0) {
@@ -200,6 +206,7 @@ String _buildBatchCrossAuthorQuery(List<_CandidateBranch> batch) {
       '        number\n'
       '        title\n'
       '        url\n'
+      '        createdAt\n'
       '        mergedAt\n'
       '        closedAt\n'
       '        headRefName\n'
@@ -341,7 +348,12 @@ List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> _filterUnlinkedCandidates(
   for (var i = 0; i < candidates.length; i += batchSize) {
     final batch = candidates.skip(i).take(batchSize).toList();
     final queryStr = _buildBatchWorktreePrQuery(batch);
-    final result = runner('gh', ['api', 'graphql', '-f', 'query=$queryStr']);
+    final result = runGhWithRetrySync(runner, [
+      'api',
+      'graphql',
+      '-f',
+      'query=$queryStr',
+    ]);
     if (result.exitCode != 0) {
       stderr.writeln(
         'Warning: Failed to fetch GraphQL PR data for candidate worktrees: '
@@ -529,7 +541,12 @@ void _extractClosedUnmergedFromBatch(
   SyncProcessRunner runner,
 ) {
   final queryStr = _buildBatchClosedUnmergedQuery(batch);
-  final res = runner('gh', ['api', 'graphql', '-f', 'query=$queryStr']);
+  final res = runGhWithRetrySync(runner, [
+    'api',
+    'graphql',
+    '-f',
+    'query=$queryStr',
+  ]);
   if (res.exitCode != 0) {
     final err = (res.stderr as String).trim();
     if (err.isNotEmpty) {
@@ -589,6 +606,8 @@ String _buildBatchClosedUnmergedQuery(List<_CandidateBranch> batch) {
       '        title\n'
       '        url\n'
       '        headRefOid\n'
+      '        createdAt\n'
+      '        closedAt\n'
       '      }\n'
       '    }\n'
       '  }',
@@ -619,15 +638,7 @@ bool _isSuppressedByNewerMergedPr(
   return false;
 }
 
-ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
-  Map<String, dynamic> data,
-  int index,
-  _CandidateBranch candidate,
-  SyncProcessRunner runner,
-) {
-  final qVal = data['q$index'];
-  if (qVal is! Map<String, dynamic>) return null;
-
+Map<String, dynamic>? _extractClosedPrNode(Map<String, dynamic> qVal) {
   final openNodes =
       ((qVal['openPrs'] as Map<String, dynamic>?)?['nodes'] as List?) ??
       const [];
@@ -639,7 +650,23 @@ ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
   if (closedNodes.isEmpty) return null;
 
   final node = closedNodes.first;
-  if (node is! Map<String, dynamic>) return null;
+  return node is Map<String, dynamic> ? node : null;
+}
+
+DateTime? _parseOptionalIsoDate(Object? value) =>
+    value is String ? DateTime.tryParse(value) : null;
+
+ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
+  Map<String, dynamic> data,
+  int index,
+  _CandidateBranch candidate,
+  SyncProcessRunner runner,
+) {
+  final qVal = data['q$index'];
+  if (qVal is! Map<String, dynamic>) return null;
+
+  final node = _extractClosedPrNode(qVal);
+  if (node == null) return null;
 
   final number = node['number'] as int?;
   final title = node['title'] as String?;
@@ -687,5 +714,7 @@ ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
     worktreePath: worktreePath,
     commitsAhead: commitsAhead,
     shaMatchesPrHead: headRefOid.isNotEmpty && localSha == headRefOid,
+    createdAt: _parseOptionalIsoDate(node['createdAt']),
+    closedAt: _parseOptionalIsoDate(node['closedAt']),
   );
 }

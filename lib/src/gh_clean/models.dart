@@ -11,6 +11,7 @@ class GhCleanException extends CliException {
 /// Representation of a merged GitHub Pull Request.
 class LandedPr extends GhPrRef {
   final String? mergeSha;
+  final DateTime? createdAt;
   final DateTime? mergedAt;
   final DateTime? closedAt;
   final bool headRefExists;
@@ -27,6 +28,7 @@ class LandedPr extends GhPrRef {
     required super.headRefOid,
     required super.baseRefName,
     this.mergeSha,
+    this.createdAt,
     this.mergedAt,
     this.closedAt,
     this.headRefExists = false,
@@ -85,4 +87,6 @@ typedef ClosedUnmergedPr = ({
   String? worktreePath,
   int? commitsAhead,
   bool shaMatchesPrHead,
+  DateTime? createdAt,
+  DateTime? closedAt,
 });

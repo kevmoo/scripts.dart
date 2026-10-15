@@ -26,6 +26,8 @@ typedef RemoteCL = ({
   String currentRevision,
   int currentRevisionNumber,
   String lastAuthorTouch,
+  DateTime? createdAt,
+  DateTime? updatedAt,
   List<String> reviewers,
   List<String> crVotes,
   String cqStatus,

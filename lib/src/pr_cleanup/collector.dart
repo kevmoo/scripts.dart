@@ -360,6 +360,8 @@ void _classifySingleGhCleanResult(
         reason:
             'Worktree ${p.basename(planned.worktreePath!)} has uncommitted '
             'changes',
+        createdAt: pr.createdAt,
+        updatedAt: pr.mergedAt ?? pr.closedAt,
       ),
     );
     return;
@@ -386,6 +388,8 @@ void _classifySingleGhCleanResult(
           remoteBranch: planned.remoteBranch,
         ),
         landedPr: pr,
+        createdAt: pr.createdAt,
+        updatedAt: pr.mergedAt ?? pr.closedAt,
       ),
     );
   }
@@ -502,6 +506,10 @@ void _processGithubActivePrs(
         reviewBadge: reviewBadge,
         author: pr.author,
         isDraft: pr.isDraft,
+        createdAt: pr.createdAt,
+        updatedAt: pr.updatedAt,
+        lastAuthorActivityAt: pr.lastAuthorActivityAt,
+        lastReviewerActivityAt: pr.lastReviewerActivityAt,
       ),
     );
   }
@@ -532,6 +540,7 @@ void _processGerritActiveCls(
     final wtPath = _findGerritClWorktree(cl.number, gerritAnalysis);
     final cqBadge = _computeGerritCqBadge(cl.cqStatus);
     final reviewBadge = _computeGerritReviewBadge(cl);
+    final lastAuthorAt = DateTime.tryParse(cl.lastAuthorTouch);
 
     bucketA.add(
       BucketAItem(
@@ -546,8 +555,11 @@ void _processGerritActiveCls(
         worktreePath: wtPath,
         ciBadge: cqBadge,
         reviewBadge: reviewBadge,
-        author: cl.lastAuthorTouch,
+        author: 'self',
         isDraft: false,
+        createdAt: cl.createdAt,
+        updatedAt: cl.updatedAt ?? lastAuthorAt,
+        lastAuthorActivityAt: lastAuthorAt,
       ),
     );
   }
@@ -579,6 +591,8 @@ void _processClosedUnmergedAndUnlinked(
           reason:
               'Closed (unmerged) PR #${c.number}, has ${c.commitsAhead} '
               'unpushed commit(s) ahead of trunk',
+          createdAt: c.createdAt,
+          updatedAt: c.closedAt,
         ),
       );
     }
@@ -586,6 +600,9 @@ void _processClosedUnmergedAndUnlinked(
 
   for (final u in unlinkedWorktrees) {
     if (u.commitsAhead != null && u.commitsAhead! > 0) {
+      final dateSuffix = u.lastCommitDate != null
+          ? ' (last commit: ${u.lastCommitDate})'
+          : '';
       bucketC.add(
         BucketCItem(
           source: 'github',
@@ -594,11 +611,18 @@ void _processClosedUnmergedAndUnlinked(
           worktreePath: u.worktreePath,
           reason:
               'Unlinked worktree `${p.basename(u.worktreePath)}` has '
-              '${u.commitsAhead} unpushed commit(s)',
+              '${u.commitsAhead} unpushed commit(s)$dateSuffix',
+          updatedAt: _parseWorktreeDatePrefix(u.lastCommitDate),
         ),
       );
     }
   }
+}
+
+DateTime? _parseWorktreeDatePrefix(String? rawDate) {
+  if (rawDate == null || rawDate.trim().isEmpty) return null;
+  final token = rawDate.trim().split(' ').first;
+  return DateTime.tryParse(token);
 }
 
 Set<String> _collectMatchedWorktreePaths(List<PrCleanResult> results) => {

@@ -426,6 +426,7 @@ Map<String, dynamic> formatJsonReport(
             'repository': r.pr.repository,
             'headRefName': r.pr.headRefName,
             'baseRefName': r.pr.baseRefName,
+            'createdAt': r.pr.createdAt?.toIso8601String(),
             'mergedAt': r.pr.mergedAt?.toIso8601String(),
             'headRefExists': r.pr.headRefExists,
             'headRepository': r.pr.headRepository,
@@ -464,6 +465,8 @@ Map<String, dynamic> formatJsonReport(
         'worktreePath': c.worktreePath,
         'commitsAhead': c.commitsAhead,
         'shaMatchesPrHead': c.shaMatchesPrHead,
+        'createdAt': c.createdAt?.toIso8601String(),
+        'closedAt': c.closedAt?.toIso8601String(),
       },
   ],
   'unlinkedWorktrees': [

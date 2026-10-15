@@ -26,6 +26,73 @@ bool isBotLogin(String login) {
       knownBotLogins.contains(lower);
 }
 
+final _transientGhErrorPattern = RegExp(
+  r'HTTP 50[234]\b|'
+  r'50[234] (?:Bad Gateway|Service Unavailable|Gateway Timeout)|'
+  r'stream error|'
+  r'connection reset|'
+  r'TLS handshake timeout',
+  caseSensitive: false,
+);
+
+/// Returns true if [result] failed due to a transient GitHub HTTP 502/503/504
+/// or network gateway error that should be retried.
+bool isTransientGhError(ProcessResult result) {
+  if (result.exitCode == 0) return false;
+  final combined = '${result.stderr}\n${result.stdout}';
+  return _transientGhErrorPattern.hasMatch(combined);
+}
+
+/// Default exponential backoff delay matching `package:http/retry.dart`
+/// (`500ms * 1.5^retryCount`).
+Duration defaultGhRetryDelay(int retryCount) =>
+    const Duration(milliseconds: 500) * math.pow(1.5, retryCount);
+
+/// Executes `gh` with [args] via [runner], retrying transient 502/503/504
+/// gateway failures up to [retries] times.
+Future<ProcessResult> runGhWithRetry(
+  ProcessRunner runner,
+  List<String> args, {
+  int retries = 3,
+  Duration Function(int retryCount) delay = defaultGhRetryDelay,
+}) async {
+  var result = await runner('gh', args);
+  for (
+    var attempt = 0;
+    attempt < retries && isTransientGhError(result);
+    attempt++
+  ) {
+    final wait = delay(attempt);
+    if (wait > Duration.zero) {
+      await Future<void>.delayed(wait);
+    }
+    result = await runner('gh', args);
+  }
+  return result;
+}
+
+/// Synchronous counterpart to [runGhWithRetry] for [SyncProcessRunner] callers.
+ProcessResult runGhWithRetrySync(
+  SyncProcessRunner runner,
+  List<String> args, {
+  int retries = 3,
+  Duration Function(int retryCount) delay = defaultGhRetryDelay,
+}) {
+  var result = runner('gh', args);
+  for (
+    var attempt = 0;
+    attempt < retries && isTransientGhError(result);
+    attempt++
+  ) {
+    final wait = delay(attempt);
+    if (wait > Duration.zero) {
+      sleep(wait);
+    }
+    result = runner('gh', args);
+  }
+  return result;
+}
+
 /// Extracts pagination info (`hasNextPage` and `endCursor`) from a decoded
 /// GitHub GraphQL `search` response.
 ({bool hasNextPage, String? endCursor}) extractGraphQLSearchPageInfo(
@@ -52,6 +119,8 @@ Future<List<Map<String, dynamic>>> paginateGraphQLSearch({
   required ProcessRunner runner,
   required Exception Function(String message, {int exitCode}) exceptionBuilder,
   int maxPageSize = 25,
+  int retries = 3,
+  Duration Function(int retryCount) retryDelay = defaultGhRetryDelay,
 }) async {
   final nodes = <Map<String, dynamic>>[];
   String? cursor;
@@ -65,7 +134,12 @@ Future<List<Map<String, dynamic>>> paginateGraphQLSearch({
       maxPageSize: maxPageSize,
       cursor: cursor,
     );
-    final result = await runner('gh', args);
+    final result = await runGhWithRetry(
+      runner,
+      args,
+      retries: retries,
+      delay: retryDelay,
+    );
     cursor = _processGraphQLPage(result, nodes, exceptionBuilder);
     if (cursor == null) break;
   }
@@ -82,6 +156,8 @@ List<Map<String, dynamic>> paginateGraphQLSearchSync({
   required SyncProcessRunner runner,
   required Exception Function(String message, {int exitCode}) exceptionBuilder,
   int maxPageSize = 50,
+  int retries = 3,
+  Duration Function(int retryCount) retryDelay = defaultGhRetryDelay,
 }) {
   final nodes = <Map<String, dynamic>>[];
   String? cursor;
@@ -95,7 +171,12 @@ List<Map<String, dynamic>> paginateGraphQLSearchSync({
       maxPageSize: maxPageSize,
       cursor: cursor,
     );
-    final result = runner('gh', args);
+    final result = runGhWithRetrySync(
+      runner,
+      args,
+      retries: retries,
+      delay: retryDelay,
+    );
     cursor = _processGraphQLPage(result, nodes, exceptionBuilder);
     if (cursor == null) break;
   }

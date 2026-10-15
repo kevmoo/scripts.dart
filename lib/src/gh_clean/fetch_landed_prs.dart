@@ -67,6 +67,7 @@ query($q: String!, $limit: Int!, $cursor: String) {
         url
         state
         merged
+        createdAt
         mergedAt
         closedAt
         headRefName
@@ -121,6 +122,11 @@ LandedPr? parseLandedPrNode(Map<String, dynamic> node) {
   final core = GhPrRef.parseCoreFields(node, defaultBaseRefName: 'main');
   if (core == null) return null;
 
+  final createdAtStr = node['createdAt'] as String?;
+  final createdAt = createdAtStr != null
+      ? DateTime.tryParse(createdAtStr)
+      : null;
+
   final mergedAtStr = node['mergedAt'] as String?;
   final mergedAt = mergedAtStr != null ? DateTime.tryParse(mergedAtStr) : null;
 
@@ -145,6 +151,7 @@ LandedPr? parseLandedPrNode(Map<String, dynamic> node) {
     headRefOid: core.headRefOid,
     baseRefName: core.baseRefName,
     mergeSha: mergeSha,
+    createdAt: createdAt,
     mergedAt: mergedAt,
     closedAt: closedAt,
     headRefExists: headRefExists,

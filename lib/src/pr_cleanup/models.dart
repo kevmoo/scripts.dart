@@ -19,6 +19,10 @@ class BucketAItem {
   final String reviewBadge;
   final String author;
   final bool isDraft;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
+  final DateTime? lastAuthorActivityAt;
+  final DateTime? lastReviewerActivityAt;
 
   const new({
     required this.source,
@@ -32,6 +36,10 @@ class BucketAItem {
     required this.reviewBadge,
     required this.author,
     required this.isDraft,
+    this.createdAt,
+    this.updatedAt,
+    this.lastAuthorActivityAt,
+    this.lastReviewerActivityAt,
   });
 
   Map<String, dynamic> toJson() => {
@@ -41,11 +49,15 @@ class BucketAItem {
     'title': title,
     'url': url,
     'branch': branch,
-    if (worktreePath != null) 'worktreePath': worktreePath,
+    'worktreePath': worktreePath,
     'ciBadge': ciBadge,
     'reviewBadge': reviewBadge,
     'author': author,
     'isDraft': isDraft,
+    'createdAt': createdAt?.toIso8601String(),
+    'updatedAt': updatedAt?.toIso8601String(),
+    'lastAuthorActivityAt': lastAuthorActivityAt?.toIso8601String(),
+    'lastReviewerActivityAt': lastReviewerActivityAt?.toIso8601String(),
   };
 }
 
@@ -59,6 +71,8 @@ class BucketBItem {
   final int? prOrClNumber;
   final String description;
   final LandedPr? landedPr;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   const new({
     required this.source,
@@ -69,16 +83,20 @@ class BucketBItem {
     this.prOrClNumber,
     required this.description,
     this.landedPr,
+    this.createdAt,
+    this.updatedAt,
   });
 
   Map<String, dynamic> toJson() => {
     'source': source,
     'repository': repository,
     'branch': branch,
-    if (worktreePath != null) 'worktreePath': worktreePath,
-    if (remoteBranch != null) 'remoteBranch': remoteBranch,
-    if (prOrClNumber != null) 'prOrClNumber': prOrClNumber,
+    'worktreePath': worktreePath,
+    'remoteBranch': remoteBranch,
+    'prOrClNumber': prOrClNumber,
     'description': description,
+    'createdAt': createdAt?.toIso8601String(),
+    'updatedAt': updatedAt?.toIso8601String(),
   };
 }
 
@@ -90,6 +108,8 @@ class BucketCItem {
   final String? worktreePath;
   final int? prOrClNumber;
   final String reason;
+  final DateTime? createdAt;
+  final DateTime? updatedAt;
 
   const new({
     required this.source,
@@ -98,15 +118,19 @@ class BucketCItem {
     this.worktreePath,
     this.prOrClNumber,
     required this.reason,
+    this.createdAt,
+    this.updatedAt,
   });
 
   Map<String, dynamic> toJson() => {
     'source': source,
     'repository': repository,
     'branch': branch,
-    if (worktreePath != null) 'worktreePath': worktreePath,
-    if (prOrClNumber != null) 'prOrClNumber': prOrClNumber,
+    'worktreePath': worktreePath,
+    'prOrClNumber': prOrClNumber,
     'reason': reason,
+    'createdAt': createdAt?.toIso8601String(),
+    'updatedAt': updatedAt?.toIso8601String(),
   };
 }
 

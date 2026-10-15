@@ -224,6 +224,18 @@ String _nextCqStatus(
   return current;
 }
 
+/// Parses a Gerrit UTC timestamp (`"YYYY-MM-DD HH:MM:SS.000000000"`) into a
+/// [DateTime].
+DateTime? parseGerritTimestamp(String? raw) {
+  if (raw == null || raw.trim().isEmpty) return null;
+  final trimmed = raw.trim();
+  if (trimmed.contains(' ')) {
+    final iso = trimmed.replaceFirst(' ', 'T');
+    return DateTime.tryParse(iso.endsWith('Z') ? iso : '${iso}Z');
+  }
+  return DateTime.tryParse(trimmed);
+}
+
 (String, String) extractGerritMessagesTelemetry(
   Map<String, dynamic> item,
   int? ownerId,
@@ -337,6 +349,8 @@ RemoteCL? _parseRemoteClItem(
       currentRevision: currentRevision,
       currentRevisionNumber: currentRevisionNumber,
       lastAuthorTouch: lastAuthorTouch,
+      createdAt: parseGerritTimestamp(item['created'] as String?),
+      updatedAt: parseGerritTimestamp(item['updated'] as String?),
       reviewers: reviewers,
       crVotes: crVotes,
       cqStatus: cqStatus,

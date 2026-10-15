@@ -14,12 +14,17 @@ export 'pr_cleanup/report_formatter.dart';
 const prCleanupDescription =
     'Unified multi-repo GitHub and Gerrit PR, CL, and worktree cleanup sweep.';
 
+/// Default local file path where `kscripts pr-cleanup` caches the latest JSON
+/// sweep result for ad-hoc DuckDB / jq querying.
+const defaultPrCleanupJsonCachePath = '/tmp/pr_cleanup_latest.json';
+
 /// Main entrypoint for `kscripts pr-cleanup`.
 Future<void> runPrCleanup({
   required PrCleanupOptions options,
   SyncProcessRunner? syncProcessRunner,
   ProcessRunner? asyncProcessRunner,
   void Function(String message)? onProgress,
+  String? jsonCachePath = defaultPrCleanupJsonCachePath,
 }) async {
   final sweepResult = await collectPrSweep(
     options: options,
@@ -47,8 +52,17 @@ Future<void> runPrCleanup({
     );
   }
 
+  final jsonReport = formatJsonReport(sweepResult, applied: options.apply);
+  if (jsonCachePath != null && jsonCachePath.isNotEmpty) {
+    try {
+      File(jsonCachePath).writeAsStringSync(jsonReport);
+    } catch (_) {
+      // Ignore cache write errors so read-only environments never fail.
+    }
+  }
+
   if (options.json) {
-    print(formatJsonReport(sweepResult, applied: options.apply));
+    print(jsonReport);
   } else {
     print(formatMarkdownReport(sweepResult, applied: options.apply));
   }
