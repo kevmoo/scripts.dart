@@ -1,7 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
 
-import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 
 import 'models.dart';
@@ -367,7 +366,6 @@ const _changesQuerySuffix =
     '&o=MESSAGES&o=SUBMITTABLE&o=SUBMIT_REQUIREMENTS';
 
 Map<int, RemoteCL> fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
-  print(styleDim.wrap('Querying active CLs from Gerrit...')!);
   final gobResult = Process.runSync('gob-curl', [
     'https://$gerritHost/$_changesQuerySuffix',
   ], workingDirectory: actualRepoRoot);
