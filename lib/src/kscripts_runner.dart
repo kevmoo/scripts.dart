@@ -615,6 +615,7 @@ void runRepoAlignCli(List<String> args) {
   final parser = ArgParser()
     ..addCommand('check')
     ..addCommand('fix')
+    ..addCommand('apply')
     ..addOption(
       'repo',
       abbr: 'r',
@@ -650,6 +651,10 @@ void runRepoAlignCli(List<String> args) {
       help: 'Fix/synchronize GitHub remote settings (auto-merge, rulesets)',
     )
     ..addFlag(
+      'spot',
+      help: 'Fix/synchronize managed <!-- BEGIN SPOT --> markdown blocks',
+    )
+    ..addFlag(
       'dry-run',
       abbr: 'n',
       help: 'Preview changes without modifying files or remote settings',
@@ -669,7 +674,7 @@ void runRepoAlignCli(List<String> args) {
 
   if (parsed['help'] == true || args.isEmpty) {
     print('Personal GitHub Repositories Alignment & Audit Tool');
-    print('Usage: repo-align <check|fix> [options]\n');
+    print('Usage: repo-align <check|fix|apply> [options]\n');
     print(parser.usage);
     return;
   }
@@ -683,6 +688,7 @@ void runRepoAlignCli(List<String> args) {
   final fixApiSummary = parsed['api-summary'] as bool;
   final fixCi = parsed['ci'] as bool;
   final fixGitHub = parsed['github'] as bool;
+  final fixSpot = parsed['spot'] as bool;
 
   final runner = RepoAlignRunner();
 
@@ -700,6 +706,14 @@ void runRepoAlignCli(List<String> args) {
       fixApiSummary: fixApiSummary,
       fixCi: fixCi,
       fixGitHub: fixGitHub,
+      fixSpot: fixSpot,
+      dryRun: dryRun,
+    );
+  } else if (commandName == 'apply') {
+    runner.runFix(
+      targetRepo: targetRepo,
+      targetDir: targetDir,
+      fixSpot: true,
       dryRun: dryRun,
     );
   } else {

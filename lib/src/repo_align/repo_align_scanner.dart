@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import '../shared/analysis_options_resolver.dart';
+import '../shared/spot_sync.dart';
 import 'models.dart';
 
 /// Known legacy or non-code repositories to ignore/mark legacy.
@@ -139,6 +140,7 @@ class RepoAlignScanner {
     final workflows = _scanWorkflows(dir);
     final dependabot = _scanDependabot(dir);
     final markdown = _scanMarkdownConfig(dir);
+    final spotDrift = scanRepoSpotDrift(dir).map((i) => i.message).toList();
     final ghInfo = queryGitHubApi
         ? _scanGitHubRemote(name)
         : _defaultGitHubInfo();
@@ -180,6 +182,7 @@ class RepoAlignScanner {
       hasPrettierRc: markdown.hasPrettierRc,
       hasMarkdownWorkflow: markdown.hasMarkdownWorkflow,
       hasPrettierIgnore: markdown.hasPrettierIgnore,
+      spotDriftIssues: spotDrift,
       autoMergeAllowed: ghInfo.autoMergeAllowed,
       hasAutosubmitLabel: ghInfo.hasAutosubmitLabel,
       hasRulesetOrProtection: ghInfo.hasRulesetOrProtection,

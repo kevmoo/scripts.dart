@@ -15,6 +15,7 @@ import 'package:yaml/yaml.dart';
 
 import 'process_utils.dart';
 import 'shared/gh_args.dart';
+import 'shared/spot_sync.dart';
 import 'testable_print.dart';
 
 part 'pr_check_agent_docs.dart';
@@ -897,13 +898,22 @@ List<PrCheckViolation> _checkGitHubMarkdownConventions(
   List<String> mdFiles,
 ) {
   final violations = <PrCheckViolation>[];
+  final canonicalSpotDefs = loadCanonicalSpotDefs();
   for (final relPath in mdFiles) {
     final file = File(p.join(repoRoot.path, relPath));
     if (!file.existsSync()) continue;
     final lines = file.readAsLinesSync();
     violations.addAll(checkGitHubMarkdownLines(relPath, lines));
     if (!_isAgentDocPath(relPath)) {
-      violations.addAll(_checkMarkdownAstLinks(repoRoot, relPath, lines));
+      violations
+        ..addAll(_checkMarkdownAstLinks(repoRoot, relPath, lines))
+        ..addAll(
+          checkRawMarkdownDiodeAndSpot(
+            relPath,
+            lines,
+            canonicalSpotDefs: canonicalSpotDefs,
+          ),
+        );
     }
   }
   return violations;
