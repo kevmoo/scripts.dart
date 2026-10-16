@@ -230,13 +230,28 @@ class RepoAlignRunner {
     if (!pub.existsSync()) return;
     try {
       final doc = loadYaml(pub.readAsStringSync());
-      if (doc is! YamlMap || doc['publish_to']?.toString() == 'none') return;
+      if (doc is! YamlMap ||
+          doc['publish_to']?.toString() == 'none' ||
+          doc['version'] == null) {
+        return;
+      }
 
       final pkgDir = pub.parent;
+      final deps = doc['dependencies'];
       final devDeps = doc['dev_dependencies'];
       final hasDep = devDeps is YamlMap && devDeps.containsKey('api_summary');
+      final hasTest =
+          (deps is YamlMap && deps.containsKey('test')) ||
+          (devDeps is YamlMap && devDeps.containsKey('test'));
 
-      _ensureApiSummaryDevDep(pub, pkgDir, repoPath, hasDep, dryRun: dryRun);
+      _ensureApiSummaryDevDep(
+        pub,
+        pkgDir,
+        repoPath,
+        hasDep,
+        hasTest: hasTest,
+        dryRun: dryRun,
+      );
       _ensureApiTestFile(pkgDir, repoPath, dryRun: dryRun);
       _ensureApiTxtFile(pkgDir, repoPath, hasDep, dryRun: dryRun);
     } catch (e) {
@@ -249,9 +264,10 @@ class RepoAlignRunner {
     Directory pkgDir,
     String repoPath,
     bool hasDep, {
+    required bool hasTest,
     required bool dryRun,
   }) {
-    if (hasDep) return;
+    if (hasDep && hasTest) return;
     final action = dryRun ? 'Would add' : 'Adding';
     final relPub = p.relative(pub.path, from: repoPath);
     print('  📝 $action api_summary dev_dependency in $relPub');
@@ -259,7 +275,8 @@ class RepoAlignRunner {
     Process.runSync('dart', [
       'pub',
       'add',
-      'dev:api_summary',
+      if (!hasDep) 'dev:api_summary',
+      if (!hasTest) 'dev:test',
     ], workingDirectory: pkgDir.path);
   }
 

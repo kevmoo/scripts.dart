@@ -803,7 +803,9 @@ class _PubspecScanAccumulator {
   }
 
   void _recordPublishedPackage(Directory sub, YamlMap doc) {
-    if (doc['publish_to']?.toString() == 'none') return;
+    if (doc['publish_to']?.toString() == 'none' || doc['version'] == null) {
+      return;
+    }
     publishedCount++;
     if (File(p.join(sub.path, 'api.txt')).existsSync()) apiTxtCount++;
     if (File(p.join(sub.path, 'test', 'api_test.dart')).existsSync()) {
