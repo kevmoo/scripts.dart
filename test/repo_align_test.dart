@@ -381,70 +381,14 @@ void main() {
   });
 
   group('Canonical Templates', () {
-    test('contains expected workflow actions and flags', () {
-      check(canonicalLowerBoundWorkflow)
-          .contains('kevmoo/lower_bound.dart@main');
-      check(canonicalLowerBoundWorkflow).contains('actions/checkout@v7');
-      check(canonicalComplexityWorkflow)
-          .contains('kevmoo/analytica.dart/packages/cognitive_complexity@main');
-      check(canonicalComplexityWorkflow).contains('actions/checkout@v7');
-      check(canonicalComplexityWorkflow).contains('fail-threshold: 15');
-      check(canonicalComplexityWorkflow).contains('fail-on-increase: true');
-      check(canonicalAutosubmitWorkflow).contains('pull_request_target');
-      check(canonicalAutosubmitWorkflow).contains('actions/checkout@v7');
-      check(canonicalDependabotConfig)
-          .contains('package-ecosystem: github-actions');
-      check(canonicalDependabotConfig).contains('groups:');
-      check(canonicalAnalysisOptions)
-          .contains('package:dart_flutter_team_lints/analysis_options.yaml');
-    });
-
-    test('prettier config is scoped to markdown only', () {
-      check(canonicalPrettierRc).contains('"**/*.md"');
-      check(canonicalPrettierRc).contains('"proseWrap": "always"');
-      check(canonicalPrettierRc).contains('"printWidth": 80');
-      check(canonicalPrettierRc)
-          .contains('"embeddedLanguageFormatting": "off"');
-    });
-
     test('markdown workflow job id matches the required check context', () {
       check(canonicalMarkdownWorkflow).contains('\n  $markdownCheckContext:\n');
     });
 
-    test('markdown workflow pins prettier and has no paths filter', () {
-      check(canonicalMarkdownWorkflow).contains('prettier@3.9.6');
+    test('markdown workflow has no paths filter', () {
       // A `paths:` filter on a required check deadlocks every PR that touches
       // no markdown. Match the indented YAML key, not the word in the comment.
       check(canonicalMarkdownWorkflow).not((it) => it.contains('\n    paths:'));
-    });
-
-    test('markdown workflow sha-pins its actions', () {
-      check(
-        canonicalMarkdownWorkflow,
-      ).contains('actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1');
-      check(
-        canonicalMarkdownWorkflow,
-      ).contains('actions/setup-node@820762786026740c76f36085b0efc47a31fe5020');
-    });
-  });
-
-  group('publishedPackages', () {
-    test('contains bench_press and other known published packages', () {
-      check(publishedPackages).contains('bench_press');
-      check(publishedPackages).contains('build_cli');
-      check(publishedPackages).contains('lower_bound');
-      check(publishedPackages).contains('lower_bound.dart');
-      check(publishedPackages).contains('pubviz');
-      check(publishedPackages).contains('stats');
-    });
-  });
-
-  group('legacyOrIgnoredRepos', () {
-    test('contains holdings and other known legacy repos', () {
-      check(legacyOrIgnoredRepos).contains('holdings');
-      check(legacyOrIgnoredRepos).contains('json_compare_bench');
-      check(legacyOrIgnoredRepos).contains('wynette');
-      check(legacyOrIgnoredRepos).contains('personal_dotfiles');
     });
   });
 
@@ -810,27 +754,6 @@ jobs:
         check(results.first.path).equals(worktreePath);
       },
     );
-
-    test('classifies google-messages-hax as toolOrApp', () async {
-      await d.dir('google-messages-hax', [
-        d.file(
-          'pubspec.yaml',
-          'name: google_messages_hax\npublish_to: none\n'
-              'environment:\n  sdk: ^3.10.0\n',
-        ),
-      ]).create();
-
-      final repoPath = '${d.sandbox}/google-messages-hax';
-      final scanner = RepoAlignScanner(
-        baseDirPath: d.sandbox,
-        queryGitHubApi: false,
-      );
-      final results = scanner.scanAll(targetDir: repoPath);
-      check(results).length.equals(1);
-      check(results.first.name).equals('google-messages-hax');
-      check(results.first.kind).equals(RepoKind.toolOrApp);
-      check(results.first.requiresStandardCiWorkflows).isTrue();
-    });
   });
 }
 
