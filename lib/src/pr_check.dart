@@ -10,10 +10,13 @@ import 'package:io/ansi.dart' as ansi;
 import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
+import 'package:yaml/yaml.dart';
 
 import 'process_utils.dart';
 import 'shared/gh_args.dart';
 import 'testable_print.dart';
+
+part 'pr_check_agent_docs.dart';
 
 /// Pinned `package:cognitive_complexity` version used for `dart run` checks.
 const cognitiveComplexityPinnedVersion = '2.0.1';
@@ -511,6 +514,7 @@ final class _PrCheckRunner {
   void _runMarkdownChecks(List<String> mdFiles) {
     if (mdFiles.isEmpty) {
       _skip('gfm-markdown', 'no touched .md files');
+      _skip('agent-docs', 'no touched .md files');
       _skip('prettier-markdown', 'no touched .md files');
       return;
     }
@@ -519,6 +523,16 @@ final class _PrCheckRunner {
       'gfm-markdown',
       _checkGitHubMarkdownConventions(repoRoot, mdFiles),
     );
+
+    final agentDocFiles = mdFiles.where(_isAgentDocPath).toList();
+    if (agentDocFiles.isEmpty) {
+      _skip(
+        'agent-docs',
+        'no touched SKILL.md, AGENTS.md, or references/ files',
+      );
+    } else {
+      _recordMulti('agent-docs', checkAgentDocFiles(repoRoot, agentDocFiles));
+    }
 
     final hasPrettier =
         workflowsText.toLowerCase().contains('prettier') ||
@@ -893,18 +907,27 @@ List<PrCheckViolation> _checkGitHubMarkdownConventions(
 }
 
 /// Validates that [lines] from [relPath] follow GitHub Flavored Markdown
-/// conventions (Prettier-safe GFM alerts with an empty `>` separator line, and
-/// no Google3-only `<!-- mdformat ... -->` or `[TOC]` directives).
+/// conventions (Prettier-safe GFM alerts with an empty `>` separator line, no
+/// Google3-only `<!-- mdformat ... -->` or `[TOC]` directives, and no Unicode
+/// em/en-dashes inside executable code blocks or inline CLI flags).
 List<PrCheckViolation> checkGitHubMarkdownLines(
   String relPath,
   List<String> lines,
 ) {
   final violations = <PrCheckViolation>[];
-  String? activeFence;
+  _FenceState? activeFence;
   for (var i = 0; i < lines.length; i++) {
     final line = lines[i];
     final nextFence = _updateFenceState(activeFence, line);
     if (activeFence != null || nextFence != null) {
+      final fenceViolation = _checkFencedMarkdownLine(
+        relPath,
+        i + 1,
+        line,
+        activeFence,
+        nextFence,
+      );
+      if (fenceViolation != null) violations.add(fenceViolation);
       activeFence = nextFence;
       continue;
     }
@@ -920,16 +943,6 @@ List<PrCheckViolation> checkGitHubMarkdownLines(
     if (violation != null) violations.add(violation);
   }
   return violations;
-}
-
-String? _updateFenceState(String? activeFence, String line) {
-  final match = RegExp(r'^\s*(`{3,}|~{3,})(.*)$').firstMatch(line);
-  if (match == null) return activeFence;
-  final fence = match.group(1)!;
-  if (activeFence == null) return fence;
-  final isClosing =
-      fence.startsWith(activeFence) && match.group(2)!.trim().isEmpty;
-  return isClosing ? null : activeFence;
 }
 
 PrCheckViolation? _checkSingleMarkdownLine(
@@ -987,5 +1000,5 @@ PrCheckViolation? _checkSingleMarkdownLine(
           'GitHub Markdown files.',
     );
   }
-  return null;
+  return _checkInlineCodeFlagDashes(relPath, lineNumber, line);
 }
