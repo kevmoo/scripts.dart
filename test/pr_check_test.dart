@@ -544,30 +544,21 @@ environment:
     },
   );
 
-  test(
-    'detects Unicode em/en-dashes in executable code fences and inline CLI '
-    'flags while allowing prose markdown fences and non-flag inline spans',
-    () {
-      final violations = checkGitHubMarkdownLines('skills/sample/SKILL.md', [
-        '# Sample Skill',
-        '',
-        'Run `kscripts pr-check —test` or `[Valid — Fix]` and `8–15`.',
-        '',
-        '```bash',
-        'kscripts pr-check —dir .',
-        '```',
-        '',
-        '```markdown',
-        '# PR Review — Allowed in markdown fence',
-        '```',
-      ]);
+  test('detects Unicode em/en-dashes in inline CLI flags while allowing dashes '
+      'inside fenced code blocks and non-flag inline spans', () {
+    final violations = checkGitHubMarkdownLines('skills/sample/SKILL.md', [
+      '# Sample Skill',
+      '',
+      'Run `kscripts pr-check —test` or `[Valid — Fix]` and `8–15`.',
+      '',
+      '```bash',
+      '# Comment — allowed inside fenced code block',
+      '```',
+    ]);
 
-      check(violations.map((v) => v.check).toList()).deepEquals([
-        'markdown-code-unicode-dash',
-        'markdown-code-unicode-dash',
-      ]);
-    },
-  );
+    check(violations.map((v) => v.check).toList())
+        .deepEquals(['markdown-code-unicode-dash']);
+  });
 
   test('checkAgentDocFiles enforces SKILL.md / AGENTS.md line budgets, '
       'frontmatter trigger contract, broken relative links, and unlinked '

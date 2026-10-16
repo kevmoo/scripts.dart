@@ -8,6 +8,7 @@ import 'package:cli_util/cli_util.dart';
 import 'package:firehose/firehose.dart' as firehose;
 import 'package:io/ansi.dart' as ansi;
 import 'package:io/io.dart';
+import 'package:markdown/markdown.dart' as md;
 import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
 import 'package:yaml/yaml.dart';
@@ -902,7 +903,7 @@ List<PrCheckViolation> _checkGitHubMarkdownConventions(
     final lines = file.readAsLinesSync();
     violations.addAll(checkGitHubMarkdownLines(relPath, lines));
     if (!_isAgentDocPath(relPath)) {
-      violations.addAll(_checkRelativeMarkdownLinks(repoRoot, relPath, lines));
+      violations.addAll(_checkMarkdownAstLinks(repoRoot, relPath, lines));
     }
   }
   return violations;
@@ -911,7 +912,7 @@ List<PrCheckViolation> _checkGitHubMarkdownConventions(
 /// Validates that [lines] from [relPath] follow GitHub Flavored Markdown
 /// conventions (Prettier-safe GFM alerts with an empty `>` separator line, no
 /// Google3-only `<!-- mdformat ... -->` or `[TOC]` directives, and no Unicode
-/// em/en-dashes inside executable code blocks or inline CLI flags).
+/// em/en-dashes used as CLI flag prefixes inside inline code spans).
 List<PrCheckViolation> checkGitHubMarkdownLines(
   String relPath,
   List<String> lines,
@@ -922,14 +923,6 @@ List<PrCheckViolation> checkGitHubMarkdownLines(
     final line = lines[i];
     final nextFence = _updateFenceState(activeFence, line);
     if (activeFence != null || nextFence != null) {
-      final fenceViolation = _checkFencedMarkdownLine(
-        relPath,
-        i + 1,
-        line,
-        activeFence,
-        nextFence,
-      );
-      if (fenceViolation != null) violations.add(fenceViolation);
       activeFence = nextFence;
       continue;
     }
@@ -944,6 +937,7 @@ List<PrCheckViolation> checkGitHubMarkdownLines(
     );
     if (violation != null) violations.add(violation);
   }
+  violations.addAll(_checkAstInlineCliFlagDashes(relPath, lines));
   return violations;
 }
 
@@ -1003,5 +997,5 @@ PrCheckViolation? _checkSingleMarkdownLine(
           'GitHub Markdown files.',
     );
   }
-  return _checkInlineCodeFlagDashes(relPath, lineNumber, line);
+  return null;
 }

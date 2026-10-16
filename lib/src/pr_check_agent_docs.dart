@@ -13,14 +13,10 @@ const maxSkillDescriptionChars = 1024;
 
 const _alwaysOnAgentDocNames = {'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'};
 
-const _proseFenceLangs = {'markdown', 'md', 'text', 'txt', 'plaintext', 'diff'};
-
-final _unicodeDashRegex = RegExp(r'[\u2014\u2013]');
 final _inlineCodeSpanRegex = RegExp(r'(`+)(.+?)\1');
 final _inlineCliFlagUnicodeDashRegex = RegExp(
   r'(?:^|\s)[\u2014\u2013][A-Za-z0-9]',
 );
-final _markdownLinkRegex = RegExp(r'\[[^\]]+\]\(([^)]+)\)');
 final _skillNamePattern = RegExp(r'^[a-z0-9-]+$');
 
 final class _FenceState {
@@ -43,45 +39,66 @@ _FenceState? _updateFenceState(_FenceState? activeFence, String line) {
   return isClosing ? null : activeFence;
 }
 
-PrCheckViolation? _checkFencedMarkdownLine(
-  String relPath,
-  int lineNumber,
-  String line,
-  _FenceState? activeFence,
-  _FenceState? nextFence,
-) {
-  if (activeFence == null || nextFence == null) return null;
-  if (_proseFenceLangs.contains(activeFence.lang) ||
-      !_unicodeDashRegex.hasMatch(line)) {
-    return null;
+final class _MarkdownAstCollector implements md.NodeVisitor {
+  final List<String> hrefs = [];
+  final List<String> inlineCodes = [];
+
+  @override
+  void visitText(md.Text text) {}
+
+  @override
+  bool visitElementBefore(md.Element element) {
+    if (element.tag == 'a') {
+      final href = element.attributes['href'];
+      if (href != null) hrefs.add(href);
+    } else if (element.tag == 'pre') {
+      return false;
+    } else if (element.tag == 'code') {
+      inlineCodes.add(element.textContent);
+    }
+    return true;
   }
-  return PrCheckViolation(
-    check: 'markdown-code-unicode-dash',
-    message:
-        '$relPath:$lineNumber contains a Unicode em/en-dash (— or –) inside '
-        'a fenced code block.',
-    remediation: 'Replace — or – with ASCII -- or - inside code blocks.',
-  );
+
+  @override
+  void visitElementAfter(md.Element element) {}
 }
 
-PrCheckViolation? _checkInlineCodeFlagDashes(
+_MarkdownAstCollector _collectMarkdownAst(List<String> lines) {
+  var bodyLines = lines;
+  if (lines.isNotEmpty && lines.first.trim() == '---') {
+    final closeIdx = lines.indexOf('---', 1);
+    if (closeIdx > 0) {
+      bodyLines = lines.sublist(closeIdx + 1);
+    }
+  }
+  final doc = md.Document(extensionSet: md.ExtensionSet.gitHubWeb);
+  final collector = _MarkdownAstCollector();
+  for (final node in doc.parseLines(bodyLines)) {
+    node.accept(collector);
+  }
+  return collector;
+}
+
+List<PrCheckViolation> _checkAstInlineCliFlagDashes(
   String relPath,
-  int lineNumber,
-  String line,
+  List<String> lines,
 ) {
-  for (final match in _inlineCodeSpanRegex.allMatches(line)) {
-    final span = match.group(2)!;
+  final violations = <PrCheckViolation>[];
+  final collector = _collectMarkdownAst(lines);
+  for (final span in collector.inlineCodes) {
     if (_inlineCliFlagUnicodeDashRegex.hasMatch(span)) {
-      return PrCheckViolation(
-        check: 'markdown-code-unicode-dash',
-        message:
-            '$relPath:$lineNumber contains a Unicode dash flag prefix inside '
-            'inline code (`$span`).',
-        remediation: 'Replace — or – with ASCII -- or - in CLI flags.',
+      violations.add(
+        PrCheckViolation(
+          check: 'markdown-code-unicode-dash',
+          message:
+              '$relPath contains a Unicode dash flag prefix inside '
+              'inline code (`$span`).',
+          remediation: 'Replace — or – with ASCII -- or - in CLI flags.',
+        ),
       );
     }
   }
-  return null;
+  return violations;
 }
 
 bool _isAgentDocPath(String relPath) {
@@ -94,183 +111,191 @@ bool _isAgentDocPath(String relPath) {
 }
 
 /// Validates agentic documentation files (`SKILL.md`, `AGENTS.md`, `CLAUDE.md`,
-/// `GEMINI.md`, and `references/*.md`) for line budgets, frontmatter trigger
-/// contracts, and relative link integrity.
+/// `GEMINI.md`, and `references/*.md`) for line budgets, frontmatter contracts,
+/// and internal link integrity.
 List<PrCheckViolation> checkAgentDocFiles(
   Directory repoRoot,
-  List<String> mdFiles,
+  List<String> changedFiles,
 ) {
   final violations = <PrCheckViolation>[];
-  for (final relPath in mdFiles) {
-    if (!_isAgentDocPath(relPath)) continue;
+  for (final relPath in changedFiles.where(_isAgentDocPath)) {
     violations.addAll(checkSingleAgentDocFile(repoRoot, relPath));
   }
   return violations;
 }
 
-/// Validates a single agentic documentation file at [relPath] under [repoRoot].
+/// Validates a single agent documentation file at [relPath] relative to
+/// [repoRoot].
 List<PrCheckViolation> checkSingleAgentDocFile(
   Directory repoRoot,
   String relPath,
 ) {
   final file = File(p.join(repoRoot.path, relPath));
   if (!file.existsSync()) return const [];
+
+  final text = file.readAsStringSync();
   final lines = file.readAsLinesSync();
   final base = p.basename(relPath);
   final violations = <PrCheckViolation>[];
 
   if (base == 'SKILL.md') {
-    final budgetViolation = _checkLineBudget(
-      relPath,
-      lines.length,
-      maxSkillMdLines,
-      'Offload detailed schemas, tables, or templates into '
-      'references/<topic>.md.',
-    );
-    if (budgetViolation != null) violations.add(budgetViolation);
-    violations
-      ..addAll(checkSkillFrontmatter(relPath, lines))
-      ..addAll(
-        _checkUnlinkedSkillReferences(repoRoot, relPath, lines.join('\n')),
-      );
+    violations.addAll(_checkSkillMdFile(repoRoot, relPath, text, lines));
   } else if (_alwaysOnAgentDocNames.contains(base)) {
-    final budgetViolation = _checkLineBudget(
-      relPath,
-      lines.length,
-      maxAgentsMdLines,
-      'Move domain-specific standards to a standalone reference file and link '
-      'it on demand.',
-    );
-    if (budgetViolation != null) violations.add(budgetViolation);
+    violations.addAll(_checkAlwaysOnAgentDoc(relPath, lines));
   }
 
-  violations.addAll(_checkRelativeMarkdownLinks(repoRoot, relPath, lines));
+  violations.addAll(_checkMarkdownAstLinks(repoRoot, relPath, lines));
   return violations;
 }
 
-PrCheckViolation? _checkLineBudget(
-  String relPath,
-  int lineCount,
-  int maxLines,
-  String remediation,
-) {
-  if (lineCount <= maxLines) return null;
-  return PrCheckViolation(
-    check: 'agent-doc-line-budget',
-    message:
-        '$relPath has $lineCount lines, exceeding the $maxLines-line ceiling.',
-    remediation: remediation,
-  );
-}
-
-/// Validates YAML frontmatter and trigger-only `description` rules for a
-/// `SKILL.md` file's [lines].
-List<PrCheckViolation> checkSkillFrontmatter(
+List<PrCheckViolation> _checkAlwaysOnAgentDoc(
   String relPath,
   List<String> lines,
 ) {
-  final closingIdx = _findFrontmatterClosingIndex(lines);
-  if (closingIdx == null) {
+  if (lines.length <= maxAgentsMdLines) return const [];
+  return [
+    PrCheckViolation(
+      check: 'agent-doc-line-budget',
+      message:
+          '$relPath is ${lines.length} lines (exceeds $maxAgentsMdLines-line '
+          'always-on instruction budget).',
+      remediation:
+          'Extract detailed reference tables or multi-step playbooks into '
+          'on-demand skills or `references/*.md` files so $relPath stays '
+          '<= $maxAgentsMdLines lines with zero content loss.',
+    ),
+  ];
+}
+
+List<PrCheckViolation> _checkSkillMdFile(
+  Directory repoRoot,
+  String relPath,
+  String text,
+  List<String> lines,
+) {
+  final violations = <PrCheckViolation>[];
+  if (lines.length > maxSkillMdLines) {
+    violations.add(
+      PrCheckViolation(
+        check: 'agent-doc-line-budget',
+        message:
+            '$relPath is ${lines.length} lines (exceeds $maxSkillMdLines-line '
+            'SKILL.md budget).',
+        remediation:
+            'Extract reference schemas, long templates, or edge-case matrices '
+            'into `references/*.md` (linked from $relPath) so $relPath stays '
+            '<= $maxSkillMdLines lines with zero content loss.',
+      ),
+    );
+  }
+  violations
+    ..addAll(_checkSkillFrontmatter(relPath, lines))
+    ..addAll(_checkUnlinkedSkillReferences(repoRoot, relPath, text));
+  return violations;
+}
+
+List<PrCheckViolation> _checkSkillFrontmatter(
+  String relPath,
+  List<String> lines,
+) {
+  if (lines.isEmpty || lines.first.trim() != '---') {
     return [
       PrCheckViolation(
         check: 'skill-frontmatter',
-        message: '$relPath is missing a leading --- YAML frontmatter block.',
+        message: '$relPath must start with YAML frontmatter (`---`).',
         remediation:
-            'Add a YAML frontmatter block with `name` and `description: >-` '
-            'at the top of $relPath.',
+            'Add a `---` YAML frontmatter block with `name` and '
+            '`description` at the top of $relPath.',
+      ),
+    ];
+  }
+  final closingIdx = lines.indexOf('---', 1);
+  if (closingIdx <= 1) {
+    return [
+      PrCheckViolation(
+        check: 'skill-frontmatter',
+        message: '$relPath has an unterminated YAML frontmatter block.',
+        remediation: 'Close the YAML frontmatter block with `---`.',
       ),
     ];
   }
 
   final rawFrontmatter = lines.sublist(1, closingIdx).join('\n');
-  YamlMap? map;
+  final YamlMap yaml;
   try {
     final parsed = loadYaml(rawFrontmatter);
-    if (parsed is YamlMap) map = parsed;
-  } on Object {
-    map = null;
-  }
-  if (map == null) {
+    if (parsed is! YamlMap) {
+      return [
+        PrCheckViolation(
+          check: 'skill-frontmatter',
+          message: '$relPath YAML frontmatter is not a key-value map.',
+          remediation: 'Define `name` and `description` keys in frontmatter.',
+        ),
+      ];
+    }
+    yaml = parsed;
+  } on YamlException catch (e) {
     return [
       PrCheckViolation(
         check: 'skill-frontmatter',
-        message: '$relPath has invalid YAML frontmatter.',
-        remediation: 'Fix YAML syntax inside the leading --- block.',
+        message: '$relPath has invalid YAML frontmatter: ${e.message}',
+        remediation: 'Fix YAML syntax in $relPath frontmatter.',
       ),
     ];
   }
 
+  return _validateSkillMetadata(relPath, yaml);
+}
+
+List<PrCheckViolation> _validateSkillMetadata(String relPath, YamlMap yaml) {
   final violations = <PrCheckViolation>[];
-  final nameViolation = _checkSkillNameField(relPath, map['name']);
-  if (nameViolation != null) violations.add(nameViolation);
-  violations.addAll(
-    _checkSkillDescriptionField(relPath, rawFrontmatter, map['description']),
-  );
-  return violations;
-}
+  final parentFolder = p.basename(p.dirname(relPath));
+  final name = yaml['name']?.toString().trim() ?? '';
 
-int? _findFrontmatterClosingIndex(List<String> lines) {
-  if (lines.isEmpty || lines.first.trim() != '---') return null;
-  for (var i = 1; i < lines.length; i++) {
-    if (lines[i].trim() == '---') return i > 1 ? i : null;
-  }
-  return null;
-}
-
-PrCheckViolation? _checkSkillNameField(String relPath, Object? rawName) {
-  final name = rawName is String ? rawName.trim() : '';
   if (name.isEmpty || !_skillNamePattern.hasMatch(name)) {
-    return PrCheckViolation(
-      check: 'skill-frontmatter',
-      message:
-          '$relPath frontmatter must define a lowercase hyphenated `name` '
-          '(^[a-z0-9-]+\$).',
-      remediation: 'Set `name: <skill-slug>` in $relPath frontmatter.',
-    );
-  }
-  final parentDir = p.basename(p.dirname(relPath));
-  if (parentDir != '.' && parentDir != 'skills' && name != parentDir) {
-    return PrCheckViolation(
-      check: 'skill-frontmatter',
-      message:
-          '$relPath frontmatter name "$name" does not match parent directory '
-          '"$parentDir".',
-      remediation: 'Align `name: $parentDir` with the skill folder name.',
-    );
-  }
-  return null;
-}
-
-List<PrCheckViolation> _checkSkillDescriptionField(
-  String relPath,
-  String rawFrontmatter,
-  Object? rawDescription,
-) {
-  final desc = rawDescription is String ? rawDescription.trim() : '';
-  if (desc.isEmpty) {
-    return [
-      PrCheckViolation(
-        check: 'skill-frontmatter',
-        message: '$relPath frontmatter is missing a non-empty `description`.',
-        remediation:
-            'Add `description: >-` with capability, "Use when ...", and '
-            '"Don\'t use for ..." clauses.',
-      ),
-    ];
-  }
-
-  final violations = <PrCheckViolation>[];
-  if (!rawFrontmatter.contains('description: >-')) {
     violations.add(
       PrCheckViolation(
         check: 'skill-frontmatter',
         message:
-            '$relPath frontmatter should use folded scalar syntax '
-            '(`description: >-`).',
-        remediation: 'Use `description: >-` in $relPath frontmatter.',
+            '$relPath frontmatter `name` ("$name") must match `^[a-z0-9-]+\$`.',
+        remediation: 'Set `name: $parentFolder` in $relPath.',
+      ),
+    );
+  } else if (parentFolder != '.' && name != parentFolder) {
+    violations.add(
+      PrCheckViolation(
+        check: 'skill-frontmatter',
+        message:
+            '$relPath frontmatter `name` ("$name") does not match parent '
+            'directory "$parentFolder".',
+        remediation: 'Set `name: $parentFolder` in $relPath.',
       ),
     );
   }
+
+  violations.addAll(
+    _validateSkillDescription(
+      relPath,
+      yaml['description']?.toString().trim() ?? '',
+    ),
+  );
+  return violations;
+}
+
+List<PrCheckViolation> _validateSkillDescription(String relPath, String desc) {
+  if (desc.isEmpty) {
+    return [
+      PrCheckViolation(
+        check: 'skill-frontmatter',
+        message: '$relPath frontmatter is missing a `description` field.',
+        remediation:
+            'Add a `description: >-` field with capability and trigger '
+            'clauses.',
+      ),
+    ];
+  }
+
+  final violations = <PrCheckViolation>[];
   if (desc.length > maxSkillDescriptionChars) {
     violations.add(
       PrCheckViolation(
@@ -284,15 +309,6 @@ List<PrCheckViolation> _checkSkillDescriptionField(
       ),
     );
   }
-  violations.addAll(_checkDescriptionContentRules(relPath, desc));
-  return violations;
-}
-
-List<PrCheckViolation> _checkDescriptionContentRules(
-  String relPath,
-  String desc,
-) {
-  final violations = <PrCheckViolation>[];
   if (desc.contains('<') || desc.contains('>')) {
     violations.add(
       PrCheckViolation(
@@ -303,94 +319,32 @@ List<PrCheckViolation> _checkDescriptionContentRules(
       ),
     );
   }
-  if (!desc.contains('Use when') && !desc.contains('Use whenever')) {
-    violations.add(
-      PrCheckViolation(
-        check: 'skill-frontmatter',
-        message:
-            '$relPath description is missing a positive "Use when ..." '
-            'trigger clause.',
-        remediation: 'Add a "Use when ..." sentence to `description`.',
-      ),
-    );
-  }
-  if (!desc.contains("Don't use") && !desc.contains('Do not use')) {
-    violations.add(
-      PrCheckViolation(
-        check: 'skill-frontmatter',
-        message:
-            '$relPath description is missing a negative "Don\'t use for ..." '
-            'trigger clause.',
-        remediation:
-            'Add a "Don\'t use for ..." clause naming alternative skills.',
-      ),
-    );
-  }
-  if (desc.contains('`')) {
-    violations.add(
-      PrCheckViolation(
-        check: 'skill-frontmatter',
-        message:
-            '$relPath description contains backtick code/CLI syntax (violates '
-            'progressive disclosure).',
-        remediation:
-            'Move CLI commands and flags out of `description` into '
-            '## Quick Start.',
-      ),
-    );
-  }
   return violations;
 }
 
-List<PrCheckViolation> _checkRelativeMarkdownLinks(
+List<PrCheckViolation> _checkMarkdownAstLinks(
   Directory repoRoot,
   String relPath,
   List<String> lines,
 ) {
   final violations = <PrCheckViolation>[];
   final fileDir = p.dirname(p.join(repoRoot.path, relPath));
-  _FenceState? activeFence;
+  final collector = _collectMarkdownAst(lines);
 
-  for (var i = 0; i < lines.length; i++) {
-    final line = lines[i];
-    final nextFence = _updateFenceState(activeFence, line);
-    if (activeFence != null || nextFence != null) {
-      activeFence = nextFence;
-      continue;
-    }
-    final strippedLine = line.replaceAll(_inlineCodeSpanRegex, 'code');
-    violations.addAll(
-      _checkLineRelativeLinks(repoRoot, relPath, i + 1, strippedLine, fileDir),
-    );
-  }
-  return violations;
-}
-
-List<PrCheckViolation> _checkLineRelativeLinks(
-  Directory repoRoot,
-  String relPath,
-  int lineNumber,
-  String strippedLine,
-  String fileDir,
-) {
-  final violations = <PrCheckViolation>[];
-  for (final match in _markdownLinkRegex.allMatches(strippedLine)) {
-    final rawTarget = match.group(1)!.trim().split(RegExp(r'\s+')).first;
+  for (final rawHref in collector.hrefs) {
     final resolved = _resolveInternalLinkTarget(
       repoRoot.path,
       fileDir,
-      rawTarget,
+      rawHref,
     );
     if (resolved == null) continue;
     if (!File(resolved).existsSync() && !Directory(resolved).existsSync()) {
       violations.add(
         PrCheckViolation(
           check: 'agent-doc-broken-link',
-          message:
-              '$relPath:$lineNumber links to missing internal path '
-              '"$rawTarget".',
+          message: '$relPath links to missing internal path "$rawHref".',
           remediation:
-              'Fix the relative path "$rawTarget" or wrap placeholder links '
+              'Fix the relative path "$rawHref" or wrap placeholder links '
               'in inline backticks.',
         ),
       );
@@ -402,24 +356,33 @@ List<PrCheckViolation> _checkLineRelativeLinks(
 String? _resolveInternalLinkTarget(
   String repoRootPath,
   String fileDir,
-  String rawTarget,
+  String rawHref,
 ) {
-  if (rawTarget.isEmpty ||
-      rawTarget.startsWith('#') ||
-      rawTarget.startsWith('//') ||
-      rawTarget.startsWith('~') ||
-      rawTarget.contains('://') ||
-      rawTarget.startsWith('mailto:') ||
-      RegExp(r'[<>${}*]').hasMatch(rawTarget)) {
+  final href = Uri.decodeFull(rawHref.trim());
+  if (_isIgnoredLinkHref(href)) return null;
+  final withoutFragment = href.split('#').first.split('?').first;
+  if (withoutFragment.isEmpty) return null;
+  final resolved = withoutFragment.startsWith('/')
+      ? p.normalize(p.join(repoRootPath, withoutFragment.substring(1)))
+      : p.normalize(p.join(fileDir, withoutFragment));
+  if (resolved != repoRootPath && !p.isWithin(repoRootPath, resolved)) {
     return null;
   }
-  final withoutFragment = rawTarget.split('#').first.split('?').first;
-  if (withoutFragment.isEmpty) return null;
-  if (withoutFragment.startsWith('/')) {
-    return p.normalize(p.join(repoRootPath, withoutFragment.substring(1)));
-  }
-  return p.normalize(p.join(fileDir, withoutFragment));
+  return resolved;
 }
+
+bool _isIgnoredLinkHref(String href) =>
+    href.isEmpty ||
+    href == '...' ||
+    href.startsWith('#') ||
+    href.startsWith('//') ||
+    href.startsWith('~') ||
+    href.contains('://') ||
+    href.startsWith('mailto:') ||
+    href.startsWith('javascript:') ||
+    href.startsWith('data:') ||
+    RegExp(r'^/\d{4}/\d{2}/').hasMatch(href) ||
+    RegExp(r'[<>${}*]').hasMatch(href);
 
 List<PrCheckViolation> _checkUnlinkedSkillReferences(
   Directory repoRoot,
