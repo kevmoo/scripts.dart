@@ -358,15 +358,16 @@ List<PrCheckViolation> _checkRelativeMarkdownLinks(
       activeFence = nextFence;
       continue;
     }
-    final strippedLine = line.replaceAll(_inlineCodeSpanRegex, '');
+    final strippedLine = line.replaceAll(_inlineCodeSpanRegex, 'code');
     violations.addAll(
-      _checkLineRelativeLinks(relPath, i + 1, strippedLine, fileDir),
+      _checkLineRelativeLinks(repoRoot, relPath, i + 1, strippedLine, fileDir),
     );
   }
   return violations;
 }
 
 List<PrCheckViolation> _checkLineRelativeLinks(
+  Directory repoRoot,
   String relPath,
   int lineNumber,
   String strippedLine,
@@ -375,19 +376,22 @@ List<PrCheckViolation> _checkLineRelativeLinks(
   final violations = <PrCheckViolation>[];
   for (final match in _markdownLinkRegex.allMatches(strippedLine)) {
     final rawTarget = match.group(1)!.trim().split(RegExp(r'\s+')).first;
-    final cleanRel = _extractRelativeLinkPath(rawTarget);
-    if (cleanRel == null) continue;
-    final resolved = p.normalize(p.join(fileDir, cleanRel));
+    final resolved = _resolveInternalLinkTarget(
+      repoRoot.path,
+      fileDir,
+      rawTarget,
+    );
+    if (resolved == null) continue;
     if (!File(resolved).existsSync() && !Directory(resolved).existsSync()) {
       violations.add(
         PrCheckViolation(
           check: 'agent-doc-broken-link',
           message:
-              '$relPath:$lineNumber links to missing relative path '
+              '$relPath:$lineNumber links to missing internal path '
               '"$rawTarget".',
           remediation:
-              'Fix the relative path "$rawTarget" or create the referenced '
-              'file.',
+              'Fix the relative path "$rawTarget" or wrap placeholder links '
+              'in inline backticks.',
         ),
       );
     }
@@ -395,10 +399,14 @@ List<PrCheckViolation> _checkLineRelativeLinks(
   return violations;
 }
 
-String? _extractRelativeLinkPath(String rawTarget) {
+String? _resolveInternalLinkTarget(
+  String repoRootPath,
+  String fileDir,
+  String rawTarget,
+) {
   if (rawTarget.isEmpty ||
       rawTarget.startsWith('#') ||
-      rawTarget.startsWith('/') ||
+      rawTarget.startsWith('//') ||
       rawTarget.startsWith('~') ||
       rawTarget.contains('://') ||
       rawTarget.startsWith('mailto:') ||
@@ -406,7 +414,11 @@ String? _extractRelativeLinkPath(String rawTarget) {
     return null;
   }
   final withoutFragment = rawTarget.split('#').first.split('?').first;
-  return withoutFragment.isEmpty ? null : withoutFragment;
+  if (withoutFragment.isEmpty) return null;
+  if (withoutFragment.startsWith('/')) {
+    return p.normalize(p.join(repoRootPath, withoutFragment.substring(1)));
+  }
+  return p.normalize(p.join(fileDir, withoutFragment));
 }
 
 List<PrCheckViolation> _checkUnlinkedSkillReferences(

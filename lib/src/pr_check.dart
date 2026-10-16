@@ -899,9 +899,11 @@ List<PrCheckViolation> _checkGitHubMarkdownConventions(
   for (final relPath in mdFiles) {
     final file = File(p.join(repoRoot.path, relPath));
     if (!file.existsSync()) continue;
-    violations.addAll(
-      checkGitHubMarkdownLines(relPath, file.readAsLinesSync()),
-    );
+    final lines = file.readAsLinesSync();
+    violations.addAll(checkGitHubMarkdownLines(relPath, lines));
+    if (!_isAgentDocPath(relPath)) {
+      violations.addAll(_checkRelativeMarkdownLinks(repoRoot, relPath, lines));
+    }
   }
   return violations;
 }
