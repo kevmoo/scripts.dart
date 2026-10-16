@@ -989,7 +989,8 @@ PrCheckViolation? _checkSingleMarkdownLine(
           '`> [!TYPE]`, or run `mdf $relPath`.',
     );
   }
-  if (_google3DirectiveRegex.hasMatch(line)) {
+  final withoutInlineCode = line.replaceAll(_inlineCodeSpanRegex, '');
+  if (_google3DirectiveRegex.hasMatch(withoutInlineCode)) {
     return PrCheckViolation(
       check: 'gfm-no-google3-directives',
       message:

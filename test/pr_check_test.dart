@@ -516,6 +516,7 @@ environment:
         '',
         '<!-- mdformat off -->',
         '[TOC]',
+        'Mentioning `<!-- mdformat off -->` and `[TOC]` in backticks is fine.',
         '',
         '```markdown',
         '> [!NOTE] Inside code fence is ignored.',
