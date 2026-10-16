@@ -378,6 +378,105 @@ void main() {
       check(drifted.issues)
           .contains('Missing "autosubmit" label on GitHub repository');
     });
+
+    test('flags missing api_summary dev_dependency, api.txt, and '
+        'test/api_test.dart on published repos', () {
+      final status = RepoAlignmentStatus(
+        name: 'pub_pkg',
+        path: '/tmp/pub_pkg',
+        kind: RepoKind.publishedPackage,
+        isArchived: false,
+        isFork: false,
+        isPrivate: false,
+        defaultBranch: 'main',
+        hasPubspec: true,
+        sdkConstraint: '^3.12.0',
+        packageNames: ['pub_pkg'],
+        hasApiSummaryDevDep: false,
+        hasApiTxt: false,
+        hasApiTest: false,
+        hasAnalysisOptions: true,
+        analysisInclude:
+            'package:dart_flutter_team_lints/analysis_options.yaml',
+        strictCasts: true,
+        strictInference: true,
+        strictRawTypes: true,
+        customLints: [],
+        workflowFiles: [
+          'ci.yml',
+          'lower_bound.yml',
+          'complexity.yml',
+          'autosubmit.yml',
+          'markdown.yml',
+        ],
+        hasCi: true,
+        hasLowerBound: true,
+        hasCogComp: true,
+        hasAutosubmit: true,
+        hasDependabot: true,
+        hasPublish: true,
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        autoMergeAllowed: true,
+        hasRulesetOrProtection: true,
+        requiredChecks: ['analyze (dev)', 'markdown'],
+        defaultBranchRulesetId: '123',
+        defaultBranchRequiredChecks: ['analyze (dev)', 'markdown'],
+      );
+
+      check(status.isAligned).isFalse();
+      check(status.issues).contains('Missing api_summary dev_dependency');
+      check(status.issues).contains('Missing api.txt');
+      check(status.issues).contains('Missing test/api_test.dart');
+    });
+
+    test('does not flag api_summary on repos with hasPublishToNone', () {
+      final status = RepoAlignmentStatus(
+        name: 'unpublished_ws',
+        path: '/tmp/unpublished_ws',
+        kind: RepoKind.monorepoWorkspace,
+        isArchived: false,
+        isFork: false,
+        isPrivate: false,
+        defaultBranch: 'main',
+        hasPubspec: true,
+        sdkConstraint: '^3.12.0',
+        packageNames: ['unpublished_ws'],
+        hasPublishToNone: true,
+        hasApiSummaryDevDep: false,
+        hasApiTxt: false,
+        hasApiTest: false,
+        hasAnalysisOptions: true,
+        analysisInclude:
+            'package:dart_flutter_team_lints/analysis_options.yaml',
+        strictCasts: true,
+        strictInference: true,
+        strictRawTypes: true,
+        customLints: [],
+        workflowFiles: [
+          'ci.yml',
+          'complexity.yml',
+          'autosubmit.yml',
+          'markdown.yml',
+        ],
+        hasCi: true,
+        hasLowerBound: false,
+        hasCogComp: true,
+        hasAutosubmit: true,
+        hasDependabot: true,
+        hasPublish: false,
+        hasPrettierRc: true,
+        hasMarkdownWorkflow: true,
+        autoMergeAllowed: true,
+        hasRulesetOrProtection: true,
+        requiredChecks: ['analyze (dev)', 'markdown'],
+        defaultBranchRulesetId: '123',
+        defaultBranchRequiredChecks: ['analyze (dev)', 'markdown'],
+      );
+
+      check(status.isAligned).isTrue();
+      check(status.issues).isEmpty();
+    });
   });
 
   group('Canonical Templates', () {

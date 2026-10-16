@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:collection/collection.dart';
 import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
+import 'package:yaml/yaml.dart';
 
 import 'canonical_templates.dart';
 import 'models.dart';
@@ -52,15 +53,17 @@ class RepoAlignRunner {
 
   void _printSummaryTable(List<RepoAlignmentStatus> activeResults) {
     print(
-      '| Repository | Kind | Strict Mode | Lower Bound | CogComp | '
+      '| Repository | Kind | Strict Mode | api.txt | Lower Bound | CogComp | '
       'Autosubmit | Dependabot | Auto-Merge | Status |',
     );
     print(
-      '| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :--- |',
+      '| :--- | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: '
+      '| :--- |',
     );
 
     for (final r in activeResults) {
       final strictIcon = _strictModeIcon(r);
+      final apiIcon = _apiTxtIcon(r);
       final lbIcon = _lowerBoundIcon(r);
       final ccIcon = _complexityIcon(r);
       final asIcon = r.hasAutosubmit ? '✅' : '❌';
@@ -71,8 +74,8 @@ class RepoAlignRunner {
           : '🔴 ${r.issues.length} Drift(s)';
 
       final line =
-          '| **`${r.name}`** | ${r.kind.name} | $strictIcon | $lbIcon | '
-          '$ccIcon | $asIcon | $dbIcon | $amIcon | $status |';
+          '| **`${r.name}`** | ${r.kind.name} | $strictIcon | $apiIcon | '
+          '$lbIcon | $ccIcon | $asIcon | $dbIcon | $amIcon | $status |';
       print(line);
     }
     print('');
@@ -81,6 +84,13 @@ class RepoAlignRunner {
   String _strictModeIcon(RepoAlignmentStatus r) {
     if (r.hasFullStrictMode) return '✅';
     if (r.strictCasts || r.strictInference || r.strictRawTypes) return '⚠️';
+    return '❌';
+  }
+
+  String _apiTxtIcon(RepoAlignmentStatus r) {
+    if (!r.requiresApiSummary) return '-';
+    if (r.hasApiTxt && r.hasApiTest && r.hasApiSummaryDevDep) return '✅';
+    if (r.hasApiTxt || r.hasApiTest || r.hasApiSummaryDevDep) return '⚠️';
     return '❌';
   }
 
@@ -135,16 +145,22 @@ class RepoAlignRunner {
     bool fixLints = false,
     bool fixCi = false,
     bool fixGitHub = false,
+    bool fixApiSummary = false,
     bool dryRun = false,
   }) {
     var shouldFixLints = fixLints;
     var shouldFixCi = fixCi;
     var shouldFixGitHub = fixGitHub;
 
-    if (!shouldFixLints && !shouldFixCi && !shouldFixGitHub) {
+    var shouldFixApiSummary = fixApiSummary;
+    if (!shouldFixLints &&
+        !shouldFixCi &&
+        !shouldFixGitHub &&
+        !shouldFixApiSummary) {
       shouldFixLints = true;
       shouldFixCi = true;
       shouldFixGitHub = true;
+      shouldFixApiSummary = true;
     }
 
     final results = scanner.scanAll(
@@ -164,11 +180,147 @@ class RepoAlignRunner {
     for (final r in targets) {
       print('\nProcessing ${cyan.wrap(r.name)} (${r.kind.name})...');
       if (shouldFixLints) _fixAnalysisOptions(r, dryRun: dryRun);
+      if (shouldFixApiSummary) _fixApiSummary(r, dryRun: dryRun);
       if (shouldFixCi) _fixCiWorkflows(r, dryRun: dryRun);
       if (shouldFixGitHub) _fixGitHubSettings(r, dryRun: dryRun);
     }
 
     print('\n${green.wrap('✅ Remediation pass completed.')}\n');
+  }
+
+  void _fixApiSummary(RepoAlignmentStatus r, {required bool dryRun}) {
+    if (!r.requiresApiSummary) return;
+
+    for (final pub in _discoverPackagePubspecs(r.path)) {
+      _fixSinglePackageApiSummary(pub, r.path, dryRun: dryRun);
+    }
+  }
+
+  List<File> _discoverPackagePubspecs(String repoPath) {
+    final rootPub = File(p.join(repoPath, 'pubspec.yaml'));
+    final pubFiles = <File>[];
+    try {
+      final doc = loadYaml(rootPub.readAsStringSync());
+      if (doc is! YamlMap) return pubFiles;
+      final workspace = doc['workspace'];
+      if (workspace is YamlList) {
+        for (final member in workspace) {
+          pubFiles.add(
+            File(p.join(repoPath, member.toString(), 'pubspec.yaml')),
+          );
+        }
+        return pubFiles;
+      }
+      pubFiles.add(rootPub);
+      final pkgsDir = Directory(p.join(repoPath, 'packages'));
+      if (pkgsDir.existsSync()) {
+        for (final sub in pkgsDir.listSync().whereType<Directory>()) {
+          pubFiles.add(File(p.join(sub.path, 'pubspec.yaml')));
+        }
+      }
+    } catch (_) {}
+    return pubFiles;
+  }
+
+  void _fixSinglePackageApiSummary(
+    File pub,
+    String repoPath, {
+    required bool dryRun,
+  }) {
+    if (!pub.existsSync()) return;
+    try {
+      final doc = loadYaml(pub.readAsStringSync());
+      if (doc is! YamlMap ||
+          doc['publish_to']?.toString() == 'none' ||
+          doc['version'] == null) {
+        return;
+      }
+
+      final pkgDir = pub.parent;
+      final deps = doc['dependencies'];
+      final devDeps = doc['dev_dependencies'];
+      final hasDep = devDeps is YamlMap && devDeps.containsKey('api_summary');
+      final hasTest =
+          (deps is YamlMap && deps.containsKey('test')) ||
+          (devDeps is YamlMap && devDeps.containsKey('test'));
+
+      _ensureApiSummaryDevDep(
+        pub,
+        pkgDir,
+        repoPath,
+        hasDep,
+        hasTest: hasTest,
+        dryRun: dryRun,
+      );
+      _ensureApiTestFile(pkgDir, repoPath, dryRun: dryRun);
+      _ensureApiTxtFile(pkgDir, repoPath, hasDep, dryRun: dryRun);
+    } catch (e) {
+      print('  ⚠️ Error processing ${pub.path}: $e');
+    }
+  }
+
+  void _ensureApiSummaryDevDep(
+    File pub,
+    Directory pkgDir,
+    String repoPath,
+    bool hasDep, {
+    required bool hasTest,
+    required bool dryRun,
+  }) {
+    if (hasDep && hasTest) return;
+    final action = dryRun ? 'Would add' : 'Adding';
+    final relPub = p.relative(pub.path, from: repoPath);
+    print('  📝 $action api_summary dev_dependency in $relPub');
+    if (dryRun) return;
+    Process.runSync('dart', [
+      'pub',
+      'add',
+      if (!hasDep) 'dev:api_summary',
+      if (!hasTest) 'dev:test',
+    ], workingDirectory: pkgDir.path);
+  }
+
+  void _ensureApiTestFile(
+    Directory pkgDir,
+    String repoPath, {
+    required bool dryRun,
+  }) {
+    final testFile = File(p.join(pkgDir.path, 'test', 'api_test.dart'));
+    if (testFile.existsSync()) return;
+    final action = dryRun ? 'Would create' : 'Creating';
+    final relDir = p.relative(pkgDir.path, from: repoPath);
+    print('  📝 $action test/api_test.dart in $relDir');
+    if (dryRun) return;
+    final testDir = Directory(p.join(pkgDir.path, 'test'));
+    if (!testDir.existsSync()) testDir.createSync();
+    testFile.writeAsStringSync(canonicalApiTest);
+  }
+
+  void _ensureApiTxtFile(
+    Directory pkgDir,
+    String repoPath,
+    bool hasDep, {
+    required bool dryRun,
+  }) {
+    final apiTxt = File(p.join(pkgDir.path, 'api.txt'));
+    if (apiTxt.existsSync() && hasDep) return;
+    final action = dryRun ? 'Would generate' : 'Generating';
+    final relDir = p.relative(pkgDir.path, from: repoPath);
+    print('  📝 $action api.txt in $relDir');
+    if (dryRun) return;
+    if (!hasDep) {
+      Process.runSync('dart', ['pub', 'get'], workingDirectory: pkgDir.path);
+    }
+    final res = Process.runSync('dart', [
+      'run',
+      'api_summary',
+      '--write',
+    ], workingDirectory: pkgDir.path);
+    if (res.exitCode != 0) {
+      print(
+        '  ⚠️ Failed to generate api.txt for ${pkgDir.path}: ${res.stderr}',
+      );
+    }
   }
 
   void _fixAnalysisOptions(RepoAlignmentStatus r, {required bool dryRun}) {

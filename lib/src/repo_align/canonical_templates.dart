@@ -185,3 +185,16 @@ jobs:
 /// The check-run context name produced by [canonicalMarkdownWorkflow]. This is
 /// the job ID, which is what a branch ruleset must require.
 const String markdownCheckContext = 'markdown';
+
+/// Canonical `test/api_test.dart` for packages tracked with `package:api_summary`.
+const String canonicalApiTest = '''
+@TestOn('vm')
+library;
+
+import 'package:api_summary/api_summary.dart';
+import 'package:test/scaffolding.dart';
+
+void main() {
+  test('api_summary', expectApiSummaryClean);
+}
+''';
