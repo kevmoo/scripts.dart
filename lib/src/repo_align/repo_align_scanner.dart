@@ -778,10 +778,10 @@ typedef _GitHubInfo = ({
 
 class _PubspecScanAccumulator {
   final packageNames = <String>[];
-  var publishedCount = 0;
-  var apiTxtCount = 0;
-  var apiTestCount = 0;
-  var apiSummaryDevDepCount = 0;
+  int publishedCount = 0;
+  int apiTxtCount = 0;
+  int apiTestCount = 0;
+  int apiSummaryDevDepCount = 0;
 
   void processPackage(Directory sub, {bool isWorkspaceRoot = false}) {
     final subPub = File(p.join(sub.path, 'pubspec.yaml'));
