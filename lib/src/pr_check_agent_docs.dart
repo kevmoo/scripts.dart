@@ -16,7 +16,7 @@ const _alwaysOnAgentDocNames = {'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'};
 const _proseFenceLangs = {'markdown', 'md', 'text', 'txt', 'plaintext', 'diff'};
 
 final _unicodeDashRegex = RegExp(r'[\u2014\u2013]');
-final _inlineCodeSpanRegex = RegExp(r'`([^`]+)`');
+final _inlineCodeSpanRegex = RegExp(r'(`+)(.+?)\1');
 final _inlineCliFlagUnicodeDashRegex = RegExp(
   r'(?:^|\s)[\u2014\u2013][A-Za-z0-9]',
 );
@@ -70,7 +70,7 @@ PrCheckViolation? _checkInlineCodeFlagDashes(
   String line,
 ) {
   for (final match in _inlineCodeSpanRegex.allMatches(line)) {
-    final span = match.group(1)!;
+    final span = match.group(2)!;
     if (_inlineCliFlagUnicodeDashRegex.hasMatch(span)) {
       return PrCheckViolation(
         check: 'markdown-code-unicode-dash',

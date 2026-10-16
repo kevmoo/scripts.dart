@@ -593,7 +593,8 @@ description:
 # Bad Skill
 
 See [linked](references/linked.md), [missing](references/missing.md), and
-[`bad_root.md`](/nonexistent/root.md), while ignoring `[example](/ignored.md)`.
+[`bad_root.md`](/nonexistent/root.md), while ignoring `[example](/ignored.md)`
+and `` `[example2](/ignored2.md)` ``.
 $paddedBody
 ''');
 
