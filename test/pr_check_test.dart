@@ -516,6 +516,7 @@ environment:
         '',
         '<!-- mdformat off -->',
         '[TOC]',
+        'Mentioning `<!-- mdformat off -->` and `[TOC]` in backticks is fine.',
         '',
         '```markdown',
         '> [!NOTE] Inside code fence is ignored.',
@@ -542,4 +543,74 @@ environment:
       ]);
     },
   );
+
+  test('detects Unicode em/en-dashes in inline CLI flags while allowing dashes '
+      'inside fenced code blocks and non-flag inline spans', () {
+    final violations = checkGitHubMarkdownLines('skills/sample/SKILL.md', [
+      '# Sample Skill',
+      '',
+      'Run `kscripts pr-check —test` or `[Valid — Fix]` and `8–15`.',
+      '',
+      '```bash',
+      '# Comment — allowed inside fenced code block',
+      '```',
+    ]);
+
+    check(violations.map((v) => v.check).toList())
+        .deepEquals(['markdown-code-unicode-dash']);
+  });
+
+  test('checkAgentDocFiles enforces SKILL.md / AGENTS.md line budgets, '
+      'frontmatter trigger contract, broken relative links, and unlinked '
+      'references/ files', () {
+    final skillDir = Directory(p.join(tempDir.path, 'skills', 'bad-skill'))
+      ..createSync(recursive: true);
+    final refsDir = Directory(p.join(skillDir.path, 'references'))
+      ..createSync(recursive: true);
+    File(p.join(refsDir.path, 'linked.md')).writeAsStringSync('# Linked\n');
+    File(p.join(refsDir.path, 'orphan.md')).writeAsStringSync('# Orphan\n');
+
+    final paddedBody = List.filled(
+      maxSkillMdLines,
+      'Line of prose.',
+    ).join('\n');
+    File(p.join(skillDir.path, 'SKILL.md')).writeAsStringSync('''
+---
+name: wrong-name
+description:
+  Missing folded scalar, missing triggers, has <tag> and `cli --flag`.
+---
+
+# Bad Skill
+
+See [linked](references/linked.md), [missing](references/missing.md), and
+[`bad_root.md`](/nonexistent/root.md), while ignoring `[example](/ignored.md)`
+and `` `[example2](/ignored2.md)` ``.
+$paddedBody
+''');
+
+    final agentsBody = List.filled(
+      maxAgentsMdLines + 5,
+      'Rule line.',
+    ).join('\n');
+    File(p.join(tempDir.path, 'AGENTS.md')).writeAsStringSync(agentsBody);
+
+    final report = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['skills/bad-skill/SKILL.md', 'AGENTS.md'],
+      ),
+    );
+
+    check(report.passed).isFalse();
+    final checks = report.violations.map((v) => v.check).toList();
+    check(checks)
+      ..contains('agent-doc-line-budget')
+      ..contains('skill-frontmatter')
+      ..contains('agent-doc-broken-link')
+      ..contains('skill-unlinked-reference');
+  });
 }

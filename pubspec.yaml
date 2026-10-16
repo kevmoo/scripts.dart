@@ -12,6 +12,7 @@ dependencies:
   firehose: ^0.13.0
   git: ^2.3.2
   io: ^1.0.4
+  markdown: ^7.3.0
   meta: ^1.18.1
   package_config: ^2.1.0
   path: ^1.9.1

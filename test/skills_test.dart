@@ -76,13 +76,13 @@ void main() {
 
         final lines = skillFile.readAsLinesSync();
 
-        // Cardinality bounds: [50, 500] lines
+        // Cardinality bounds: [50, maxSkillMdLines] lines
         check(
-            because: 'SKILL.md must be between 50 and 500 lines',
+            because: 'SKILL.md must be between 50 and $maxSkillMdLines lines',
             lines.length,
           )
           ..isGreaterOrEqual(50)
-          ..isLessOrEqual(500);
+          ..isLessOrEqual(maxSkillMdLines);
 
         // Frontmatter extraction
         check(
@@ -156,6 +156,17 @@ void main() {
               'skills/$folderName/SKILL.md must follow GitHub Markdown '
               'conventions: ${mdViolations.map((v) => v.message).join('; ')}',
           mdViolations,
+        ).isEmpty();
+
+        final agentDocViolations = checkSingleAgentDocFile(
+          Directory.current,
+          'skills/$folderName/SKILL.md',
+        );
+        check(
+          because:
+              'skills/$folderName/SKILL.md must satisfy agent-doc checks: '
+              '${agentDocViolations.map((v) => v.message).join('; ')}',
+          agentDocViolations,
         ).isEmpty();
 
         // README.md must list every co-located skill
