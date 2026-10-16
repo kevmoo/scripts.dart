@@ -124,10 +124,10 @@ String _formatApprovedOrUnsatisfiedAction({
 }) {
   if (submittable == false) {
     final reqs = unsatisfiedRequirements.isNotEmpty
-        ? unsatisfiedRequirements.join(', ')
+        ? 'Needs ${unsatisfiedRequirements.join(', ')}'
         : 'Missing submit requirements';
     final missingStr = _computeMissingReviewersString(reviewers, crVotes);
-    return '❌ Unsatisfied: $reqs$missingStr';
+    return '🟡 Approved ($reqs)$missingStr';
   }
   return '🚀 Approved (${crVotes.join(', ')})';
 }
@@ -355,6 +355,8 @@ RemoteCL? _parseRemoteClItem(
       cqStatus: cqStatus,
       threads: threads,
       nextAction: nextAction,
+      submittable: submittable,
+      unsatisfiedRequirements: unsatisfiedRequirements,
     );
   }
   return null;

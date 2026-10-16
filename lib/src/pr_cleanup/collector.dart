@@ -698,6 +698,12 @@ String _computeGerritReviewBadge(RemoteCL cl) {
     return '🔴 Changes Requested';
   }
   if (cl.crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'))) {
+    if (cl.submittable == false) {
+      final reqs = cl.unsatisfiedRequirements.isNotEmpty
+          ? 'Needs ${cl.unsatisfiedRequirements.join(', ')}'
+          : 'Missing submit requirements';
+      return '🟡 Approved ($reqs)';
+    }
     return '🟢 Approved';
   }
   if (cl.reviewers.isNotEmpty) return '⏳ Awaiting Review';
