@@ -251,7 +251,7 @@ void main() {
         );
         expect(
           coreLibAction,
-          '❌ Unsatisfied: Core-Library-Review (Awaiting: Lasse Nielsen)',
+          '🟡 Approved (Needs Core-Library-Review) (Awaiting: Lasse Nielsen)',
         );
 
         final codeOwnersAction = computeGerritNextAction(
@@ -268,7 +268,8 @@ void main() {
         );
         expect(
           codeOwnersAction,
-          '❌ Unsatisfied: Code-Owners (Awaiting: Slava Egorov, Brian Quinlan)',
+          '🟡 Approved (Needs Code-Owners) '
+          '(Awaiting: Slava Egorov, Brian Quinlan)',
         );
       },
     );
@@ -288,7 +289,7 @@ void main() {
             unresolvedAuthorLeaves: 0,
           ),
         );
-        expect(action, '❌ Unsatisfied: Code-Owners (Awaiting: Ben)');
+        expect(action, '🟡 Approved (Needs Code-Owners) (Awaiting: Ben)');
       },
     );
 

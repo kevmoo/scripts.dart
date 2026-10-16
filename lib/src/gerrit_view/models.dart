@@ -33,6 +33,8 @@ typedef RemoteCL = ({
   String cqStatus,
   ThreadSummary threads,
   String nextAction,
+  bool? submittable,
+  List<String> unsatisfiedRequirements,
 });
 
 enum AlignmentState { inSync, contentIdentical, diverged }
