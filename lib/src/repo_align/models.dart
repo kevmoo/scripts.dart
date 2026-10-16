@@ -130,6 +130,7 @@ class RepoAlignmentStatus {
 
     final result = <String>[];
     _checkDartIssues(result);
+    _checkApiSummaryIssues(result);
     _checkCiIssues(result);
     _checkMarkdownIssues(result);
     _checkGitHubIssues(result);
@@ -161,17 +162,18 @@ class RepoAlignmentStatus {
       ];
       result.add('Incomplete strict mode (missing: ${missing.join(', ')})');
     }
+  }
 
-    if (requiresApiSummary) {
-      if (!hasApiSummaryDevDep) {
-        result.add('Missing api_summary dev_dependency');
-      }
-      if (!hasApiTxt) {
-        result.add('Missing api.txt');
-      }
-      if (!hasApiTest) {
-        result.add('Missing test/api_test.dart');
-      }
+  void _checkApiSummaryIssues(List<String> result) {
+    if (!requiresApiSummary) return;
+    if (!hasApiSummaryDevDep) {
+      result.add('Missing api_summary dev_dependency');
+    }
+    if (!hasApiTxt) {
+      result.add('Missing api.txt');
+    }
+    if (!hasApiTest) {
+      result.add('Missing test/api_test.dart');
     }
   }
 

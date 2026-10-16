@@ -191,96 +191,118 @@ class RepoAlignRunner {
   void _fixApiSummary(RepoAlignmentStatus r, {required bool dryRun}) {
     if (!r.requiresApiSummary) return;
 
-    final rootPub = File(p.join(r.path, 'pubspec.yaml'));
+    for (final pub in _discoverPackagePubspecs(r.path)) {
+      _fixSinglePackageApiSummary(pub, r.path, dryRun: dryRun);
+    }
+  }
+
+  List<File> _discoverPackagePubspecs(String repoPath) {
+    final rootPub = File(p.join(repoPath, 'pubspec.yaml'));
     final pubFiles = <File>[];
     try {
       final doc = loadYaml(rootPub.readAsStringSync());
-      if (doc is YamlMap && doc['workspace'] is YamlList) {
-        for (final member in doc['workspace'] as YamlList) {
-          pubFiles.add(File(p.join(r.path, member.toString(), 'pubspec.yaml')));
+      if (doc is! YamlMap) return pubFiles;
+      final workspace = doc['workspace'];
+      if (workspace is YamlList) {
+        for (final member in workspace) {
+          pubFiles.add(
+            File(p.join(repoPath, member.toString(), 'pubspec.yaml')),
+          );
         }
-      } else if (doc is YamlMap) {
-        pubFiles.add(rootPub);
-        final pkgsDir = Directory(p.join(r.path, 'packages'));
-        if (pkgsDir.existsSync()) {
-          for (final sub in pkgsDir.listSync().whereType<Directory>()) {
-            pubFiles.add(File(p.join(sub.path, 'pubspec.yaml')));
-          }
+        return pubFiles;
+      }
+      pubFiles.add(rootPub);
+      final pkgsDir = Directory(p.join(repoPath, 'packages'));
+      if (pkgsDir.existsSync()) {
+        for (final sub in pkgsDir.listSync().whereType<Directory>()) {
+          pubFiles.add(File(p.join(sub.path, 'pubspec.yaml')));
         }
       }
     } catch (_) {}
+    return pubFiles;
+  }
 
-    for (final pub in pubFiles) {
-      if (!pub.existsSync()) continue;
-      try {
-        final content = pub.readAsStringSync();
-        final doc = loadYaml(content);
-        if (doc is! YamlMap || doc['publish_to']?.toString() == 'none') {
-          continue;
-        }
+  void _fixSinglePackageApiSummary(
+    File pub,
+    String repoPath, {
+    required bool dryRun,
+  }) {
+    if (!pub.existsSync()) return;
+    try {
+      final doc = loadYaml(pub.readAsStringSync());
+      if (doc is! YamlMap || doc['publish_to']?.toString() == 'none') return;
 
-        final pkgDir = pub.parent;
+      final pkgDir = pub.parent;
+      final devDeps = doc['dev_dependencies'];
+      final hasDep = devDeps is YamlMap && devDeps.containsKey('api_summary');
 
-        // Add dev dependency
-        final hasDep =
-            doc['dev_dependencies'] is YamlMap &&
-            (doc['dev_dependencies'] as YamlMap).containsKey('api_summary');
+      _ensureApiSummaryDevDep(pub, pkgDir, repoPath, hasDep, dryRun: dryRun);
+      _ensureApiTestFile(pkgDir, repoPath, dryRun: dryRun);
+      _ensureApiTxtFile(pkgDir, repoPath, hasDep, dryRun: dryRun);
+    } catch (e) {
+      print('  ⚠️ Error processing ${pub.path}: $e');
+    }
+  }
 
-        if (!hasDep) {
-          final action = dryRun ? 'Would add' : 'Adding';
-          final relPub = p.relative(pub.path, from: r.path);
-          print('  📝 $action api_summary dev_dependency in $relPub');
-          if (!dryRun) {
-            Process.runSync('dart', [
-              'pub',
-              'add',
-              'dev:api_summary',
-            ], workingDirectory: pkgDir.path);
-          }
-        }
+  void _ensureApiSummaryDevDep(
+    File pub,
+    Directory pkgDir,
+    String repoPath,
+    bool hasDep, {
+    required bool dryRun,
+  }) {
+    if (hasDep) return;
+    final action = dryRun ? 'Would add' : 'Adding';
+    final relPub = p.relative(pub.path, from: repoPath);
+    print('  📝 $action api_summary dev_dependency in $relPub');
+    if (dryRun) return;
+    Process.runSync('dart', [
+      'pub',
+      'add',
+      'dev:api_summary',
+    ], workingDirectory: pkgDir.path);
+  }
 
-        // Add test file
-        final testFile = File(p.join(pkgDir.path, 'test', 'api_test.dart'));
-        if (!testFile.existsSync()) {
-          final action = dryRun ? 'Would create' : 'Creating';
-          final relDir = p.relative(pkgDir.path, from: r.path);
-          print('  📝 $action test/api_test.dart in $relDir');
-          if (!dryRun) {
-            final testDir = Directory(p.join(pkgDir.path, 'test'));
-            if (!testDir.existsSync()) testDir.createSync();
-            testFile.writeAsStringSync(canonicalApiTest);
-          }
-        }
+  void _ensureApiTestFile(
+    Directory pkgDir,
+    String repoPath, {
+    required bool dryRun,
+  }) {
+    final testFile = File(p.join(pkgDir.path, 'test', 'api_test.dart'));
+    if (testFile.existsSync()) return;
+    final action = dryRun ? 'Would create' : 'Creating';
+    final relDir = p.relative(pkgDir.path, from: repoPath);
+    print('  📝 $action test/api_test.dart in $relDir');
+    if (dryRun) return;
+    final testDir = Directory(p.join(pkgDir.path, 'test'));
+    if (!testDir.existsSync()) testDir.createSync();
+    testFile.writeAsStringSync(canonicalApiTest);
+  }
 
-        // Generate api.txt
-        final apiTxt = File(p.join(pkgDir.path, 'api.txt'));
-        if (!apiTxt.existsSync() || !hasDep) {
-          final action = dryRun ? 'Would generate' : 'Generating';
-          final relDir = p.relative(pkgDir.path, from: r.path);
-          print('  📝 $action api.txt in $relDir');
-          if (!dryRun) {
-            if (!hasDep) {
-              Process.runSync('dart', [
-                'pub',
-                'get',
-              ], workingDirectory: pkgDir.path);
-            }
-            final res = Process.runSync('dart', [
-              'run',
-              'api_summary',
-              '--write',
-            ], workingDirectory: pkgDir.path);
-            if (res.exitCode != 0) {
-              print(
-                '  ⚠️ Failed to generate api.txt for ${pkgDir.path}: '
-                '${res.stderr}',
-              );
-            }
-          }
-        }
-      } catch (e) {
-        print('  ⚠️ Error processing ${pub.path}: $e');
-      }
+  void _ensureApiTxtFile(
+    Directory pkgDir,
+    String repoPath,
+    bool hasDep, {
+    required bool dryRun,
+  }) {
+    final apiTxt = File(p.join(pkgDir.path, 'api.txt'));
+    if (apiTxt.existsSync() && hasDep) return;
+    final action = dryRun ? 'Would generate' : 'Generating';
+    final relDir = p.relative(pkgDir.path, from: repoPath);
+    print('  📝 $action api.txt in $relDir');
+    if (dryRun) return;
+    if (!hasDep) {
+      Process.runSync('dart', ['pub', 'get'], workingDirectory: pkgDir.path);
+    }
+    final res = Process.runSync('dart', [
+      'run',
+      'api_summary',
+      '--write',
+    ], workingDirectory: pkgDir.path);
+    if (res.exitCode != 0) {
+      print(
+        '  ⚠️ Failed to generate api.txt for ${pkgDir.path}: ${res.stderr}',
+      );
     }
   }
 
