@@ -560,7 +560,7 @@ environment:
         .deepEquals(['markdown-code-unicode-dash']);
   });
 
-  test('checkAgentDocFiles enforces SKILL.md / AGENTS.md line budgets, '
+  test('checkAgentDocFiles enforces SKILL.md / AGENTS.md character budgets, '
       'frontmatter trigger contract, broken relative links, and unlinked '
       'references/ files', () {
     final skillDir = Directory(p.join(tempDir.path, 'skills', 'bad-skill'))
@@ -570,10 +570,7 @@ environment:
     File(p.join(refsDir.path, 'linked.md')).writeAsStringSync('# Linked\n');
     File(p.join(refsDir.path, 'orphan.md')).writeAsStringSync('# Orphan\n');
 
-    final paddedBody = List.filled(
-      maxSkillMdLines,
-      'Line of prose.',
-    ).join('\n');
+    final paddedBody = 'x' * maxSkillMdChars;
     File(p.join(skillDir.path, 'SKILL.md')).writeAsStringSync('''
 ---
 name: wrong-name
@@ -589,10 +586,7 @@ and `` `[example2](/ignored2.md)` ``.
 $paddedBody
 ''');
 
-    final agentsBody = List.filled(
-      maxAgentsMdLines + 5,
-      'Rule line.',
-    ).join('\n');
+    final agentsBody = 'x' * (maxAgentsMdChars + 100);
     File(p.join(tempDir.path, 'AGENTS.md')).writeAsStringSync(agentsBody);
 
     final report = runPrCheck(
@@ -608,7 +602,7 @@ $paddedBody
     check(report.passed).isFalse();
     final checks = report.violations.map((v) => v.check).toList();
     check(checks)
-      ..contains('agent-doc-line-budget')
+      ..contains('agent-doc-char-budget')
       ..contains('skill-frontmatter')
       ..contains('agent-doc-broken-link')
       ..contains('skill-unlinked-reference');
