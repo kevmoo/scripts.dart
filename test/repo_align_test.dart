@@ -810,6 +810,27 @@ jobs:
         check(results.first.path).equals(worktreePath);
       },
     );
+
+    test('classifies google-messages-hax as toolOrApp', () async {
+      await d.dir('google-messages-hax', [
+        d.file(
+          'pubspec.yaml',
+          'name: google_messages_hax\npublish_to: none\n'
+              'environment:\n  sdk: ^3.10.0\n',
+        ),
+      ]).create();
+
+      final repoPath = '${d.sandbox}/google-messages-hax';
+      final scanner = RepoAlignScanner(
+        baseDirPath: d.sandbox,
+        queryGitHubApi: false,
+      );
+      final results = scanner.scanAll(targetDir: repoPath);
+      check(results).length.equals(1);
+      check(results.first.name).equals('google-messages-hax');
+      check(results.first.kind).equals(RepoKind.toolOrApp);
+      check(results.first.requiresStandardCiWorkflows).isTrue();
+    });
   });
 }
 
