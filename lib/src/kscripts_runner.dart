@@ -634,6 +634,12 @@ void runRepoAlignCli(List<String> args) {
     )
     ..addFlag('lints', help: 'Fix/synchronize analysis_options.yaml')
     ..addFlag(
+      'api-summary',
+      help:
+          'Fix/synchronize api_summary dev_dependency, api.txt, and '
+          'test/api_test.dart',
+    )
+    ..addFlag(
       'ci',
       help:
           'Fix/synchronize CI workflows '
@@ -674,6 +680,7 @@ void runRepoAlignCli(List<String> args) {
   final jsonOutput = parsed['json'] as bool;
   final dryRun = parsed['dry-run'] as bool;
   final fixLints = parsed['lints'] as bool;
+  final fixApiSummary = parsed['api-summary'] as bool;
   final fixCi = parsed['ci'] as bool;
   final fixGitHub = parsed['github'] as bool;
 
@@ -690,6 +697,7 @@ void runRepoAlignCli(List<String> args) {
       targetRepo: targetRepo,
       targetDir: targetDir,
       fixLints: fixLints,
+      fixApiSummary: fixApiSummary,
       fixCi: fixCi,
       fixGitHub: fixGitHub,
       dryRun: dryRun,

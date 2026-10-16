@@ -2,14 +2,15 @@
 name: repo-align
 description: >-
   Audits and standardizes personal GitHub repositories under ~/github/kevmoo
-  for CI workflow parity, Markdown formatting configs, analyzer lints, and
-  GitHub remote branch protection rulesets. Use when checking or fixing CI
-  workflows (lower_bound.yml, complexity.yml, autosubmit.yml, dependabot.yml,
-  markdown.yml), .prettierrc.json, analysis_options.yaml lints, or remote
-  auto-merge and status-check rulesets across one or all personal repositories.
-  Don't use for non-kevmoo repositories (dart-lang/*, flutter/*, google/*),
-  Dart source code refactoring (use dart-cleanup), or PR and worktree branch
-  pruning (use pr-cleanup).
+  for CI workflow parity, Markdown formatting configs, analyzer lints,
+  api_summary (api.txt + test/api_test.dart), and GitHub remote branch
+  protection rulesets. Use when checking or fixing CI workflows
+  (lower_bound.yml, complexity.yml, autosubmit.yml, dependabot.yml,
+  markdown.yml), .prettierrc.json, analysis_options.yaml lints, api.txt, or
+  remote auto-merge and status-check rulesets across one or all personal
+  repositories. Don't use for non-kevmoo repositories (dart-lang/*, flutter/*,
+  google/*), Dart source code refactoring (use dart-cleanup), or PR and worktree
+  branch pruning (use pr-cleanup).
 compatibility: "Requires kscripts (kevmoo_scripts via dart install) and local checkouts in ~/github/kevmoo"
 metadata:
   author: kevmoo
@@ -66,6 +67,10 @@ and remote GitHub settings:
 - **Analyzer Lints (`--lints`)**: Strict mode (`strict-casts`,
   `strict-inference`, `strict-raw-types`) and canonical lint package includes in
   `analysis_options.yaml`.
+- **Public API Summary (`--api-summary`)**: Checks that every published package
+  (and published workspace member where `publish_to != 'none'`) declares
+  `api_summary` in `dev_dependencies`, has `api.txt` at the package root, and
+  includes `test/api_test.dart` (`expectApiSummaryClean`).
 - **CI Workflows & Markdown Config (`--ci`)**:
   - Standard workflow templates (`lower_bound.yml`, `complexity.yml`,
     `autosubmit.yml`, `dependabot.yml`, `publish.yaml`, `health.yaml`,
@@ -93,12 +98,13 @@ Never modify files directly on `main`. For each target repository:
 
 1. **Create or Enter a Sibling Worktree** (via `/new-worktree`, e.g.
    `~/github/kevmoo/_<repo>-repo-align`).
-2. **Apply Alignment & Lint Fixes Inside the Worktree (`--dir`)**: Pass
-   `--dir <worktree_path>` so `repo-align` writes `.github/workflows/*`,
-   `.prettierrc.json`, and `analysis_options.yaml` inside the sibling worktree
-   rather than mutating the primary `~/github/kevmoo/<repo_name>` checkout:
+2. **Apply Alignment, Lint & API Summary Fixes Inside the Worktree (`--dir`)**:
+   Pass `--dir <worktree_path>` so `repo-align` writes `.github/workflows/*`,
+   `.prettierrc.json`, `analysis_options.yaml`, `api.txt`, and
+   `test/api_test.dart` inside the sibling worktree rather than mutating the
+   primary `~/github/kevmoo/<repo_name>` checkout:
    ```bash
-   kscripts repo-align fix -r <repo_name> --dir <worktree_path> --ci --lints
+   kscripts repo-align fix -r <repo_name> --dir <worktree_path> --ci --lints --api-summary
    kscripts lint-cleanup --package-dir <worktree_path> --rewrite
    ```
 3. **Optional Dependency Tightening** _(only when requested or preparing a

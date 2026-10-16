@@ -154,6 +154,10 @@ class RepoAlignScanner {
       hasPubspec: pubInfo.hasPubspec,
       sdkConstraint: pubInfo.sdkConstraint,
       packageNames: pubInfo.packageNames,
+      hasPublishToNone: pubInfo.hasPublishToNone,
+      hasApiSummaryDevDep: pubInfo.hasApiSummaryDevDep,
+      hasApiTxt: pubInfo.hasApiTxt,
+      hasApiTest: pubInfo.hasApiTest,
       hasAnalysisOptions: analysis.hasAnalysisOptions,
       analysisInclude: analysis.analysisInclude,
       strictCasts: analysis.strictCasts,
@@ -193,6 +197,10 @@ class RepoAlignScanner {
         sdkConstraint: null,
         isWorkspace: false,
         packageNames: <String>[],
+        hasPublishToNone: true,
+        hasApiSummaryDevDep: false,
+        hasApiTxt: false,
+        hasApiTest: false,
       );
     }
 
@@ -200,70 +208,82 @@ class RepoAlignScanner {
     var isWorkspace = false;
     final packageNames = <String>[];
 
+    var publishedCount = 0;
+    var apiTxtCount = 0;
+    var apiTestCount = 0;
+    var apiSummaryDevDepCount = 0;
+
+    void processPackage(Directory sub, {bool isWorkspaceRoot = false}) {
+      final subPub = File(p.join(sub.path, 'pubspec.yaml'));
+      if (!subPub.existsSync()) return;
+      try {
+        final doc = loadYaml(subPub.readAsStringSync());
+        if (doc is YamlMap) {
+          final name = doc['name']?.toString();
+          if (name != null && !packageNames.contains(name)) {
+            packageNames.add(name);
+          }
+          if (isWorkspaceRoot) return;
+          final publishTo = doc['publish_to']?.toString();
+          if (publishTo != 'none') {
+            publishedCount++;
+            if (File(p.join(sub.path, 'api.txt')).existsSync()) apiTxtCount++;
+            final apiTestFile = File(p.join(sub.path, 'test', 'api_test.dart'));
+            if (apiTestFile.existsSync()) {
+              apiTestCount++;
+            }
+            final devDeps = doc['dev_dependencies'];
+            if (devDeps is YamlMap && devDeps.containsKey('api_summary')) {
+              apiSummaryDevDepCount++;
+            }
+          }
+        }
+      } catch (_) {}
+    }
+
     try {
       final doc = loadYaml(pubspecFile.readAsStringSync());
       if (doc is YamlMap) {
-        if (doc['name'] != null) packageNames.add(doc['name'].toString());
-        isWorkspace = _scanWorkspaceMembers(
-          dir,
-          doc['workspace'],
-          packageNames,
-        );
         final env = doc['environment'];
         if (env is YamlMap && env['sdk'] != null) {
           sdkConstraint = env['sdk'].toString();
         }
+
+        final hasWorkspace = doc['workspace'] != null;
+        processPackage(dir, isWorkspaceRoot: hasWorkspace);
+
+        if (hasWorkspace) {
+          isWorkspace = true;
+          final workspace = doc['workspace'];
+          if (workspace is YamlList) {
+            for (final member in workspace) {
+              processPackage(Directory(p.join(dir.path, member.toString())));
+            }
+          }
+        }
       }
     } catch (_) {}
 
-    _scanPackagesDir(dir, packageNames);
+    if (!isWorkspace) {
+      final pkgsDir = Directory(p.join(dir.path, 'packages'));
+      if (pkgsDir.existsSync()) {
+        for (final sub in pkgsDir.listSync().whereType<Directory>()) {
+          processPackage(sub);
+        }
+      }
+    }
 
     return (
       hasPubspec: true,
       sdkConstraint: sdkConstraint,
       isWorkspace: isWorkspace,
       packageNames: packageNames,
+      hasPublishToNone: publishedCount == 0,
+      hasApiSummaryDevDep:
+          publishedCount > 0 && apiSummaryDevDepCount == publishedCount,
+      hasApiTxt: publishedCount > 0 && apiTxtCount == publishedCount,
+      hasApiTest: publishedCount > 0 && apiTestCount == publishedCount,
     );
-  }
-
-  bool _scanWorkspaceMembers(
-    Directory dir,
-    Object? workspace,
-    List<String> packageNames,
-  ) {
-    if (workspace == null) return false;
-    if (workspace is YamlList) {
-      for (final member in workspace) {
-        _readSubPubspec(
-          Directory(p.join(dir.path, member.toString())),
-          packageNames,
-        );
-      }
-    }
-    return true;
-  }
-
-  void _scanPackagesDir(Directory dir, List<String> packageNames) {
-    final pkgsDir = Directory(p.join(dir.path, 'packages'));
-    if (!pkgsDir.existsSync()) return;
-
-    for (final sub in pkgsDir.listSync().whereType<Directory>()) {
-      _readSubPubspec(sub, packageNames);
-    }
-  }
-
-  void _readSubPubspec(Directory sub, List<String> packageNames) {
-    final subPub = File(p.join(sub.path, 'pubspec.yaml'));
-    if (!subPub.existsSync()) return;
-    try {
-      final doc = loadYaml(subPub.readAsStringSync());
-      if (doc is YamlMap) {
-        final name = doc['name']?.toString();
-        if (name != null && !packageNames.contains(name)) {
-          packageNames.add(name);
-        }
-      }
-    } catch (_) {}
   }
 
   RepoKind _determineKind(String name, _PubspecInfo pub) {
@@ -708,6 +728,10 @@ typedef _PubspecInfo = ({
   String? sdkConstraint,
   bool isWorkspace,
   List<String> packageNames,
+  bool hasPublishToNone,
+  bool hasApiSummaryDevDep,
+  bool hasApiTxt,
+  bool hasApiTest,
 });
 
 typedef _AnalysisInfo = ({

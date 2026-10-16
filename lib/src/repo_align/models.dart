@@ -25,6 +25,12 @@ class RepoAlignmentStatus {
   final String? sdkConstraint;
   final List<String> packageNames;
 
+  // api_summary
+  final bool hasPublishToNone;
+  final bool hasApiSummaryDevDep;
+  final bool hasApiTxt;
+  final bool hasApiTest;
+
   // analysis_options.yaml
   final bool hasAnalysisOptions;
   final String? analysisInclude;
@@ -80,6 +86,10 @@ class RepoAlignmentStatus {
     required this.hasPubspec,
     required this.sdkConstraint,
     required this.packageNames,
+    this.hasPublishToNone = false,
+    this.hasApiSummaryDevDep = true,
+    this.hasApiTxt = true,
+    this.hasApiTest = true,
     required this.hasAnalysisOptions,
     required this.analysisInclude,
     required this.strictCasts,
@@ -151,7 +161,26 @@ class RepoAlignmentStatus {
       ];
       result.add('Incomplete strict mode (missing: ${missing.join(', ')})');
     }
+
+    if (requiresApiSummary) {
+      if (!hasApiSummaryDevDep) {
+        result.add('Missing api_summary dev_dependency');
+      }
+      if (!hasApiTxt) {
+        result.add('Missing api.txt');
+      }
+      if (!hasApiTest) {
+        result.add('Missing test/api_test.dart');
+      }
+    }
   }
+
+  /// Whether this repository has published packages that require `api.txt` and
+  /// `test/api_test.dart` via `package:api_summary`.
+  bool get requiresApiSummary =>
+      hasPubspec &&
+      !hasPublishToNone &&
+      (kind == RepoKind.publishedPackage || kind == RepoKind.monorepoWorkspace);
 
   /// Whether this repository kind requires standard Dart CI workflows
   /// (`complexity.yml` and `autosubmit.yml`).
@@ -291,6 +320,10 @@ class RepoAlignmentStatus {
     'hasPubspec': hasPubspec,
     'sdkConstraint': sdkConstraint,
     'packageNames': packageNames,
+    'hasPublishToNone': hasPublishToNone,
+    'hasApiSummaryDevDep': hasApiSummaryDevDep,
+    'hasApiTxt': hasApiTxt,
+    'hasApiTest': hasApiTest,
     'hasAnalysisOptions': hasAnalysisOptions,
     'analysisInclude': analysisInclude,
     'strictCasts': strictCasts,
