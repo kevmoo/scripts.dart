@@ -74,15 +74,16 @@ void main() {
           skillFile.existsSync(),
         ).isTrue();
 
+        final text = skillFile.readAsStringSync();
         final lines = skillFile.readAsLinesSync();
 
-        // Cardinality bounds: [50, maxSkillMdLines] lines
+        // Character budget bounds: [1500, maxSkillMdChars] chars
         check(
-            because: 'SKILL.md must be between 50 and $maxSkillMdLines lines',
-            lines.length,
+            because: 'SKILL.md must be between 1500 and $maxSkillMdChars chars',
+            text.length,
           )
-          ..isGreaterOrEqual(50)
-          ..isLessOrEqual(maxSkillMdLines);
+          ..isGreaterOrEqual(1500)
+          ..isLessOrEqual(maxSkillMdChars);
 
         // Frontmatter extraction
         check(

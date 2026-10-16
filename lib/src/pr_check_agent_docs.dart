@@ -1,12 +1,12 @@
 part of 'pr_check.dart';
 
-/// Maximum line count allowed for a `SKILL.md` file before progressive
-/// disclosure into `references/*.md` is required.
-const maxSkillMdLines = 350;
+/// Maximum character count (~6,250 tokens) allowed for a `SKILL.md` file before
+/// progressive disclosure into `references/*.md` is required.
+const maxSkillMdChars = 25000;
 
-/// Maximum line count allowed for always-on instruction files (`AGENTS.md`,
-/// `CLAUDE.md`, `GEMINI.md`).
-const maxAgentsMdLines = 200;
+/// Maximum character count (~3,750 tokens) allowed for always-on instruction
+/// files (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`).
+const maxAgentsMdChars = 15000;
 
 /// Maximum character length for a `SKILL.md` YAML `description` field.
 const maxSkillDescriptionChars = 1024;
@@ -141,28 +141,28 @@ List<PrCheckViolation> checkSingleAgentDocFile(
   if (base == 'SKILL.md') {
     violations.addAll(_checkSkillMdFile(repoRoot, relPath, text, lines));
   } else if (_alwaysOnAgentDocNames.contains(base)) {
-    violations.addAll(_checkAlwaysOnAgentDoc(relPath, lines));
+    violations.addAll(_checkAlwaysOnAgentDoc(relPath, text));
   }
 
   violations.addAll(_checkMarkdownAstLinks(repoRoot, relPath, lines));
   return violations;
 }
 
-List<PrCheckViolation> _checkAlwaysOnAgentDoc(
-  String relPath,
-  List<String> lines,
-) {
-  if (lines.length <= maxAgentsMdLines) return const [];
+List<PrCheckViolation> _checkAlwaysOnAgentDoc(String relPath, String text) {
+  if (text.length <= maxAgentsMdChars) return const [];
+  final approxTokens = text.length ~/ 4;
+  const maxTokens = maxAgentsMdChars ~/ 4;
   return [
     PrCheckViolation(
-      check: 'agent-doc-line-budget',
+      check: 'agent-doc-char-budget',
       message:
-          '$relPath is ${lines.length} lines (exceeds $maxAgentsMdLines-line '
-          'always-on instruction budget).',
+          '$relPath is ${text.length} chars (~$approxTokens tokens), '
+          'exceeding the $maxAgentsMdChars-char (~$maxTokens-token) '
+          'always-on instruction budget.',
       remediation:
           'Extract detailed reference tables or multi-step playbooks into '
           'on-demand skills or `references/*.md` files so $relPath stays '
-          '<= $maxAgentsMdLines lines with zero content loss.',
+          '<= $maxAgentsMdChars chars with zero content loss.',
     ),
   ];
 }
@@ -174,17 +174,20 @@ List<PrCheckViolation> _checkSkillMdFile(
   List<String> lines,
 ) {
   final violations = <PrCheckViolation>[];
-  if (lines.length > maxSkillMdLines) {
+  if (text.length > maxSkillMdChars) {
+    final approxTokens = text.length ~/ 4;
+    const maxTokens = maxSkillMdChars ~/ 4;
     violations.add(
       PrCheckViolation(
-        check: 'agent-doc-line-budget',
+        check: 'agent-doc-char-budget',
         message:
-            '$relPath is ${lines.length} lines (exceeds $maxSkillMdLines-line '
-            'SKILL.md budget).',
+            '$relPath is ${text.length} chars (~$approxTokens tokens), '
+            'exceeding the $maxSkillMdChars-char (~$maxTokens-token) '
+            'SKILL.md budget.',
         remediation:
             'Extract reference schemas, long templates, or edge-case matrices '
             'into `references/*.md` (linked from $relPath) so $relPath stays '
-            '<= $maxSkillMdLines lines with zero content loss.',
+            '<= $maxSkillMdChars chars with zero content loss.',
       ),
     );
   }
