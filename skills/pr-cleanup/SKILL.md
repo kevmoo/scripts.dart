@@ -66,7 +66,8 @@ view of `~/github` and `~/github/dart-sdk`:
      ```bash
      kscripts gh-view -d 14 --markdown
      ```
-     _(Omit `-d 14` for all open PRs, or pass `-d <days>` to adjust the window)._
+     _(Omit `-d 14` for all open PRs, or pass `-d <days>` to adjust the
+     window)._
    - **Dart SDK Gerrit Worktrees & CL Status** _(when `~/github/dart-sdk`
      exists)_:
      ```bash
