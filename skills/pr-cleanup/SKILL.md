@@ -66,15 +66,14 @@ view of `~/github` and `~/github/dart-sdk`:
      ```bash
      kscripts gh-view -d 14 --markdown
      ```
-     _(Omit `-d 14` if the user asks for all open PRs regardless of recency, or
-     adjust `-d <days>` to match the user's window)._
+     _(Omit `-d 14` for all open PRs, or pass `-d <days>` to adjust the
+     window)._
    - **Dart SDK Gerrit Worktrees & CL Status** _(when `~/github/dart-sdk`
      exists)_:
      ```bash
      kscripts gerrit-view -p ~/github/dart-sdk
      ```
-   - **Open Assigned GitHub Issues** _(optional — run when asked for broader
-     backlog/next-steps triage)_:
+   - **Open Assigned GitHub Issues** _(optional for backlog triage)_:
      ```bash
      kscripts gh-issues --linked-prs --markdown
      ```
@@ -146,10 +145,10 @@ Before proposing to delete any worktree, local branch, or unpushed commit:
      If the count is `0`, the branch was reset onto the squash-merge commit and
      is safe to delete via `git -C <repo_path> branch -D <branch>`.
 2. **Cross-Reference Active Sessions & Local Tasks**:
-   - Check whether any worktree is actively in use by another running terminal
-     or agent session before proposing deletion.
-   - If a worktree belongs to an **active** session or an open PR/CL, classify
-     it in **Bucket A (`🚫 DO NOT TOUCH`)**.
+   - Check whether any worktree is in use by another terminal or agent session.
+   - If an owning session is **actively thinking/running** (or the PR/CL is
+     open), keep the worktree in **Bucket A (`🚫 DO NOT TOUCH`)** and **warn the
+     user** rather than interrupting an in-flight turn.
    - If a worktree belongs to a **waiting/idle** session whose PR/CL has already
      **merged**, include pruning its VCS state in **Bucket B** and reconcile any
      linked local tasks or waiting sessions according to your workspace rules.
@@ -218,4 +217,5 @@ Once approved:
      `git -C <parent_repo> branch -D <branch>`.
 3. **Reconcile Linked Tasks & Waiting Sessions**:
    - After pruning landed PRs/CLs, verify and close any linked local tasks or
-     notify waiting sessions as configured in your local workspace rules.
+     notify waiting/idle sessions per your workspace rules (warning the user
+     first if an owning session is actively thinking/running).
