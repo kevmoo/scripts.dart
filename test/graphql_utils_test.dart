@@ -186,6 +186,18 @@ void main() {
           .isTrue();
       check(isTransientGhError(ProcessResult(0, 1, '', 'gh: HTTP 504')))
           .isTrue();
+      check(isTransientGhError(ProcessResult(0, 1, '', 'Bad Gateway')))
+          .isTrue();
+      check(
+        isTransientGhError(
+          ProcessResult(
+            0,
+            1,
+            '',
+            'Something went wrong while executing your query',
+          ),
+        ),
+      ).isTrue();
       check(
         isTransientGhError(
           ProcessResult(0, 1, '', 'stream error: INTERNAL_ERROR'),

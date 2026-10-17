@@ -54,6 +54,7 @@ typedef _CandidateBranch = ({
 Future<List<LandedPr>> findCrossAuthorLandedPrs(
   List<LocalRepoInfo> localRepos,
   Set<String> alreadyMatchedBranches, {
+  String user = 'kevmoo',
   int? lastNDays = 7,
   String? repoFilter,
   SyncProcessRunner? processRunner,
@@ -75,6 +76,7 @@ Future<List<LandedPr>> findCrossAuthorLandedPrs(
   return _fetchBatchCrossAuthorPrs(
     candidates,
     runner,
+    user: user,
     lastNDays: lastNDays,
     onProgress: onProgress,
   );
@@ -139,6 +141,7 @@ bool _isBranchCandidate(
 List<LandedPr> _fetchBatchCrossAuthorPrs(
   List<_CandidateBranch> candidates,
   SyncProcessRunner runner, {
+  required String user,
   int? lastNDays,
   void Function(String message)? onProgress,
 }) {
@@ -172,7 +175,14 @@ List<LandedPr> _fetchBatchCrossAuthorPrs(
     }
 
     for (var b = 0; b < batch.length; b++) {
-      final landedPr = _parseBatchItemLandedPr(data, b, cutoff);
+      final landedPr = _parseBatchItemLandedPr(
+        data,
+        b,
+        cutoff,
+        batch[b],
+        runner,
+        user: user,
+      );
       if (landedPr == null) continue;
 
       final key = '${landedPr.repository}#${landedPr.number}'.toLowerCase();
@@ -206,6 +216,9 @@ String _buildBatchCrossAuthorQuery(List<_CandidateBranch> batch) {
       '        number\n'
       '        title\n'
       '        url\n'
+      '        author {\n'
+      '          login\n'
+      '        }\n'
       '        createdAt\n'
       '        mergedAt\n'
       '        closedAt\n'
@@ -235,7 +248,10 @@ LandedPr? _parseBatchItemLandedPr(
   Map<String, dynamic> data,
   int index,
   DateTime? cutoff,
-) {
+  _CandidateBranch candidate,
+  SyncProcessRunner runner, {
+  required String user,
+}) {
   final qVal = data['q$index'];
   if (qVal is! Map<String, dynamic>) return null;
   final prsVal = qVal['pullRequests'];
@@ -260,6 +276,17 @@ LandedPr? _parseBatchItemLandedPr(
     return null;
   }
 
+  final localSha = _resolveLocalBranchSha(candidate.repo, candidate.branch);
+  if (!_isPrNodeLinkedToLocalBranch(
+    node: node,
+    repoDirPath: candidate.repo.repoPath,
+    localSha: localSha,
+    user: user,
+    runner: runner,
+  )) {
+    return null;
+  }
+
   return landedPr;
 }
 
@@ -277,6 +304,7 @@ typedef _CandidateWorktree = ({
 Future<List<UnlinkedWorktree>> findUnlinkedWorktrees(
   List<LocalRepoInfo> localRepos,
   Set<String> matchedWorktreePaths, {
+  String user = 'kevmoo',
   String? repoFilter,
   SyncProcessRunner? processRunner,
   void Function(String message)? onProgress,
@@ -290,7 +318,11 @@ Future<List<UnlinkedWorktree>> findUnlinkedWorktrees(
 
   final unlinkedCandidates = [
     ...candidates.detachedCandidates,
-    ..._filterUnlinkedCandidates(candidates.branchCandidates, runner),
+    ..._filterUnlinkedCandidates(
+      candidates.branchCandidates,
+      runner,
+      user: user,
+    ),
   ];
 
   return [
@@ -339,8 +371,9 @@ _collectCandidateWorktrees(
 
 List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> _filterUnlinkedCandidates(
   List<_CandidateWorktree> candidates,
-  SyncProcessRunner runner,
-) {
+  SyncProcessRunner runner, {
+  required String user,
+}) {
   if (candidates.isEmpty) return const [];
   final unlinked = <({LocalRepoInfo repo, LocalWorktreeEntry wt})>[];
   const batchSize = 30;
@@ -371,7 +404,7 @@ List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> _filterUnlinkedCandidates(
     }
 
     for (var b = 0; b < batch.length; b++) {
-      if (!_batchItemHasPr(data, b)) {
+      if (!_batchItemHasPr(data, b, batch[b], user, runner)) {
         unlinked.add((repo: batch[b].repo, wt: batch[b].wt));
       }
     }
@@ -380,13 +413,28 @@ List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> _filterUnlinkedCandidates(
   return unlinked;
 }
 
-bool _batchItemHasPr(Map<String, dynamic>? data, int index) {
+bool _batchItemHasPr(
+  Map<String, dynamic>? data,
+  int index,
+  _CandidateWorktree candidate,
+  String user,
+  SyncProcessRunner runner,
+) {
   final qVal = data?['q$index'];
   final qMap = qVal is Map<String, dynamic> ? qVal : null;
   final prsVal = qMap?['pullRequests'];
   final prsMap = prsVal is Map<String, dynamic> ? prsVal : null;
   final prNodes = (prsMap?['nodes'] as List<dynamic>?) ?? [];
-  return prNodes.isNotEmpty;
+  if (prNodes.isEmpty) return false;
+  final firstNode = prNodes.first;
+  if (firstNode is! Map<String, dynamic>) return true;
+  return _isPrNodeLinkedToLocalBranch(
+    node: firstNode,
+    repoDirPath: candidate.wt.path,
+    localSha: candidate.wt.sha,
+    user: user,
+    runner: runner,
+  );
 }
 
 String _buildBatchWorktreePrQuery(List<_CandidateWorktree> batch) {
@@ -398,10 +446,24 @@ String _buildBatchWorktreePrQuery(List<_CandidateWorktree> batch) {
     final encBranch = jsonEncode(item.wt.branch);
     queryBuffer.writeln(
       '  q$b: repository(owner: $encOwner, name: $encName) {\n'
-      '    pullRequests(headRefName: $encBranch, first: 1) {\n'
+      '    pullRequests(\n'
+      '      headRefName: $encBranch,\n'
+      '      first: 1,\n'
+      '      orderBy: {field: CREATED_AT, direction: DESC}\n'
+      '    ) {\n'
       '      nodes {\n'
       '        number\n'
       '        state\n'
+      '        headRefOid\n'
+      '        author {\n'
+      '          login\n'
+      '        }\n'
+      '        headRepository {\n'
+      '          nameWithOwner\n'
+      '        }\n'
+      '        mergeCommit {\n'
+      '          oid\n'
+      '        }\n'
       '      }\n'
       '    }\n'
       '  }',
@@ -499,6 +561,7 @@ int? _countCommitsAhead(
 Future<List<ClosedUnmergedPr>> findClosedUnmergedPrs(
   List<LocalRepoInfo> localRepos,
   Set<String> alreadyMatchedBranches, {
+  String user = 'kevmoo',
   String? repoFilter,
   SyncProcessRunner? processRunner,
   void Function(String message)? onProgress,
@@ -522,7 +585,13 @@ Future<List<ClosedUnmergedPr>> findClosedUnmergedPrs(
 
   for (var i = 0; i < candidates.length; i += batchSize) {
     final batch = candidates.skip(i).take(batchSize).toList();
-    _extractClosedUnmergedFromBatch(batch, seenKeys, results, runner);
+    _extractClosedUnmergedFromBatch(
+      batch,
+      seenKeys,
+      results,
+      runner,
+      user: user,
+    );
   }
 
   return results..sort((a, b) {
@@ -538,8 +607,9 @@ void _extractClosedUnmergedFromBatch(
   List<_CandidateBranch> batch,
   Set<String> seenKeys,
   List<ClosedUnmergedPr> results,
-  SyncProcessRunner runner,
-) {
+  SyncProcessRunner runner, {
+  required String user,
+}) {
   final queryStr = _buildBatchClosedUnmergedQuery(batch);
   final res = runGhWithRetrySync(runner, [
     'api',
@@ -561,7 +631,13 @@ void _extractClosedUnmergedFromBatch(
   if (data == null) return;
 
   for (var b = 0; b < batch.length; b++) {
-    final item = _parseClosedUnmergedBatchItem(data, b, batch[b], runner);
+    final item = _parseClosedUnmergedBatchItem(
+      data,
+      b,
+      batch[b],
+      runner,
+      user: user,
+    );
     if (item == null) continue;
     final key = '${item.repository}#${item.branch}'.toLowerCase();
     if (seenKeys.add(key)) {
@@ -606,6 +682,12 @@ String _buildBatchClosedUnmergedQuery(List<_CandidateBranch> batch) {
       '        title\n'
       '        url\n'
       '        headRefOid\n'
+      '        author {\n'
+      '          login\n'
+      '        }\n'
+      '        headRepository {\n'
+      '          nameWithOwner\n'
+      '        }\n'
       '        createdAt\n'
       '        closedAt\n'
       '      }\n'
@@ -660,8 +742,9 @@ ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
   Map<String, dynamic> data,
   int index,
   _CandidateBranch candidate,
-  SyncProcessRunner runner,
-) {
+  SyncProcessRunner runner, {
+  required String user,
+}) {
   final qVal = data['q$index'];
   if (qVal is! Map<String, dynamic>) return null;
 
@@ -691,6 +774,16 @@ ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
   final localSha = localBranch?.sha ?? (isWtOnBranch ? matchingWt.sha : '');
   if (localSha.isEmpty && worktreePath == null) return null;
 
+  if (!_isPrNodeLinkedToLocalBranch(
+    node: node,
+    repoDirPath: worktreePath ?? repo.repoPath,
+    localSha: localSha,
+    user: user,
+    runner: runner,
+  )) {
+    return null;
+  }
+
   if (_isSuppressedByNewerMergedPr(qVal, number, headRefOid, localSha)) {
     return null;
   }
@@ -718,3 +811,122 @@ ClosedUnmergedPr? _parseClosedUnmergedBatchItem(
     closedAt: _parseOptionalIsoDate(node['closedAt']),
   );
 }
+
+String _resolveLocalBranchSha(LocalRepoInfo repo, String branch) {
+  final localBranch = repo.branches.where((b) => b.name == branch).firstOrNull;
+  if (localBranch != null && localBranch.sha.isNotEmpty) {
+    return localBranch.sha;
+  }
+  final wt = repo.worktrees.where((w) => w.branch == branch).firstOrNull;
+  return wt?.sha ?? '';
+}
+
+bool _isPrNodeLinkedToLocalBranch({
+  required Map<String, dynamic> node,
+  required String repoDirPath,
+  required String localSha,
+  required String user,
+  required SyncProcessRunner runner,
+}) {
+  final userLower = user.toLowerCase();
+  final headRepoName =
+      (node['headRepository'] as Map<String, dynamic>?)?['nameWithOwner']
+          as String?;
+  if (headRepoName != null &&
+      headRepoName.toLowerCase().startsWith('$userLower/')) {
+    return true;
+  }
+
+  final headRefOid = (node['headRefOid'] as String?) ?? '';
+  final mergeCommitOid =
+      (node['mergeCommit'] as Map<String, dynamic>?)?['oid'] as String? ?? '';
+  if (localSha.isNotEmpty &&
+      (localSha == headRefOid || localSha == mergeCommitOid)) {
+    return true;
+  }
+
+  final authorLogin =
+      (node['author'] as Map<String, dynamic>?)?['login'] as String?;
+  final prOids = <String>[
+    if (headRefOid.isNotEmpty) headRefOid,
+    if (mergeCommitOid.isNotEmpty) mergeCommitOid,
+  ];
+  if (authorLogin != null && authorLogin.toLowerCase() != userLower) {
+    return _isLocalCommitAncestorOfAnyPrOid(
+      repoDirPath,
+      localSha,
+      prOids,
+      runner,
+    );
+  }
+
+  return _matchesSameAuthorOrUnfetchedPrOids(
+    repoDirPath,
+    localSha,
+    prOids,
+    runner,
+  );
+}
+
+bool _isLocalCommitAncestorOfAnyPrOid(
+  String repoDirPath,
+  String localSha,
+  List<String> prOids,
+  SyncProcessRunner runner,
+) {
+  if (localSha.isEmpty || prOids.isEmpty) return false;
+  if (!_commitExistsLocally(repoDirPath, localSha, runner)) return false;
+  for (final prOid in prOids) {
+    if (_commitExistsLocally(repoDirPath, prOid, runner) &&
+        _isGitAncestor(repoDirPath, localSha, prOid, runner)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+bool _matchesSameAuthorOrUnfetchedPrOids(
+  String repoDirPath,
+  String localSha,
+  List<String> prOids,
+  SyncProcessRunner runner,
+) {
+  if (localSha.isEmpty || prOids.isEmpty) return true;
+  if (!_commitExistsLocally(repoDirPath, localSha, runner)) return true;
+  final existingPrOids = [
+    for (final oid in prOids)
+      if (_commitExistsLocally(repoDirPath, oid, runner)) oid,
+  ];
+  if (existingPrOids.isEmpty) return true;
+  return existingPrOids.any(
+    (oid) =>
+        _isGitAncestor(repoDirPath, localSha, oid, runner) ||
+        _isGitAncestor(repoDirPath, oid, localSha, runner),
+  );
+}
+
+bool _commitExistsLocally(
+  String repoDirPath,
+  String oid,
+  SyncProcessRunner runner,
+) =>
+    runner('git', [
+      'cat-file',
+      '-e',
+      '$oid^{commit}',
+    ], workingDirectory: repoDirPath).exitCode ==
+    0;
+
+bool _isGitAncestor(
+  String repoDirPath,
+  String ancestor,
+  String descendant,
+  SyncProcessRunner runner,
+) =>
+    runner('git', [
+      'merge-base',
+      '--is-ancestor',
+      ancestor,
+      descendant,
+    ], workingDirectory: repoDirPath).exitCode ==
+    0;

@@ -74,18 +74,18 @@ the reviewer's question directly). Never paste the internal `Agent Assessment`
 block into GitHub.
 
 ```bash
-# Reply to an inline comment and resolve its review thread:
-kscripts pr-triage resolve --dir <repo-path> <thread_graphql_id> <comment_database_id> "<reply_body>"
+# Reply to an inline comment and resolve its review thread (always pass --pr <N> when triaging multiple PRs):
+kscripts pr-triage resolve --dir <repo-path> [--pr <pr_number>] <thread_graphql_id> <comment_database_id> "<reply_body>"
 
 # Resolve an inline review thread without posting a reply:
-kscripts pr-triage resolve --dir <repo-path> <thread_graphql_id>
+kscripts pr-triage resolve --dir <repo-path> [--pr <pr_number>] <thread_graphql_id>
 
 # Re-request review (with optional top-level reply comment):
-kscripts pr-triage re-request --dir <repo-path> <reviewer_login> \
+kscripts pr-triage re-request --dir <repo-path> [--pr <pr_number>] <reviewer_login> \
   [--comment "<top_level_reply_body>"]
 
 # Dismiss an addressed CHANGES_REQUESTED review AND re-request review atomically:
-kscripts pr-triage re-request --dir <repo-path> <reviewer_login> \
+kscripts pr-triage re-request --dir <repo-path> [--pr <pr_number>] <reviewer_login> \
   [--comment "<top_level_reply_body>"] \
   --dismiss <review_database_id> \
   -m "Addressed in <short_sha> (<concise summary>); re-requesting review from @<reviewer_login>."
@@ -96,16 +96,17 @@ kscripts pr-triage re-request --dir <repo-path> <reviewer_login> \
 - **If no new commits were pushed in Step 8**: Rely directly on the
   `**Review Requests**` line and `> [!IMPORTANT] Reviewer Dropped from Queue`
   banner in `raw_triage_output.md` (do **not** make an extra `gh pr view` call).
-- **If new commits were pushed in Step 8**: Check post-push state (in case
-  `dismiss_stale_reviews` in repositories like `flutter/flutter` dismissed a
-  prior `APPROVED` review and dropped the reviewer from `reviewRequests`):
+- **If new commits were pushed in Step 8**: Wait 3 seconds (`sleep 3`) after
+  `git push` so GitHub's asynchronous `synchronize` webhook finishes processing
+  `dismiss_stale_reviews` (in repositories like `flutter/flutter` that dismiss a
+  prior `APPROVED` review and drop the reviewer from `reviewRequests`):
   ```bash
-  gh pr view <pr_number> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests
+  sleep 3 && gh pr view <pr_number> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests
   ```
   If a previously `APPROVED` reviewer is now `DISMISSED` and absent from
   `reviewRequests`, run
-  `kscripts pr-triage re-request --dir <repo-path> <reviewer_login>` so the PR
-  re-enters their review queue.
+  `kscripts pr-triage re-request --dir <repo-path> [--pr <pr_number>] <reviewer_login>`
+  so the PR re-enters their review queue.
 - **GitHub State-Machine Quirk (`reviewDecision` vs. `latestReviews`)**:
   Re-requesting review without `--dismiss` adds `<login>` back to
   `reviewRequests` (`🟡 Re-review Requested`) and hides `<login>` from

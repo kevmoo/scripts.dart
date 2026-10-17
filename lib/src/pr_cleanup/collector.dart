@@ -65,6 +65,7 @@ Future<PrSweepResult> collectPrSweep({
     localRepos: localRepos,
     ghCleanResults: ghCleanResults,
     closedUnmergedPrs: landedResolution.closedUnmergedPrs,
+    user: options.user,
     repoFilter: options.repo,
     syncRunner: syncRunner,
     onProgress: onProgress,
@@ -196,6 +197,7 @@ _resolveAllLandedPrs({
   final crossAuthorPrs = await findCrossAuthorLandedPrs(
     localRepos,
     matchedHeadRefs,
+    user: options.user,
     lastNDays: options.lastNDays,
     repoFilter: options.repo,
     processRunner: syncRunner,
@@ -220,6 +222,7 @@ _resolveAllLandedPrs({
   final closedUnmergedPrs = await findClosedUnmergedPrs(
     localRepos,
     allMatchedHeadRefs,
+    user: options.user,
     repoFilter: options.repo,
     processRunner: syncRunner,
     onProgress: onProgress,
@@ -258,6 +261,7 @@ Future<List<UnlinkedWorktree>> _findUnlinkedWorktrees({
   required List<LocalRepoInfo> localRepos,
   required List<PrCleanResult> ghCleanResults,
   required List<ClosedUnmergedPr> closedUnmergedPrs,
+  required String user,
   required String? repoFilter,
   required SyncProcessRunner syncRunner,
   void Function(String message)? onProgress,
@@ -271,6 +275,7 @@ Future<List<UnlinkedWorktree>> _findUnlinkedWorktrees({
   return findUnlinkedWorktrees(
     localRepos,
     {...matchedWorktreePaths, ...closedWorktreePaths},
+    user: user,
     repoFilter: repoFilter,
     processRunner: syncRunner,
     onProgress: onProgress,

@@ -784,6 +784,7 @@ PrCheckViolation? _checkDartAnalyzeFatalInfos(
   String dartBin,
   SyncProcessRunner runSync,
 ) {
+  _ensurePackageConfigsFresh(repoRoot, dartFiles, dartBin, runSync);
   final res = runSync(dartBin, [
     'analyze',
     '--fatal-infos',
@@ -800,6 +801,37 @@ PrCheckViolation? _checkDartAnalyzeFatalInfos(
         'Run "dart pub get" (if uninitialized) and fix the analyzer '
         'diagnostics above (e.g. dart fix --apply).',
   );
+}
+
+void _ensurePackageConfigsFresh(
+  Directory repoRoot,
+  List<String> dartFiles,
+  String dartBin,
+  SyncProcessRunner runSync,
+) {
+  final pkgRelDirs = <String>{
+    if (File(p.join(repoRoot.path, 'pubspec.yaml')).existsSync()) '.',
+    for (final relPath in dartFiles)
+      ?_findOwningPackageRelDir(repoRoot, relPath),
+  };
+  for (final pkgRelDir in pkgRelDirs) {
+    final pkgDirPath = pkgRelDir == '.'
+        ? repoRoot.path
+        : p.join(repoRoot.path, pkgRelDir);
+    if (_isPackageConfigMissingOrStale(pkgDirPath)) {
+      runSync(dartBin, const ['pub', 'get'], workingDirectory: pkgDirPath);
+    }
+  }
+}
+
+bool _isPackageConfigMissingOrStale(String pkgDirPath) {
+  final pubspec = File(p.join(pkgDirPath, 'pubspec.yaml'));
+  if (!pubspec.existsSync()) return false;
+  final packageConfig = File(
+    p.join(pkgDirPath, '.dart_tool', 'package_config.json'),
+  );
+  if (!packageConfig.existsSync()) return true;
+  return pubspec.lastModifiedSync().isAfter(packageConfig.lastModifiedSync());
 }
 
 PrCheckViolation? _checkCognitiveComplexity(
