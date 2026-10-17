@@ -18,11 +18,11 @@ description: >-
 # Triage the active PR for a target repository checkout or worktree:
 kscripts pr-triage --dir /path/to/target-repository [--pr 123]
 
-# Reply to a comment and resolve a review thread:
-kscripts pr-triage resolve --dir /path/to/target-repository <thread_id> [<comment_id> "<reply_body>"]
+# Reply to a comment and resolve a review thread (always pass --pr <N> when triaging multiple PRs):
+kscripts pr-triage resolve --dir /path/to/target-repository [--pr 123] <thread_id> [<comment_id> "<reply_body>"]
 
 # Post an optional top-level reply, optionally dismiss a stale CHANGES_REQUESTED review, and re-request review:
-kscripts pr-triage re-request --dir /path/to/target-repository <reviewer_login> [--comment "<reply_body>"] [--dismiss <review_database_id> -m "<reason>"]
+kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <reviewer_login> [--comment "<reply_body>"] [--dismiss <review_database_id> -m "<reason>"]
 ```
 
 ## When to use this skill
@@ -159,13 +159,21 @@ state-machine notes, and underlying GraphQL/REST schemas.
   2. Their latest state in `latestReviews` is **NOT** `"APPROVED"` (`COMMENTED`,
      `CHANGES_REQUESTED`, or `DISMISSED`), **AND**
   3. Commits were pushed or replies posted addressing their feedback.
+- **Always Pass `--pr <N>` on Multi-PR Triage**: Because
+  `kscripts pr-triage resolve` (and `re-request`) infers the PR number from the
+  active git branch when `--pr` is omitted, always pass `--pr <N>` explicitly
+  when triaging multiple PRs in the same repository or when the checkout is not
+  on the target PR's branch (preventing `404 Parent comment not found` errors).
 - **Re-Request After `dismiss_stale_reviews` Auto-Dismisses an Approval**: In
   repositories with `dismiss_stale_reviews` enabled (such as `flutter/flutter`),
   pushing new commits automatically transitions a prior `"APPROVED"` review to
-  `"DISMISSED"` and removes the reviewer from `reviewRequests`. Always check
+  `"DISMISSED"` and removes the reviewer from `reviewRequests` via GitHub's
+  asynchronous `synchronize` webhook. Always run `sleep 3` after `git push`
+  before querying
   `gh pr view <pr_number> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests`
-  after `git push` and re-request any reviewer whose approval was dismissed via
-  `kscripts pr-triage re-request --dir <repo-path> <reviewer_login>`.
+  so the webhook finishes processing `dismiss_stale_reviews`, then re-request
+  any reviewer whose approval was dismissed via
+  `kscripts pr-triage re-request --dir <repo-path> [--pr <pr_number>] <reviewer_login>`.
 - **Stop When Already Queued**: If `<login>` is already in `reviewRequests` and
   all feedback is addressed on the latest commit, **STOP**.
 

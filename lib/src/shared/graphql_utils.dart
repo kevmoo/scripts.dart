@@ -29,6 +29,8 @@ bool isBotLogin(String login) {
 final _transientGhErrorPattern = RegExp(
   r'HTTP 50[234]\b|'
   r'50[234] (?:Bad Gateway|Service Unavailable|Gateway Timeout)|'
+  r'\b(?:Bad Gateway|Service Unavailable|Gateway Timeout)\b|'
+  r'Something went wrong while executing your query|'
   r'stream error|'
   r'connection reset|'
   r'TLS handshake timeout',

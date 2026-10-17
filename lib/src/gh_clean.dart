@@ -58,6 +58,7 @@ Future<void> runGhClean({
   final crossAuthorPrs = await findCrossAuthorLandedPrs(
     localRepos,
     matchedHeadRefs,
+    user: options.user,
     lastNDays: options.lastNDays,
     repoFilter: options.repo,
     processRunner: runner,
@@ -103,6 +104,7 @@ Future<void> runGhClean({
   final closedUnmergedPrs = await findClosedUnmergedPrs(
     localRepos,
     allMatchedHeadRefs,
+    user: options.user,
     repoFilter: options.repo,
     processRunner: runner,
     onProgress: onProgress,
@@ -124,6 +126,7 @@ Future<void> runGhClean({
       : await findUnlinkedWorktrees(
           localRepos,
           {...matchedWorktreePaths, ...closedWorktreePaths},
+          user: options.user,
           repoFilter: options.repo,
           processRunner: runner,
           onProgress: onProgress,

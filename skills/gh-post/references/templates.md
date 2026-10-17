@@ -146,3 +146,22 @@ specific fields:
 | **Reasoning / Impact** | `reasoning`, `motivation`           | `### Reasoning`                                         |
 | **Proposed Solution**  | `solution`, `proposal`, `idea`      | `### Proposed Solution`                                 |
 | **Additional Context** | `additional_context`, `comments`    | `### Additional Context` (put Acceptance Criteria here) |
+
+## 4. Submission CLI & Manual Web Form Templates (`Step 5`)
+
+When submitting an approved draft artifact via `gh`, strip the artifact preview
+header lines and pass `--body-file -` (never inline `--body "line 1\nline 2"`):
+
+```bash
+# For Issues (strip Line 1 '# <Proposed Title>' + Line 2 blank line):
+tail -n +3 <draft_artifact_path> | gh issue create -R owner/repo \
+  --title "[subsystem] Imperative Title" --body-file -
+
+# For Pull Requests (strip '# <Proposed Title>' + '🛡️ Paranoia Tier:' header):
+tail -n +5 <draft_artifact_path> | gh pr create \
+  --title "feat(scope): imperative summary" --body-file -
+```
+
+For **Manual Web Form Mode** (when the user requests a pre-filled browser link
+to paste manually), emit a URL artifact targeting:
+`https://github.com/<owner>/<repo>/issues/new?title=<url_encoded_title>`

@@ -494,6 +494,79 @@ environment:
     check(checks).contains('prettier-markdown');
   });
 
+  test('runs dart pub get before dart analyze when package_config.json is '
+      'missing or older than pubspec.yaml', () {
+    final pubspecFile = File(p.join(tempDir.path, 'pubspec.yaml'))
+      ..writeAsStringSync('''
+name: sample_pkg
+publish_to: none
+environment:
+  sdk: ^3.5.0
+''');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'foo.dart')).writeAsStringSync('void main() {}\n');
+
+    final missingConfigCalls = <(String, List<String>, String?)>[];
+    runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+        recordedCalls: missingConfigCalls,
+      ),
+    );
+    check(
+      missingConfigCalls.any(
+        (c) => c.$2.length == 2 && c.$2[0] == 'pub' && c.$2[1] == 'get',
+      ),
+    ).isTrue();
+
+    final dartToolDir = Directory(p.join(tempDir.path, '.dart_tool'))
+      ..createSync();
+    final pkgConfigFile = File(p.join(dartToolDir.path, 'package_config.json'))
+      ..writeAsStringSync('{}\n');
+    final now = DateTime.now();
+    pubspecFile.setLastModifiedSync(now.subtract(const Duration(seconds: 10)));
+    pkgConfigFile.setLastModifiedSync(now);
+
+    final freshConfigCalls = <(String, List<String>, String?)>[];
+    runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+        recordedCalls: freshConfigCalls,
+      ),
+    );
+    check(
+      freshConfigCalls.any(
+        (c) => c.$2.length == 2 && c.$2[0] == 'pub' && c.$2[1] == 'get',
+      ),
+    ).isFalse();
+
+    pubspecFile.setLastModifiedSync(now.add(const Duration(seconds: 10)));
+    final staleConfigCalls = <(String, List<String>, String?)>[];
+    runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+        recordedCalls: staleConfigCalls,
+      ),
+    );
+    check(
+      staleConfigCalls.any(
+        (c) => c.$2.length == 2 && c.$2[0] == 'pub' && c.$2[1] == 'get',
+      ),
+    ).isTrue();
+  });
+
   test(
     'detects single-line, collapsible 2-line, nested, and bodyless GFM '
     'alerts and Google3 mdformat/TOC directives outside fenced code blocks',
@@ -517,6 +590,8 @@ environment:
         '<!-- mdformat off -->',
         '[TOC]',
         'Mentioning `<!-- mdformat off -->` and `[TOC]` in backticks is fine.',
+        'Mentioning `` `<!-- mdformat off/on -->` `` or `` `[TOC]` `` is fine.',
+        '`[TOC]`',
         '',
         '```markdown',
         '> [!NOTE] Inside code fence is ignored.',

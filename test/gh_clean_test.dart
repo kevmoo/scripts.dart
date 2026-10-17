@@ -1476,6 +1476,120 @@ void main() {
         check(crossAuthorPrs.first.repository).equals('org/repo-b');
       },
     );
+
+    test('ignores unrelated external contributor PR on generic branch name '
+        'unless local commit is an ancestor of PR head', () async {
+      await d.dir('repo_lazy_routes', [
+        d.file('README.md', '# Lazy Routes'),
+      ]).create();
+      final repoPath = p.join(d.sandbox, 'repo_lazy_routes');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/invoiceninja/ui.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+      await git.runCommand(['checkout', '-b', 'lazy-routes']);
+      await File(p.join(repoPath, 'routes.dart')).writeAsString('// routes');
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'local lazy routes work']);
+
+      final localRepos = scanLocalGitRepositories(Directory(d.sandbox));
+
+      // 1. Unrelated external contributor PR (#614) with different SHA:
+      final unrelatedPrs = await findCrossAuthorLandedPrs(
+        localRepos,
+        <String>{},
+        lastNDays: null,
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            return ProcessResult(
+              1,
+              0,
+              jsonEncode({
+                'data': {
+                  'q0': {
+                    'nameWithOwner': 'invoiceninja/ui',
+                    'url': 'https://github.com/invoiceninja/ui',
+                    'pullRequests': {
+                      'nodes': [
+                        {
+                          'number': 614,
+                          'title': 'feat: lazy routes (2023)',
+                          'url': 'https://github.com/invoiceninja/ui/pull/614',
+                          'author': {'login': 'external-contributor'},
+                          'mergedAt': '2023-05-10T12:00:00Z',
+                          'closedAt': '2023-05-10T12:00:00Z',
+                          'headRefName': 'lazy-routes',
+                          'headRefOid':
+                              '1111111111111111111111111111111111111111',
+                          'baseRefName': 'main',
+                        },
+                      ],
+                    },
+                  },
+                },
+              }),
+              '',
+            );
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+      check(unrelatedPrs).isEmpty();
+
+      // 2. Closed unmerged PR by unrelated external contributor is also
+      // ignored:
+      final unrelatedClosed = await findClosedUnmergedPrs(
+        localRepos,
+        <String>{},
+        processRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            return ProcessResult(
+              1,
+              0,
+              jsonEncode({
+                'data': {
+                  'q0': {
+                    'nameWithOwner': 'invoiceninja/ui',
+                    'openPrs': {'nodes': <Object>[]},
+                    'mergedPrs': {'nodes': <Object>[]},
+                    'closedPrs': {
+                      'nodes': [
+                        {
+                          'number': 614,
+                          'title': 'feat: lazy routes (2023)',
+                          'url': 'https://github.com/invoiceninja/ui/pull/614',
+                          'author': {'login': 'external-contributor'},
+                          'headRefOid':
+                              '1111111111111111111111111111111111111111',
+                        },
+                      ],
+                    },
+                  },
+                },
+              }),
+              '',
+            );
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+      check(unrelatedClosed).isEmpty();
+    });
   });
 
   group('remote head branch cleanup', () {
