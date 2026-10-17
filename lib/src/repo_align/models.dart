@@ -58,6 +58,7 @@ class RepoAlignmentStatus {
   final bool hasPrettierRc;
   final bool hasMarkdownWorkflow;
   final bool hasPrettierIgnore;
+  final List<String> spotDriftIssues;
 
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
@@ -112,6 +113,7 @@ class RepoAlignmentStatus {
     this.hasPrettierRc = false,
     this.hasMarkdownWorkflow = false,
     this.hasPrettierIgnore = false,
+    this.spotDriftIssues = const [],
     required this.autoMergeAllowed,
     this.hasAutosubmitLabel = true,
     required this.hasRulesetOrProtection,
@@ -254,6 +256,7 @@ class RepoAlignmentStatus {
         !defaultBranchRequiredChecks.contains(markdownCheckContext)) {
       result.add('markdown.yml present but not a required check');
     }
+    result.addAll(spotDriftIssues);
   }
 
   void _checkGitHubIssues(List<String> result) {
@@ -342,6 +345,7 @@ class RepoAlignmentStatus {
     'hasPrettierRc': hasPrettierRc,
     'hasMarkdownWorkflow': hasMarkdownWorkflow,
     'hasPrettierIgnore': hasPrettierIgnore,
+    'spotDriftIssues': spotDriftIssues,
     'autoMergeAllowed': autoMergeAllowed,
     'hasRulesetOrProtection': hasRulesetOrProtection,
     'requiredChecks': requiredChecks,

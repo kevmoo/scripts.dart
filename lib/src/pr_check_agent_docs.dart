@@ -19,6 +19,21 @@ final _inlineCliFlagUnicodeDashRegex = RegExp(
 );
 final _skillNamePattern = RegExp(r'^[a-z0-9-]+$');
 
+final _tier1CorpInsensitiveRegex = RegExp(
+  r'(\b(?:b|cl|go|cs|sponge2|tap|critique)/[A-Za-z0-9_-]{2,}|'
+  r'/google/(?:src|bin|data)/|//depot/|google3|\.corp\.google\.com|'
+  r'\.goog\b|\.googlers\.com|'
+  r'\b(?:g4|blaze-for-agents|citc|g3doc|moma|yaqs|buganizer|evalin|'
+  r'gcert|gob-ctl|ggh|jj-ship|md-live|tricorder|kevmoo-relay|dash-okf|'
+  r'jetski|antigravity_project_id|agentapi|pm-work|pm-status|pm-convo|'
+  r'pm_os|wynette|dotcorp)\b|sso://)',
+  caseSensitive: false,
+);
+final _tier1CorpSensitiveRegex = RegExp(r'\bCritique\b');
+final _tier2PersonalPathRegex = RegExp(
+  r'(~/\.agents/|/home/kevmoo/|/Users/kevmoo/)',
+);
+
 final class _FenceState {
   final String delimiter;
   final String lang;
@@ -106,20 +121,96 @@ bool _isAgentDocPath(String relPath) {
   if (base == 'SKILL.md' || _alwaysOnAgentDocNames.contains(base)) {
     return true;
   }
+  if (!relPath.endsWith('.md')) return false;
   final segments = p.split(relPath);
-  return segments.contains('references') && relPath.endsWith('.md');
+  return segments.contains('references') || segments.contains('skills');
+}
+
+/// Scans raw, unstripped [lines] from [relPath] for:
+/// 1. Tier 1 corporate/internal literal leaks (`corp-internal-literal`).
+/// 2. Tier 2 unportable local paths in `skills/**` (`skill-unportable-local-path`).
+/// 3. Managed `<!-- BEGIN SPOT: <id> -->` block drift (`spot-*`).
+List<PrCheckViolation> checkRawMarkdownDiodeAndSpot(
+  String relPath,
+  List<String> lines, {
+  Map<String, String>? canonicalSpotDefs,
+}) {
+  final violations = <PrCheckViolation>[];
+  final isSkillFile = p.split(relPath).contains('skills');
+
+  for (var i = 0; i < lines.length; i++) {
+    final lineNum = i + 1;
+    final rawLine = lines[i];
+
+    final corpMatch =
+        _tier1CorpInsensitiveRegex.firstMatch(rawLine) ??
+        _tier1CorpSensitiveRegex.firstMatch(rawLine);
+    if (corpMatch != null) {
+      final token = corpMatch.group(0)!;
+      violations.add(
+        PrCheckViolation(
+          check: 'corp-internal-literal',
+          message:
+              '$relPath:$lineNum contains internal/corporate reference '
+              '"$token" in a public repository.',
+          remediation:
+              'Remove "$token" from $relPath or keep corp-specific prose '
+              'inside `~/.dotfiles-corp` / Google3.',
+        ),
+      );
+    }
+
+    if (isSkillFile) {
+      final personalMatch = _tier2PersonalPathRegex.firstMatch(rawLine);
+      if (personalMatch != null) {
+        final token = personalMatch.group(0)!;
+        violations.add(
+          PrCheckViolation(
+            check: 'skill-unportable-local-path',
+            message:
+                '$relPath:$lineNum references machine-local path "$token" '
+                'inside a standalone skill file.',
+            remediation:
+                'Stamp shared standards via `<!-- BEGIN SPOT: <id> -->` or '
+                'point to a co-located file in the skill directory instead '
+                'of "$token".',
+          ),
+        );
+      }
+    }
+  }
+
+  for (final issue in checkSpotBlocksInLines(
+    relPath,
+    lines,
+    canonicalDefs: canonicalSpotDefs,
+  )) {
+    violations.add(
+      PrCheckViolation(
+        check: issue.kind,
+        message: issue.message,
+        remediation: issue.remediation,
+      ),
+    );
+  }
+  return violations;
 }
 
 /// Validates agentic documentation files (`SKILL.md`, `AGENTS.md`, `CLAUDE.md`,
-/// `GEMINI.md`, and `references/*.md`) for line budgets, frontmatter contracts,
-/// and internal link integrity.
+/// `GEMINI.md`, `skills/**/*.md`, and `references/*.md`) for line budgets,
+/// frontmatter contracts, internal link integrity, raw-line diode rules, and
+/// SPOT block synchronization.
 List<PrCheckViolation> checkAgentDocFiles(
   Directory repoRoot,
-  List<String> changedFiles,
-) {
+  List<String> changedFiles, {
+  Map<String, String>? canonicalSpotDefs,
+}) {
   final violations = <PrCheckViolation>[];
+  final defs = canonicalSpotDefs ?? loadCanonicalSpotDefs();
   for (final relPath in changedFiles.where(_isAgentDocPath)) {
-    violations.addAll(checkSingleAgentDocFile(repoRoot, relPath));
+    violations.addAll(
+      checkSingleAgentDocFile(repoRoot, relPath, canonicalSpotDefs: defs),
+    );
   }
   return violations;
 }
@@ -128,8 +219,9 @@ List<PrCheckViolation> checkAgentDocFiles(
 /// [repoRoot].
 List<PrCheckViolation> checkSingleAgentDocFile(
   Directory repoRoot,
-  String relPath,
-) {
+  String relPath, {
+  Map<String, String>? canonicalSpotDefs,
+}) {
   final file = File(p.join(repoRoot.path, relPath));
   if (!file.existsSync()) return const [];
 
@@ -144,7 +236,15 @@ List<PrCheckViolation> checkSingleAgentDocFile(
     violations.addAll(_checkAlwaysOnAgentDoc(relPath, text));
   }
 
-  violations.addAll(_checkMarkdownAstLinks(repoRoot, relPath, lines));
+  violations
+    ..addAll(_checkMarkdownAstLinks(repoRoot, relPath, lines))
+    ..addAll(
+      checkRawMarkdownDiodeAndSpot(
+        relPath,
+        lines,
+        canonicalSpotDefs: canonicalSpotDefs,
+      ),
+    );
   return violations;
 }
 
@@ -366,7 +466,12 @@ String? _resolveInternalLinkTarget(
   final withoutFragment = href.split('#').first.split('?').first;
   if (withoutFragment.isEmpty) return null;
   final resolved = withoutFragment.startsWith('/')
-      ? p.normalize(p.join(repoRootPath, withoutFragment.substring(1)))
+      ? p.normalize(
+          p.join(
+            repoRootPath,
+            withoutFragment.replaceFirst(RegExp(r'^/+'), ''),
+          ),
+        )
       : p.normalize(p.join(fileDir, withoutFragment));
   if (resolved != repoRootPath && !p.isWithin(repoRootPath, resolved)) {
     return null;
@@ -378,8 +483,6 @@ bool _isIgnoredLinkHref(String href) =>
     href.isEmpty ||
     href == '...' ||
     href.startsWith('#') ||
-    href.startsWith('//') ||
-    href.startsWith('~') ||
     href.contains('://') ||
     href.startsWith('mailto:') ||
     href.startsWith('javascript:') ||

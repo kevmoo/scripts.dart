@@ -124,43 +124,41 @@ Maintainers suffer from low-effort LLM fatigue. A good submission lets its
 reader decide in under 15 seconds. Write for the reader's next decision, not for
 the record of your work:
 
-1. **Lead with the decision.** Sentence 1 of the body (Line 3 of the draft
-   artifact, right below `# <Proposed Title>`) states the exact defect, ask, or
-   change. Discovery history (_"Commit X and PR Y added..."_), process narrative
-   (_"While investigating the codebase..."_), and `### Summary` or `### Context`
-   headers above it go last, in `<details>`, or away.
+<!-- BEGIN SPOT: workflow-outbound-five-principles -->
+
+1. **Lead with the decision.** Line 1 states the defect, ask, or change.
+   Discovery history and process narrative go last or in a collapsed block.
 2. **Budget words by reader count.** Title: hundreds of readers, search key +
    decision signal, `<= 70` chars. First 3 lines: tens, enough to triage or
-   review. Body: one reader, repro + evidence + permalinks. Keep the visible
-   gist to `<= 8–12` lines.
+   review. Body: one reader, repro + evidence + permalinks.
 3. **Report the delta, not the tour.** Open with what is wrong or what changes.
-   An `owner` audience already knows how their code works today and what stays
-   unchanged, so cut both "currently, X does Y" openers and "existing mechanics
-   X, Y, Z remain sound" summaries; a `visitor` audience gets one orienting line
-   plus a permalink.
+   The owner already knows how their code works today, so a "currently, X does
+   Y" opener is cut; a visitor gets one orienting line + permalink.
 4. **Fill a slot only if it changes a decision.** Delete empty template
-   sections, headers over single paragraphs, parenthetical asides, `---`
-   dividers, decorative emojis, pleasantries, and speculative architecture
-   essays. One audience and one owner per post: split distinct subsystems/teams
-   into separate issues. Limit proposed fixes to 1–3 concrete bullets.
-5. **Anchor, verify, then cold-read.** In issues, every claim carries a GitHub
-   `https://` permalink
-   (`https://github.com/<owner>/<repo>/blob/<commit>/<file>#L<start>-L<end>`) or
-   a plain backtick repository-relative path (`` `lib/src/foo.dart` ``)—never a
-   local `file://` workstation URL, since `--body-file` pipes the draft verbatim
-   to GitHub. Inference is labeled as inference. In PRs, GitHub already shows
-   the **Files changed** diff tab and **CI check runs**: never list a
-   file-by-file change inventory (`- path/to/file.dart: ...`) or recite routine
-   CI checks (`Verified: dart analyze / dart test`); state only the intent/why,
-   non-obvious callouts or breaking changes, `Fixes #N`, and non-CI verification
-   (e.g. benchmarks or manual UI checks). Encapsulate verbatim CLI output, stack
-   traces, code traces, and full benchmark tables inside
-   `<details><summary><b>Detailed Breakdown, Repro Steps & Measurements (AI-assisted)</b></summary>`
-   (blank line after `</summary>` and before `</details>`; no narrative prose
-   inside). Then run Step 3.5.
+   sections, headers over single paragraphs, and parenthetical asides. One
+   audience and one owner per artifact.
+5. **Anchor, verify, then cold-read.** In issues/bugs, every claim carries a
+   permalink and repro/verification steps. In PRs and code reviews, never
+   narrate the diff file-by-file or recite routine CI checks (`dart analyze`/
+   `dart test`)—state only the intent/why, non-obvious callouts or breaking
+   changes, `Fixes #N`, and non-CI verification (e.g. benchmarks or manual UI
+   checks). Traces go in `<details>` or issue attachments. Run `/cold-read` on
+   the publish form and fix anything the reader cannot decide from the first 3
+   lines.
+
+<!-- END SPOT: workflow-outbound-five-principles -->
 
 GitHub-specific mechanics:
 
+- **GitHub Permalinks & `<details>` Format**: In issues, anchor every claim to a
+  GitHub `https://` permalink
+  (`https://github.com/<owner>/<repo>/blob/<commit>/<file>#L<start>-L<end>`) or
+  a plain backtick repository-relative path (`` `lib/src/foo.dart` ``)—never a
+  local `file://` workstation URL. Encapsulate verbatim CLI output, stack
+  traces, code traces, and full benchmark tables inside
+  `<details><summary><b>Detailed Breakdown, Repro Steps & Measurements (AI-assisted)</b></summary>`
+  (blank line after `</summary>` and before `</details>`; no narrative prose
+  inside), then run Step 3.5.
 - **No Unsolicited `cc @username` Mentions**: Never append `cc @user1 @user2` to
   issue or PR descriptions unless the user explicitly asks to mention specific
   people.
@@ -178,15 +176,26 @@ At the top of every PR draft artifact preview
 (`draft_github_<owner>_<repo>_pr.md`, immediately below `# <Proposed Title>`)
 and in chat, display the computed **3D Paranoia Classification** line:
 
-```markdown
-🛡️ Paranoia Tier: Ring <0..4B> (<Label>) · Confidence: <High|Low> · Door: <🚪 One-Way | 🔄 Two-Way>
-```
+<!-- BEGIN SPOT: workflow-3d-paranoia-tiers -->
 
-| Dimension      | Values & Classification Rules                                                                                                                                                                                                                                                                                                                            |
-| :------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Reuse Ring** | `Ring 0` (Personal dotfiles & private configs: `personal_dotfiles`) · `Ring 2` (Public skills & utilities: `kevmoo_skills`, `scripts.dart`) · `Ring 3` (Published `pub.dev` packages: `analytica.dart`, `json_serializable`) · `Ring 4A` (Upstream Dart/Flutter framework & packages) · `Ring 4B` (Upstream C++, Dart VM internals, WIMP, Skwasm engine) |
-| **Confidence** | `High` (Pure Dart, CLI, package & framework code) · `Low` (Unfamiliar C++, VM internals, WIMP/Skwasm/engine plumbing)                                                                                                                                                                                                                                    |
-| **Door Type**  | `🚪 One-Way` (Public `api.txt` / CLI flag / JSON schema delta, SemVer `-wip` bump, DB migration, CI release workflow) · `🔄 Two-Way` (Internal `lib/src/` refactors, isolated tests, docs)                                                                                                                                                               |
+- **Banner Format**: Render at the top of review and PR draft preview artifacts
+  (and in chat):
+  `🛡️ Paranoia Tier: Ring <0..4B> (<Label>) · Confidence: <High|Low> · Door: <🚪 One-Way | 🔄 Two-Way>`
+- **Reuse Ring (`Ring 0..4B`)**: `Ring 0` (personal dotfiles & private configs)
+  · `Ring 1-2` (public skills, utilities & internal scripts) · `Ring 3`
+  (published `pub.dev` packages) · `Ring 4A` (upstream Dart/Flutter framework &
+  packages) · `Ring 4B` (upstream C++, Dart VM internals, WIMP, Skwasm engine).
+  Default to `Review Mode: Standard` on `Ring 0-2` and `Review Mode: Deep` on
+  `Ring 3-4` or when `--deep` (`--paranoid`) is passed.
+- **Confidence (`High | Low`)**: `High` for familiar pure Dart, CLI, package &
+  framework code; `Low` (forcing `Review Mode: Deep`) for unfamiliar C++, VM
+  internals, or WIMP/Skwasm/engine plumbing.
+- **Door Type (`🚪 One-Way | 🔄 Two-Way`)**: `🚪 One-Way` (forcing
+  `Review Mode: Deep`) for public `api.txt` / CLI flag / JSON schema deltas,
+  SemVer `-wip` bumps, DB migrations, or CI release workflows; `🔄 Two-Way` for
+  internal `lib/src/` refactors, isolated tests, and docs.
+
+<!-- END SPOT: workflow-3d-paranoia-tiers -->
 
 _Note_: Strip the `# <Proposed Title>` line and the `🛡️ Paranoia Tier:` preview
 banner when passing `--body-file` in Step 5 so the published GitHub PR body

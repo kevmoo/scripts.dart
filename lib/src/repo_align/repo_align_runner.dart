@@ -6,6 +6,7 @@ import 'package:io/ansi.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+import '../shared/spot_sync.dart';
 import 'canonical_templates.dart';
 import 'models.dart';
 import 'repo_align_scanner.dart';
@@ -146,23 +147,16 @@ class RepoAlignRunner {
     bool fixCi = false,
     bool fixGitHub = false,
     bool fixApiSummary = false,
+    bool fixSpot = false,
     bool dryRun = false,
   }) {
-    var shouldFixLints = fixLints;
-    var shouldFixCi = fixCi;
-    var shouldFixGitHub = fixGitHub;
-
-    var shouldFixApiSummary = fixApiSummary;
-    if (!shouldFixLints &&
-        !shouldFixCi &&
-        !shouldFixGitHub &&
-        !shouldFixApiSummary) {
-      shouldFixLints = true;
-      shouldFixCi = true;
-      shouldFixGitHub = true;
-      shouldFixApiSummary = true;
-    }
-
+    final domains = _resolveFixDomains(
+      fixLints: fixLints,
+      fixApiSummary: fixApiSummary,
+      fixCi: fixCi,
+      fixSpot: fixSpot,
+      fixGitHub: fixGitHub,
+    );
     final results = scanner.scanAll(
       targetRepo: targetRepo,
       targetDir: targetDir,
@@ -179,13 +173,41 @@ class RepoAlignRunner {
 
     for (final r in targets) {
       print('\nProcessing ${cyan.wrap(r.name)} (${r.kind.name})...');
-      if (shouldFixLints) _fixAnalysisOptions(r, dryRun: dryRun);
-      if (shouldFixApiSummary) _fixApiSummary(r, dryRun: dryRun);
-      if (shouldFixCi) _fixCiWorkflows(r, dryRun: dryRun);
-      if (shouldFixGitHub) _fixGitHubSettings(r, dryRun: dryRun);
+      if (domains.contains('lints')) _fixAnalysisOptions(r, dryRun: dryRun);
+      if (domains.contains('api_summary')) _fixApiSummary(r, dryRun: dryRun);
+      if (domains.contains('ci')) _fixCiWorkflows(r, dryRun: dryRun);
+      if (domains.contains('spot')) _fixSpotBlocks(r, dryRun: dryRun);
+      if (domains.contains('github')) _fixGitHubSettings(r, dryRun: dryRun);
     }
 
     print('\n${green.wrap('✅ Remediation pass completed.')}\n');
+  }
+
+  static Set<String> _resolveFixDomains({
+    required bool fixLints,
+    required bool fixApiSummary,
+    required bool fixCi,
+    required bool fixSpot,
+    required bool fixGitHub,
+  }) {
+    final requested = {
+      if (fixLints) 'lints',
+      if (fixApiSummary) 'api_summary',
+      if (fixCi) 'ci',
+      if (fixSpot) 'spot',
+      if (fixGitHub) 'github',
+    };
+    return requested.isEmpty
+        ? const {'lints', 'api_summary', 'ci', 'spot', 'github'}
+        : requested;
+  }
+
+  void _fixSpotBlocks(RepoAlignmentStatus r, {required bool dryRun}) {
+    final updated = applyRepoSpotStamping(Directory(r.path), dryRun: dryRun);
+    for (final relPath in updated) {
+      final verb = dryRun ? 'Would stamp' : 'Stamped';
+      print('  📌 $verb SPOT blocks in $relPath');
+    }
   }
 
   void _fixApiSummary(RepoAlignmentStatus r, {required bool dryRun}) {

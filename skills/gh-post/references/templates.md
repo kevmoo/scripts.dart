@@ -101,17 +101,10 @@ Addressing these reduces:
 
 ## 3. Pull Request Artifact Preview & Body Template (`draft_github_<owner>_<repo>_pr.md`)
 
-Include `# <Proposed Title>` on Line 1 and the **Explicit 3D Paranoia Header**
-on Line 3 of the local artifact preview (`draft_github_<owner>_<repo>_pr.md`)
-for user review, and strip lines 1–4 (`tail -n +5`) when passing `--body-file -`
-to `gh pr create` so the published GitHub PR description begins with the concise
-intent summary. Because GitHub already shows the **Files changed** diff tab and
-**CI check runs**, never include a file-by-file change inventory
-(`- path/to/file.dart: ...`) or routine CI test/analyzer pass counts
-(`Verified: dart test...`). State only **why** the change is made, any
-**non-obvious callouts / breaking changes / workarounds**,
-`Fixes #<issue_number>`, and **non-CI verification** (such as benchmarks or
-manual UI checks).
+Follow the Five Principles (`workflow-outbound-five-principles`) and Explicit 3D
+Paranoia Header (`workflow-3d-paranoia-tiers`) rules in
+[../SKILL.md](../SKILL.md#step-3-draft-into-an-artifact-first), and strip lines
+1–4 (`tail -n +5`) when passing `--body-file -` to `gh pr create`:
 
 ```markdown
 # feat(scope): imperative summary
