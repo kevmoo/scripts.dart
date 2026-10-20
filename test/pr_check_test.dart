@@ -4,6 +4,7 @@ import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/pr_check.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
+import 'package:pub_semver/pub_semver.dart';
 import 'package:test/test.dart';
 
 import 'test_helpers.dart';
@@ -27,6 +28,7 @@ void main() {
     String? workingDirectory,
     String statusOut = '',
     List<String> changedFiles = const [],
+    Map<String, String> gitShowFiles = const {},
     int formatExit = 0,
     int analyzeExit = 0,
     int prettierExit = 0,
@@ -47,6 +49,16 @@ void main() {
       }
       if (args.contains('--name-only')) {
         return ProcessResult(0, 0, changedFiles.join('\n'), '');
+      }
+      if (args.length == 2 && args[0] == 'show') {
+        final colonIdx = args[1].indexOf(':');
+        final relPath = colonIdx >= 0
+            ? args[1].substring(colonIdx + 1)
+            : args[1];
+        final content = gitShowFiles[relPath];
+        if (content != null) {
+          return ProcessResult(0, 0, content, '');
+        }
       }
     }
     if (args.contains('format')) {
@@ -681,5 +693,201 @@ $paddedBody
       ..contains('skill-frontmatter')
       ..contains('agent-doc-broken-link')
       ..contains('skill-unlinked-reference');
+  });
+
+  test('prepareUnpackedConsumerForAnalysis and discoverPubCacheReverseDepNames '
+      'sanitize unpacked pubspec files and filter pub-cache directories', () {
+    final consumerDir = Directory(
+      p.join(tempDir.path, 'json_serializable-6.15.0'),
+    )..createSync(recursive: true);
+    File(p.join(consumerDir.path, 'analysis_options.yaml'))
+        .writeAsStringSync('include: package:lints/recommended.yaml\n');
+    File(p.join(consumerDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: json_serializable
+version: 6.15.0
+resolution: workspace
+workspace:
+  - example
+dependencies:
+  source_helper: ^1.3.4
+dev_dependencies:
+  _shared_test:
+    path: ../shared_test
+''');
+
+    prepareUnpackedConsumerForAnalysis(
+      unpackedDir: consumerDir,
+      dependencyName: 'source_helper',
+      localDependencyPath: '/local/source_helper',
+    );
+
+    check(File(p.join(consumerDir.path, 'analysis_options.yaml')).existsSync())
+        .isFalse();
+    final sanitizedPubspec = File(p.join(consumerDir.path, 'pubspec.yaml'))
+        .readAsStringSync();
+    check(sanitizedPubspec)
+      ..not((it) => it.contains('resolution:'))
+      ..not((it) => it.contains('workspace:'))
+      ..not((it) => it.contains('dev_dependencies:'))
+      ..contains('source_helper: ^1.3.4');
+
+    final overrides = File(p.join(consumerDir.path, 'pubspec_overrides.yaml'))
+        .readAsStringSync();
+    check(overrides)
+      ..contains('dependency_overrides:')
+      ..contains('source_helper:')
+      ..contains('path: "/local/source_helper"');
+
+    final fakeHosted = Directory(p.join(tempDir.path, 'pub_cache_hosted'))
+      ..createSync(recursive: true);
+    final matchDir = Directory(p.join(fakeHosted.path, 'consumer_pkg-1.1.0'))
+      ..createSync();
+    File(p.join(matchDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: consumer_pkg
+dependencies:
+  source_helper: ^1.3.0
+''');
+    final incompatibleDir = Directory(
+      p.join(fakeHosted.path, 'older_pkg-2.0.0'),
+    )..createSync();
+    File(p.join(incompatibleDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: older_pkg
+dependencies:
+  source_helper: ^0.9.0
+''');
+
+    final discovered = discoverPubCacheReverseDepNames(
+      'source_helper',
+      targetReleaseVersion: Version(1, 4, 0),
+      pubCacheHostedDir: fakeHosted,
+    );
+    check(discovered).deepEquals(['consumer_pkg']);
+  });
+
+  test('runPrCheck skips rev-deps by default, runs dart pub unpack + analyze '
+      'when runRevDeps is true, and ignores major version bumps', () {
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: source_helper
+version: 1.4.0-wip
+environment:
+  sdk: ^3.5.0
+''');
+    File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## 1.4.0-wip
+
+- Add createSortedFieldSet.
+''');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'source_helper.dart')).writeAsStringSync('''
+List<Object> createSortedFieldSet(Object cls) => [];
+''');
+
+    final defaultReport = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: [
+          'pubspec.yaml',
+          'CHANGELOG.md',
+          'lib/source_helper.dart',
+        ],
+        gitShowFiles: {
+          'pubspec.yaml': 'name: source_helper\nversion: 1.3.10\n',
+        },
+      ),
+    );
+    check(defaultReport.passed).isTrue();
+    check(defaultReport.skippedChecks.map((s) => s.toString()).toList())
+        .contains('rev-deps:source_helper (pass --rev-deps to run)');
+
+    final optInFailReport = runPrCheck(
+      directory: tempDir,
+      runRevDeps: true,
+      reverseDepNamesLookup: (_) => const ['json_serializable'],
+      processRunner: (exe, args, {workingDirectory}) {
+        if (args.length >= 3 &&
+            args[0] == 'pub' &&
+            args[1] == 'unpack' &&
+            args[2] == 'json_serializable') {
+          final outArg = args.firstWhere((a) => a.startsWith('--output='));
+          final outDir = outArg.substring('--output='.length);
+          final unpacked = Directory(p.join(outDir, 'json_serializable-6.15.0'))
+            ..createSync(recursive: true);
+          File(p.join(unpacked.path, 'pubspec.yaml')).writeAsStringSync('''
+name: json_serializable
+version: 6.15.0
+dependencies:
+  source_helper: ^1.3.4
+''');
+          Directory(p.join(unpacked.path, 'lib')).createSync();
+          File(p.join(unpacked.path, 'lib', 'json_serializable.dart'))
+              .writeAsStringSync('// consumer\n');
+          return ProcessResult(0, 0, '', '');
+        }
+        if (args.length == 2 && args[0] == 'analyze' && args[1] == 'lib') {
+          return ProcessResult(
+            0,
+            3,
+            '  error - lib/src/helper.dart:10:5 - A member named '
+                "'toStringNonNullable' is defined in two extensions. - "
+                'ambiguous_extension_member_access',
+            '',
+          );
+        }
+        return fakeGitAndTools(
+          exe,
+          args,
+          workingDirectory: workingDirectory,
+          changedFiles: [
+            'pubspec.yaml',
+            'CHANGELOG.md',
+            'lib/source_helper.dart',
+          ],
+          gitShowFiles: {
+            'pubspec.yaml': 'name: source_helper\nversion: 1.3.10\n',
+          },
+        );
+      },
+    );
+
+    check(optInFailReport.passed).isFalse();
+    check(optInFailReport.violations.map((v) => v.check)).contains('rev-deps');
+    check(optInFailReport.violations.single.message)
+      ..contains('json_serializable-6.15.0')
+      ..contains('ambiguous_extension_member_access');
+
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: source_helper
+version: 2.0.0-wip
+environment:
+  sdk: ^3.5.0
+''');
+    File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## 2.0.0-wip
+
+- Breaking release.
+''');
+
+    final majorReport = runPrCheck(
+      directory: tempDir,
+      runRevDeps: true,
+      reverseDepNamesLookup: (_) => const ['json_serializable'],
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: [
+          'pubspec.yaml',
+          'CHANGELOG.md',
+          'lib/source_helper.dart',
+        ],
+        gitShowFiles: {
+          'pubspec.yaml': 'name: source_helper\nversion: 1.3.10\n',
+        },
+      ),
+    );
+    check(majorReport.passed).isTrue();
   });
 }
