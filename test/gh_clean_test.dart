@@ -930,6 +930,7 @@ void main() {
           lastCommitSubject: 'Raw socket prototype',
           isLocked: true,
           lockReason: 'HTTP/1.1 spike',
+          isDirty: false,
         ),
       ];
 
@@ -962,6 +963,7 @@ void main() {
           lastCommitSubject: 'Add contracts',
           isLocked: true,
           lockReason: 'WIP contracts',
+          isDirty: false,
         ),
       ];
 
