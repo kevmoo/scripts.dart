@@ -11,7 +11,7 @@ void main() {
   test('ensure_build', () async {
     final result = await Process.run(Platform.resolvedExecutable, [
       'run',
-      'build_cli@2.3.1',
+      'build_cli@2.3.2',
       '--check',
     ]);
     check(
