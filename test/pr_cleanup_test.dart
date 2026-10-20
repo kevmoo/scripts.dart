@@ -215,6 +215,13 @@ void main() {
         ..contains('# 🧹 PR & Worktree Cleanup Sweep Overview')
         ..contains('## ✅ Ready to Prune')
         ..contains('## 🚫 Active / Hands-Off')
+        ..contains('## ⚠️ Needs Triage')
+        ..contains(
+          '*Triage dangling worktrees by either deleting them or locking them '
+          'for safekeeping with a descriptive project/context reason '
+          '(`git -C <repo> worktree lock --reason "<project & why kept>" '
+          '<worktree>`).*',
+        )
         ..contains('## 📌 Locked Worktrees (FYI — Safe-Kept Local Work)')
         ..contains(
           '*Safe-kept via `git worktree lock --reason`. Review periodically '
@@ -224,17 +231,20 @@ void main() {
         ..contains('2026-10-13<br>🟢&nbsp;1d&nbsp;ago')
         ..contains('⚠️ *(No --reason provided)*')
         ..contains('⚪ Unknown')
-        ..contains('## ⚠️ Needs Triage')
-        ..contains(
-          '*Triage dangling worktrees by either deleting them or locking them '
-          'for safekeeping with a descriptive project/context reason '
-          '(`git -C <repo> worktree lock --reason "<project & why kept>" '
-          '<worktree>`).*',
-        )
         ..contains('Candidate landed handles: `#100, #200`')
         ..contains('tools_old')
         ..contains('Fix edge case in runner')
         ..contains('Worktree has 2 unpushed/unmerged commits');
+
+      final readyIdx = report.indexOf('## ✅ Ready to Prune');
+      final activeIdx = report.indexOf('## 🚫 Active / Hands-Off');
+      final triageIdx = report.indexOf('## ⚠️ Needs Triage');
+      final lockedIdx = report.indexOf(
+        '## 📌 Locked Worktrees (FYI — Safe-Kept Local Work)',
+      );
+      check(readyIdx).isLessThan(activeIdx);
+      check(activeIdx).isLessThan(triageIdx);
+      check(triageIdx).isLessThan(lockedIdx);
     });
 
     test('renders applied header when applied is true', () {
@@ -411,11 +421,14 @@ void main() {
             _mockAsyncOpenPrsRunner(),
       );
 
-      check(sweep.active.length).equals(1);
-      check(sweep.active.single.number).equals(1614);
-      check(sweep.active.single.worktreePath).equals(activeWt.path);
+      check(sweep.active.map((a) => a.number)).deepEquals([1620, 1614]);
+      check(sweep.active.last.worktreePath).equals(activeWt.path);
 
       check(sweep.lockedWorktrees.length).equals(2);
+      check(sweep.lockedWorktrees.first.worktreePath)
+          .equals(lockedNoReasonWt.path);
+      check(sweep.lockedWorktrees.last.worktreePath)
+          .equals(lockedReasonWt.path);
       final withReason = sweep.lockedWorktrees.firstWhere(
         (w) => w.worktreePath == lockedReasonWt.path,
       );
@@ -484,6 +497,33 @@ ProcessResult _mockAsyncOpenPrsRunner() {
             },
             'createdAt': '2026-10-10T00:00:00Z',
             'updatedAt': '2026-10-19T00:00:00Z',
+          },
+          {
+            'number': 1620,
+            'title': 'Fix newer issue',
+            'url': 'https://github.com/kevmoo/demo/pull/1620',
+            'author': {'login': 'kevmoo'},
+            'isDraft': false,
+            'state': 'OPEN',
+            'reviewDecision': null,
+            'reviewRequests': {'nodes': <Object?>[]},
+            'reviews': {'nodes': <Object?>[]},
+            'reviewThreads': {'totalCount': 0, 'nodes': <Object?>[]},
+            'comments': {'nodes': <Object?>[]},
+            'commits': {'nodes': <Object?>[]},
+            'mergeable': 'MERGEABLE',
+            'mergeStateStatus': 'CLEAN',
+            'mergeQueueEntry': null,
+            'headRefName': 'fix-newer',
+            'headRefOid': 'ffff9999',
+            'baseRefName': 'main',
+            'repository': {
+              'nameWithOwner': 'kevmoo/demo',
+              'url': 'https://github.com/kevmoo/demo',
+              'isArchived': false,
+            },
+            'createdAt': '2026-10-12T00:00:00Z',
+            'updatedAt': '2026-10-20T01:00:00Z',
           },
         ],
       },

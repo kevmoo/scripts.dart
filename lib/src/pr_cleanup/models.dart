@@ -189,9 +189,9 @@ class PrSweepResult {
   Map<String, dynamic> toJson() => {
     'timestamp': timestamp.toIso8601String(),
     'candidateLandedIds': candidateLandedIds,
-    'active': [for (final item in active) item.toJson()],
     'readyToPrune': [for (final item in readyToPrune) item.toJson()],
-    'lockedWorktrees': [for (final item in lockedWorktrees) item.toJson()],
+    'active': [for (final item in active) item.toJson()],
     'needsTriage': [for (final item in needsTriage) item.toJson()],
+    'lockedWorktrees': [for (final item in lockedWorktrees) item.toJson()],
   };
 }

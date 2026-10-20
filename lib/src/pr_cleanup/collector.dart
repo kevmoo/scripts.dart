@@ -67,6 +67,7 @@ Future<PrSweepResult> _assembleSweepResult({
   final active = <ActiveItem>[];
   _processGithubActivePrs(initialData.activePrs, repoMap, active);
   _processGerritActiveCls(initialData.gerrit, active);
+  _sortActiveItems(active);
 
   final landedResolution = await _resolveAllLandedPrs(
     rawLandedPrs: initialData.landedPrs,
@@ -136,6 +137,8 @@ PrSweepResult _buildSweepResult({
     lockedWorktrees: lockedWorktrees,
     needsTriage: needsTriage,
   );
+  _sortTriageItems(needsTriage);
+  _sortLockedWorktrees(lockedWorktrees);
 
   return PrSweepResult(
     active: active,
@@ -697,6 +700,49 @@ DateTime? _parseWorktreeDatePrefix(String? rawDate) {
   if (rawDate == null || rawDate.trim().isEmpty) return null;
   final token = rawDate.trim().split(' ').first;
   return DateTime.tryParse(token);
+}
+
+int _compareDatesDesc(DateTime? a, DateTime? b) {
+  if (a == null && b == null) return 0;
+  if (a == null) return 1;
+  if (b == null) return -1;
+  return b.compareTo(a);
+}
+
+void _sortActiveItems(List<ActiveItem> active) {
+  active.sort((a, b) {
+    final cmp = _compareDatesDesc(
+      a.updatedAt ?? a.createdAt,
+      b.updatedAt ?? b.createdAt,
+    );
+    if (cmp != 0) return cmp;
+    final repoCmp = a.repository.compareTo(b.repository);
+    if (repoCmp != 0) return repoCmp;
+    return b.number.compareTo(a.number);
+  });
+}
+
+void _sortTriageItems(List<TriageItem> needsTriage) {
+  needsTriage.sort((a, b) {
+    final cmp = _compareDatesDesc(
+      a.updatedAt ?? a.createdAt,
+      b.updatedAt ?? b.createdAt,
+    );
+    if (cmp != 0) return cmp;
+    final repoCmp = a.repository.compareTo(b.repository);
+    if (repoCmp != 0) return repoCmp;
+    return a.branch.compareTo(b.branch);
+  });
+}
+
+void _sortLockedWorktrees(List<LockedWorktreeItem> lockedWorktrees) {
+  lockedWorktrees.sort((a, b) {
+    final cmp = _compareDatesDesc(a.updatedAt, b.updatedAt);
+    if (cmp != 0) return cmp;
+    final repoCmp = a.repository.compareTo(b.repository);
+    if (repoCmp != 0) return repoCmp;
+    return a.branch.compareTo(b.branch);
+  });
 }
 
 DateTime? _readWorktreeModifiedAt(String worktreePath) {

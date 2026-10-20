@@ -19,12 +19,12 @@ String formatMarkdownReport(PrSweepResult result, {bool applied = false}) {
   _formatSummaryTable(buffer, result);
   _formatReadyToPruneSection(buffer, result.readyToPrune);
   _formatActiveSection(buffer, result.active, now: result.timestamp);
+  _formatNeedsTriageSection(buffer, result.needsTriage);
   _formatLockedWorktreesSection(
     buffer,
     result.lockedWorktrees,
     now: result.timestamp,
   );
-  _formatNeedsTriageSection(buffer, result.needsTriage);
   _formatLandedIdsSection(buffer, result.candidateLandedIds);
 
   return buffer.toString().trimRight();
@@ -55,14 +55,14 @@ void _formatSummaryTable(StringBuffer buffer, PrSweepResult result) {
       '${result.active.length} | Open PRs & active Gerrit CLs |',
     )
     ..writeln(
-      '| **Locked Worktrees (FYI)** | ${result.lockedWorktrees.length} | '
-      '${result.lockedWorktrees.length} | '
-      'Safe-kept local worktrees (`git worktree lock`) |',
-    )
-    ..writeln(
       '| **Needs Triage** | $triageWorktrees | '
       '${result.needsTriage.length} | '
       'Unlocked unlinked worktrees & unmerged commits |',
+    )
+    ..writeln(
+      '| **Locked Worktrees (FYI)** | ${result.lockedWorktrees.length} | '
+      '${result.lockedWorktrees.length} | '
+      'Safe-kept local worktrees (`git worktree lock`) |',
     )
     ..writeln();
 }
