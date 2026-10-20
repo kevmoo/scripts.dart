@@ -102,6 +102,54 @@ void main() {
 
       final repo1Info = repos.firstWhere((r) => r.repoName == 'external/repo1');
       check(repo1Info.worktrees.map((w) => w.branch)).contains('feat');
+      final featWt = repo1Info.worktrees.firstWhere((w) => w.branch == 'feat');
+      check(featWt.isLocked).isFalse();
+      check(featWt.lockReason).isNull();
+    });
+
+    test('parses locked worktrees with and without lock reason', () async {
+      await d.dir('lock_repo', [d.file('README.md', '# Lock Repo')]).create();
+      final repoPath = p.join(d.sandbox, 'lock_repo');
+      final git = await GitDir.init(repoPath, allowContent: true);
+      await git.configureTestIdentity();
+      await git.runCommand(['branch', '-M', 'main']);
+      await git.runCommand([
+        'remote',
+        'add',
+        'origin',
+        'https://github.com/kevmoo/lock_repo.git',
+      ]);
+      await git.runCommand(['add', '.']);
+      await git.runCommand(['commit', '-m', 'init']);
+
+      final wtPlainLocked = p.join(d.sandbox, '_lock_repo-plain');
+      await git.runCommand(['worktree', 'add', '-b', 'plain', wtPlainLocked]);
+      await git.runCommand(['worktree', 'lock', wtPlainLocked]);
+
+      final wtReasonLocked = p.join(d.sandbox, '_lock_repo-reason');
+      await git.runCommand(['worktree', 'add', '-b', 'reason', wtReasonLocked]);
+      await git.runCommand([
+        'worktree',
+        'lock',
+        '--reason',
+        'Active benchmark spike',
+        wtReasonLocked,
+      ]);
+
+      final repos = scanLocalGitRepositories(Directory(d.sandbox));
+      final info = repos.firstWhere((r) => r.repoName == 'kevmoo/lock_repo');
+
+      final mainWt = info.worktrees.firstWhere((w) => w.branch == 'main');
+      check(mainWt.isLocked).isFalse();
+      check(mainWt.lockReason).isNull();
+
+      final plainWt = info.worktrees.firstWhere((w) => w.branch == 'plain');
+      check(plainWt.isLocked).isTrue();
+      check(plainWt.lockReason).isNull();
+
+      final reasonWt = info.worktrees.firstWhere((w) => w.branch == 'reason');
+      check(reasonWt.isLocked).isTrue();
+      check(reasonWt.lockReason).equals('Active benchmark spike');
     });
 
     test('prioritizes upstream and origin remotes for repoName', () async {

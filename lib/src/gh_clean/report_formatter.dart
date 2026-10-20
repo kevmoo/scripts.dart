@@ -112,6 +112,13 @@ void _appendClosedUnmergedMarkdownSection(
   }
 }
 
+String _formatWorktreeLockSuffix(UnlinkedWorktree u) {
+  if (!u.isLocked) return '';
+  return u.lockReason != null
+      ? ' (📌 locked: ${u.lockReason})'
+      : ' (📌 locked)';
+}
+
 void _appendUnlinkedWorktreesMarkdownSection(
   StringBuffer buffer,
   List<UnlinkedWorktree> unlinkedWorktrees,
@@ -131,7 +138,8 @@ void _appendUnlinkedWorktreesMarkdownSection(
     final repoLink =
         '[**${u.repository}**](https://github.com/${u.repository})';
     final wtLink =
-        '[`${p.basename(u.worktreePath)}`](file://${u.worktreePath})';
+        '[`${p.basename(u.worktreePath)}`](file://${u.worktreePath})'
+        '${_formatWorktreeLockSuffix(u)}';
     final branchStr = '`${u.branch}`';
     final aheadStr = u.commitsAhead != null ? '${u.commitsAhead}' : '?';
     final dateStr = u.lastCommitDate ?? '?';
@@ -349,6 +357,12 @@ void _printPrCleanResults(
   }
 }
 
+String? _formatWorktreeLockTerminalLine(UnlinkedWorktree u) {
+  if (!u.isLocked) return null;
+  final reason = u.lockReason != null ? ' (${u.lockReason})' : '';
+  return '    Locked:        yes$reason';
+}
+
 void _printUnlinkedWorktrees(List<UnlinkedWorktree> unlinkedWorktrees) {
   if (unlinkedWorktrees.isEmpty) return;
 
@@ -364,6 +378,8 @@ void _printUnlinkedWorktrees(List<UnlinkedWorktree> unlinkedWorktrees) {
     print('  ${styleBold.wrap(folder)} (${u.repository})');
     print('    Branch:        ${u.branch}');
     print('    Path:          ${u.worktreePath}');
+    final lockLine = _formatWorktreeLockTerminalLine(u);
+    if (lockLine != null) print(lockLine);
     print('    Commits Ahead: $ahead');
     print('    Last Commit:   $date$subject');
     print('');
@@ -479,6 +495,8 @@ Map<String, dynamic> formatJsonReport(
         'commitsAhead': u.commitsAhead,
         'lastCommitDate': u.lastCommitDate,
         'lastCommitSubject': u.lastCommitSubject,
+        'isLocked': u.isLocked,
+        'lockReason': u.lockReason,
       },
   ],
 };

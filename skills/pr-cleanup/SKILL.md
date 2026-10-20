@@ -55,7 +55,9 @@ view of `~/github` and `~/github/dart-sdk`:
    ```
    _(Concurrently queries landed GitHub PRs, open GitHub PRs, cross-author and
    closed-unmerged branches, unlinked local worktrees, and Dart SDK Gerrit CLs,
-   rendering Bucket A with `Opened / Touched` dates, Bucket B, and Bucket C)._
+   rendering `✅ Ready to Prune`, `🚫 Active / Hands-Off` with
+   `Opened / Touched` dates, `📌 Locked Worktrees (FYI — Safe-Kept Local Work)`,
+   and `⚠️ Needs Triage`)._
 2. **Targeted Individual Collectors** _(optional when scoping to a single
    view)_:
    - **Merged/Closed PRs, Stale Worktrees & Dangling Remote Branches**:
@@ -86,10 +88,10 @@ reviewer/CI states), pipe `--json` into `duckdb -markdown` instead of adding new
 CLI flags:
 
 ```bash
-# Project & sort active GitHub PRs + Gerrit CLs (Bucket A) by opened/touched date:
+# Project & sort active GitHub PRs + Gerrit CLs (active) by opened/touched date:
 kscripts pr-cleanup --json | duckdb -markdown -c "
   WITH a AS (
-    SELECT unnest(bucketA, recursive := true)
+    SELECT unnest(active, recursive := true)
     FROM read_json_auto('/dev/stdin')
   )
   SELECT
@@ -147,23 +149,32 @@ Before proposing to delete any worktree, local branch, or unpushed commit:
 2. **Cross-Reference Active Sessions & Local Tasks**:
    - Check whether any worktree is in use by another terminal or agent session.
    - If an owning session is **actively thinking/running** (or the PR/CL is
-     open), keep the worktree in **Bucket A (`🚫 DO NOT TOUCH`)** and **warn the
+     open), keep the worktree in **`🚫 Active / Hands-Off`** and **warn the
      user** rather than interrupting an in-flight turn.
    - If a worktree belongs to a **waiting/idle** session whose PR/CL has already
-     **merged**, include pruning its VCS state in **Bucket B** and reconcile any
-     linked local tasks or waiting sessions according to your workspace rules.
+     **merged**, include pruning its VCS state in **`✅ Ready to Prune`** and
+     reconcile any linked local tasks or waiting sessions according to your
+     workspace rules.
 
-## 3. Three-Bucket Classification & Report
+## 3. Classification & Report
 
 Present the findings in a structured Markdown report (or artifact for large
-sweeps) divided into 3 buckets:
+sweeps) organized into four descriptive categories:
 
-- **Bucket A — `🚫 Active / Hands-Off` (Open PRs, Active Gerrit CLs, In-Flight
+- **`✅ Ready to Prune` (JSON field: `readyToPrune` — Merged PRs/CLs & Clean
   Worktrees)**:
+  - Clean unlocked worktrees (`git worktree remove`), merged local feature
+    branches (`git branch -D`), dangling remote head branches on writable repos,
+    and trunk fast-forwards (`--ff-only`).
+  - List any linked tasks or waiting sessions whose PRs have landed so they can
+    be reconciled after VCS cleanup.
+- **`🚫 Active / Hands-Off` (JSON field: `active` — Open PRs, Active Gerrit CLs,
+  In-Flight Worktrees)**:
   - List open PRs from `kscripts gh-view` and active Gerrit CLs from
     `kscripts gerrit-view` with their CI status, reviewer state (`⏳ Awaiting`
     vs `🔔 Ping Reviewer` vs `🔄 Re-request Review` vs `❌ Action Needed`), and
-    local worktree mapping.
+    local worktree mapping (active open/draft PR worktrees remain here even when
+    they have local unpushed commits).
   - When `kscripts gh-view` flags `🔄 **Re-request Review** (@reviewer)`, that
     human reviewer previously submitted a review (`COMMENTED`,
     `CHANGES_REQUESTED`, or `DISMISSED`) and was dropped from GitHub's
@@ -183,38 +194,57 @@ sweeps) divided into 3 buckets:
        has already `APPROVED` (`🟢 Approved (@approver)`) and the prior
        `CHANGES_REQUESTED` review is a stale veto on an older commit, surface
        the option (gated via `ask_question`) to dismiss the stale review.
-- **Bucket B — `✅ Safe to Prune Immediately` (Merged PRs/CLs & Clean
-  Worktrees)**:
-  - Clean worktrees (`git worktree remove`), merged local feature branches
-    (`git branch -D`), dangling remote head branches on writable repos, and
-    trunk fast-forwards (`--ff-only`).
-  - List any linked tasks or waiting sessions whose PRs have landed so they can
-    be reconciled after VCS cleanup.
-- **Bucket C — `⚠️ Requires Explicit Confirmation` (Closed-Unmerged PRs, Dirty
-  Worktrees, Unpushed Experiments)**:
+- **`📌 Locked Worktrees (FYI — Safe-Kept Local Work)` (JSON field:
+  `lockedWorktrees`)**:
+  - Local worktrees locked via
+    `git worktree lock --reason "<descriptive reason>"` are omitted from
+    `⚠️ Needs Triage` (and skipped by `gh-clean` pruning) and surfaced in the
+    report as an FYI table (including `Lock Reason`, `Commits Ahead`, and
+    `Last Touched` date) so the human can periodically review safe-kept local
+    prototypes and decide if any should be unlocked
+    (`git worktree unlock <worktree_path>`) and pruned.
+- **`⚠️ Needs Triage` (JSON field: `needsTriage` — Unlocked Unlinked Worktrees,
+  Closed-Unmerged PRs, Dirty Worktrees)**:
   - Detail the exact modified/untracked files (`git status -s`) or unmerged
-    commits so the user can decide whether to discard or keep each item.
+    commits so the user can decide how to handle each item.
+  - Dangling unlinked worktrees must always be triaged carefully—never bulk
+    force-removed. Recommend triaging each dangling worktree to **either
+    delete** (`git -C <parent_repo> worktree remove --force <worktree_path>` and
+    `git -C <parent_repo> branch -D <branch>`) **OR lock for safekeeping**
+    (`git -C <parent_repo> worktree lock --reason "<descriptive reason with project, context, and why kept>" <worktree_path>`).
+  - Explicitly encourage the human to provide a descriptive `--reason` that
+    includes project context, ticket/goal, and why the worktree is being kept.
 
 ## 4. Approval Gate & Execution
 
-Gate execution via `ask_question` with explicit bucket choices:
+Gate execution via `ask_question` with explicit category choices:
 
-- `(Recommended) Execute Bucket B only (prune merged PRs, clean worktrees & remote branches)`
-- `Execute Bucket B + Bucket C (also force-remove dirty/closed-unmerged worktrees)`
+- `(Recommended) Execute Ready-to-Prune cleanup only (prune merged PRs, clean worktrees & remote branches)`
+- `Triage Needs-Triage worktrees (lock with descriptive --reason for safekeeping or delete individually)`
 - `Stop here (keep read-only report only)`
 
 Once approved:
 
-1. **Execute Bucket B Pruning**:
-   - If **any** merged-PR worktree was held back in **Bucket A** (because an
-     active session is still using it), run
-     `kscripts gh-clean -R <owner/repo> --apply` for each approved Bucket B
-     repository individually so the Bucket A worktree is not touched.
-   - Only run unscoped `kscripts gh-clean -l 50 --apply` when **zero** merged-PR
-     worktrees were reclassified into Bucket A.
-2. **Execute Bucket C Pruning** _(only if Bucket C was explicitly approved)_:
-   - Run `git -C <parent_repo> worktree remove --force <worktree_path>` and
-     `git -C <parent_repo> branch -D <branch>`.
+1. **Execute `✅ Ready to Prune` Cleanup**:
+   - If **any** merged-PR worktree was held back in **`🚫 Active / Hands-Off`**
+     (because an active session is still using it), run
+     `kscripts gh-clean -R <owner/repo> --apply` for each approved
+     `✅ Ready to Prune` repository individually so the active worktree is not
+     touched.
+   - Only run unscoped `kscripts gh-clean -l 50 --apply` (or
+     `kscripts pr-cleanup --apply`) when **zero** merged-PR worktrees were
+     reclassified into `🚫 Active / Hands-Off`.
+2. **Triage `⚠️ Needs Triage` Worktrees Individually** _(never bulk
+   force-remove)_:
+   - For each worktree the user chooses to **lock for safekeeping**, run:
+     ```bash
+     git -C <parent_repo> worktree lock --reason "<descriptive reason with project, context, and why kept>" <worktree_path>
+     ```
+   - For each worktree the user explicitly confirms to **delete**, run:
+     ```bash
+     git -C <parent_repo> worktree remove --force <worktree_path>
+     git -C <parent_repo> branch -D <branch>
+     ```
 3. **Reconcile Linked Tasks & Waiting Sessions**:
    - After pruning landed PRs/CLs, verify and close any linked local tasks or
      notify waiting/idle sessions per your workspace rules (warning the user

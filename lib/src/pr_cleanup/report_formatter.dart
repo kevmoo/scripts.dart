@@ -17,18 +17,29 @@ String formatMarkdownReport(PrSweepResult result, {bool applied = false}) {
     ..writeln();
 
   _formatSummaryTable(buffer, result);
-  _formatBucketBSection(buffer, result.bucketB);
-  _formatBucketASection(buffer, result.bucketA, now: result.timestamp);
-  _formatBucketCSection(buffer, result.bucketC);
+  _formatReadyToPruneSection(buffer, result.readyToPrune);
+  _formatActiveSection(buffer, result.active, now: result.timestamp);
+  _formatLockedWorktreesSection(
+    buffer,
+    result.lockedWorktrees,
+    now: result.timestamp,
+  );
+  _formatNeedsTriageSection(buffer, result.needsTriage);
   _formatLandedIdsSection(buffer, result.candidateLandedIds);
 
   return buffer.toString().trimRight();
 }
 
 void _formatSummaryTable(StringBuffer buffer, PrSweepResult result) {
-  final bWorktrees = result.bucketB.where((i) => i.worktreePath != null).length;
-  final aWorktrees = result.bucketA.where((i) => i.worktreePath != null).length;
-  final cWorktrees = result.bucketC.where((i) => i.worktreePath != null).length;
+  final pruneWorktrees = result.readyToPrune
+      .where((i) => i.worktreePath != null)
+      .length;
+  final activeWorktrees = result.active
+      .where((i) => i.worktreePath != null)
+      .length;
+  final triageWorktrees = result.needsTriage
+      .where((i) => i.worktreePath != null)
+      .length;
 
   buffer
     ..writeln('## 📊 High-Level Summary')
@@ -36,43 +47,52 @@ void _formatSummaryTable(StringBuffer buffer, PrSweepResult result) {
     ..writeln('| Category | Worktrees | Items | Description |')
     ..writeln('| :--- | :--- | :--- | :--- |')
     ..writeln(
-      '| **Bucket B (Safe to Prune)** | $bWorktrees | '
-      '${result.bucketB.length} | Landed PRs & merged Gerrit CLs |',
+      '| **Ready to Prune** | $pruneWorktrees | '
+      '${result.readyToPrune.length} | Landed PRs & merged Gerrit CLs |',
     )
     ..writeln(
-      '| **Bucket A (Active / In-Flight)** | $aWorktrees | '
-      '${result.bucketA.length} | Open PRs & active Gerrit CLs |',
+      '| **Active / In-Flight** | $activeWorktrees | '
+      '${result.active.length} | Open PRs & active Gerrit CLs |',
     )
     ..writeln(
-      '| **Bucket C (Needs Confirmation)** | $cWorktrees | '
-      '${result.bucketC.length} | Dirty worktrees & unmerged commits |',
+      '| **Locked Worktrees (FYI)** | ${result.lockedWorktrees.length} | '
+      '${result.lockedWorktrees.length} | '
+      'Safe-kept local worktrees (`git worktree lock`) |',
+    )
+    ..writeln(
+      '| **Needs Triage** | $triageWorktrees | '
+      '${result.needsTriage.length} | '
+      'Unlocked unlinked worktrees & unmerged commits |',
     )
     ..writeln();
 }
 
-void _formatBucketBSection(StringBuffer buffer, List<BucketBItem> bucketB) {
+void _formatReadyToPruneSection(
+  StringBuffer buffer,
+  List<PrunableItem> readyToPrune,
+) {
   buffer
-    ..writeln('## ✅ Bucket B — Safe to Prune Immediately')
+    ..writeln('## ✅ Ready to Prune')
     ..writeln();
-  if (bucketB.isEmpty) {
+  if (readyToPrune.isEmpty) {
     buffer.writeln('*Zero worktrees or branches ready for immediate pruning.*');
     return;
   }
 
-  final byRepo = <String, List<BucketBItem>>{};
-  for (final item in bucketB) {
+  final byRepo = <String, List<PrunableItem>>{};
+  for (final item in readyToPrune) {
     (byRepo[item.repository] ??= []).add(item);
   }
 
   for (final entry in byRepo.entries) {
     buffer.writeln('- **`${entry.key}`**:');
     for (final item in entry.value) {
-      buffer.writeln(_formatBucketBItemLine(item));
+      buffer.writeln(_formatPrunableItemLine(item));
     }
   }
 }
 
-String _formatBucketBItemLine(BucketBItem item) {
+String _formatPrunableItemLine(PrunableItem item) {
   final wtPart = item.worktreePath != null
       ? ' [`${p.basename(item.worktreePath!)}`](file://${item.worktreePath})'
       : '';
@@ -87,16 +107,16 @@ String _formatItemPrOrCl(String source, int? number) {
   return source == 'gerrit' ? 'CL $number' : '#$number';
 }
 
-void _formatBucketASection(
+void _formatActiveSection(
   StringBuffer buffer,
-  List<BucketAItem> bucketA, {
+  List<ActiveItem> active, {
   required DateTime now,
 }) {
   buffer
     ..writeln()
-    ..writeln('## 🚫 Bucket A — Active / Hands-Off')
+    ..writeln('## 🚫 Active / Hands-Off')
     ..writeln();
-  if (bucketA.isEmpty) {
+  if (active.isEmpty) {
     buffer.writeln('*Zero open PRs or active CLs found.*');
     return;
   }
@@ -107,12 +127,12 @@ void _formatBucketASection(
       'Local Worktree |',
     )
     ..writeln('| :--- | :--- | :--- | :--- | :--- | :--- |');
-  for (final item in bucketA) {
+  for (final item in active) {
     final idLabel = _formatItemPrOrCl(item.source, item.number);
     final link = '[**$idLabel**](${item.url})';
     final badges =
         'CI:&nbsp;${item.ciBadge}<br>Review:&nbsp;${item.reviewBadge}';
-    final dates = _formatBucketADates(item, now);
+    final dates = _formatActiveDates(item, now);
     final wt = item.worktreePath != null
         ? '[`${p.basename(item.worktreePath!)}`](file://${item.worktreePath})'
         : '⚪ None';
@@ -124,7 +144,7 @@ void _formatBucketASection(
   }
 }
 
-String _formatBucketADates(BucketAItem item, DateTime now) {
+String _formatActiveDates(ActiveItem item, DateTime now) {
   final parts = <String>[];
   if (item.createdAt != null) {
     parts.add('Opened:&nbsp;${_formatIsoDate(item.createdAt!)}');
@@ -146,16 +166,76 @@ String _formatIsoDate(DateTime dt) {
   return '$y-$m-$d';
 }
 
-void _formatBucketCSection(StringBuffer buffer, List<BucketCItem> bucketC) {
-  if (bucketC.isEmpty) return;
+void _formatLockedWorktreesSection(
+  StringBuffer buffer,
+  List<LockedWorktreeItem> lockedWorktrees, {
+  required DateTime now,
+}) {
+  if (lockedWorktrees.isEmpty) return;
 
   buffer
     ..writeln()
-    ..writeln('## ⚠️ Bucket C — Requires Explicit Confirmation')
+    ..writeln('## 📌 Locked Worktrees (FYI — Safe-Kept Local Work)')
+    ..writeln()
+    ..writeln(
+      '*Safe-kept via `git worktree lock --reason`. Review periodically and '
+      'run `git worktree unlock <path>` when ready to prune.*',
+    )
+    ..writeln()
+    ..writeln(
+      '| Repository | Worktree & Branch | Lock Reason | Commits Ahead | '
+      'Last Touched |',
+    )
+    ..writeln('| :--- | :--- | :--- | :---: | :--- |');
+  for (final item in lockedWorktrees) {
+    buffer.writeln(_formatLockedWorktreeRow(item, now));
+  }
+}
+
+String _formatLockedWorktreeRow(LockedWorktreeItem item, DateTime now) {
+  final wtLink =
+      '[`${p.basename(item.worktreePath)}`](file://${item.worktreePath}) '
+      '(`${item.branch}`)';
+  final reason = (item.lockReason != null && item.lockReason!.isNotEmpty)
+      ? item.lockReason!.replaceAll('|', r'\|')
+      : '⚠️ *(No --reason provided)*';
+  final ahead = '${item.commitsAhead ?? '?'}';
+  final touched = _formatLockedTouched(item, now);
+  return '| `${item.repository}` | $wtLink | $reason | $ahead | $touched |';
+}
+
+String _formatLockedTouched(LockedWorktreeItem item, DateTime now) {
+  if (item.updatedAt != null) {
+    final iso = _formatIsoDate(item.updatedAt!);
+    final badge = formatTouchedMarkdown(
+      item.updatedAt!,
+      currentTime: now,
+    ).replaceAll(' ', '&nbsp;');
+    return '$iso<br>$badge';
+  }
+  return item.lastCommitDate ?? '⚪ Unknown';
+}
+
+void _formatNeedsTriageSection(
+  StringBuffer buffer,
+  List<TriageItem> needsTriage,
+) {
+  if (needsTriage.isEmpty) return;
+
+  buffer
+    ..writeln()
+    ..writeln('## ⚠️ Needs Triage')
+    ..writeln()
+    ..writeln(
+      '*Triage dangling worktrees by either deleting them or locking them '
+      'for safekeeping with a descriptive project/context reason '
+      '(`git -C <repo> worktree lock --reason "<project & why kept>" '
+      '<worktree>`).*',
+    )
     ..writeln()
     ..writeln('| Target | Repository | Branch / Worktree | Reason |')
     ..writeln('| :--- | :--- | :--- | :--- |');
-  for (final item in bucketC) {
+  for (final item in needsTriage) {
     final idLabel = item.prOrClNumber != null
         ? _formatItemPrOrCl(item.source, item.prOrClNumber)
         : '⚪';

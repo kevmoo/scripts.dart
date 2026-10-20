@@ -238,18 +238,18 @@ kscripts git-up [--verbose | -v] [--help | -h]
 
 You can configure a custom shell command that runs automatically before `git-up`
 starts updating the repository (right after the dirty-tree safety check). This
-is useful for renewing credentials (e.g., running `gcert` on the Dart SDK) or
+is useful for verifying credentials (e.g., running `gh auth status`) or
 preparing the environment.
 
 - **Local configuration** (runs only for the current repository):
 
   ```shell
-  git config git-up.before "gcert"
+  git config git-up.before "gh auth status"
   ```
 
 - **Global configuration** (runs for all repositories where you run `git-up`):
   ```shell
-  git config --global git-up.before "gcert"
+  git config --global git-up.before "gh auth status"
   ```
 
 If the before-command returns a non-zero exit code, `git-up` will abort
@@ -339,7 +339,7 @@ kscripts pr-cleanup [options]
     --local-root       Root directory for local Git repositories (default ~/github).
 -p, --dart-sdk         Path to local dart-sdk repository for Gerrit check (default ~/github/dart-sdk).
     --skip-gerrit      Skip Gerrit Dart SDK inspection even if ~/github/dart-sdk exists.
-    --apply            Execute pruning of Bucket B (safe to prune) worktrees and branches across GitHub and Gerrit.
+    --apply            Execute pruning of ready-to-prune worktrees and branches across GitHub and Gerrit.
     --[no-]markdown    Output a concise Markdown summary.
                        (defaults to on)
     --json             Output machine-readable JSON.

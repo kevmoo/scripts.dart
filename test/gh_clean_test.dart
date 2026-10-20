@@ -200,6 +200,8 @@ void main() {
             path: '/path/to/_melos-feat-branch',
             branch: 'feat-branch',
             sha: '123',
+            isLocked: false,
+            lockReason: null,
           ),
         ],
       );
@@ -232,6 +234,8 @@ void main() {
             path: '/path/to/_melos-feat-branch',
             branch: 'feat-branch',
             sha: '123',
+            isLocked: false,
+            lockReason: null,
           ),
         ],
       );
@@ -245,6 +249,101 @@ void main() {
       check(plan).contains(
         'Skip worktree at /path/to/_melos-feat-branch (has uncommitted changes)',
       );
+    });
+
+    test('planCleanup and executeCleanup skip locked worktrees', () {
+      final lockedWithoutReasonRepo = (
+        repoName: 'invertase/melos',
+        repoNames: ['invertase/melos'],
+        repoPath: '/path/to/melos',
+        currentBranch: 'main',
+        branches: [
+          (
+            name: 'main',
+            sha: '000',
+            upstream: 'origin/main',
+            upstreamTrack: '',
+          ),
+        ],
+        worktrees: [
+          (
+            path: '/path/to/_melos-feat-branch',
+            branch: 'feat-branch',
+            sha: '123',
+            isLocked: true,
+            lockReason: null,
+          ),
+        ],
+      );
+
+      final planNoReason = planCleanup(
+        samplePr,
+        lockedWithoutReasonRepo,
+        processRunner: (exe, args, {workingDirectory}) =>
+            ProcessResult(0, 0, '', ''),
+      );
+      check(planNoReason)
+          .contains('Skip worktree at /path/to/_melos-feat-branch (locked)');
+
+      final execNoReason = executeCleanup(
+        samplePr,
+        lockedWithoutReasonRepo,
+        processRunner: (exe, args, {workingDirectory}) =>
+            ProcessResult(0, 0, '', ''),
+      );
+      final wtActNoReason = execNoReason.firstWhere(
+        (a) => a.description.contains('worktree'),
+      );
+      check(wtActNoReason.success).isFalse();
+      check(wtActNoReason.error).equals('Worktree is locked.');
+
+      final lockedWithReasonRepo = (
+        repoName: 'invertase/melos',
+        repoNames: ['invertase/melos'],
+        repoPath: '/path/to/melos',
+        currentBranch: 'main',
+        branches: [
+          (
+            name: 'main',
+            sha: '000',
+            upstream: 'origin/main',
+            upstreamTrack: '',
+          ),
+        ],
+        worktrees: [
+          (
+            path: '/path/to/_melos-feat-branch',
+            branch: 'feat-branch',
+            sha: '123',
+            isLocked: true,
+            lockReason: 'Hold for benchmark',
+          ),
+        ],
+      );
+
+      final planWithReason = planCleanup(
+        samplePr,
+        lockedWithReasonRepo,
+        processRunner: (exe, args, {workingDirectory}) =>
+            ProcessResult(0, 0, '', ''),
+      );
+      check(planWithReason).contains(
+        'Skip worktree at /path/to/_melos-feat-branch '
+        '(locked: Hold for benchmark)',
+      );
+
+      final execWithReason = executeCleanup(
+        samplePr,
+        lockedWithReasonRepo,
+        processRunner: (exe, args, {workingDirectory}) =>
+            ProcessResult(0, 0, '', ''),
+      );
+      final wtActWithReason = execWithReason.firstWhere(
+        (a) => a.description.contains('worktree'),
+      );
+      check(wtActWithReason.success).isFalse();
+      check(wtActWithReason.error)
+          .equals('Worktree is locked (Hold for benchmark).');
     });
   });
 
@@ -303,7 +402,15 @@ void main() {
             upstreamTrack: '[behind 1]',
           ),
         ],
-        worktrees: [(path: wtPath, branch: 'feature-x', sha: '111')],
+        worktrees: [
+          (
+            path: wtPath,
+            branch: 'feature-x',
+            sha: '111',
+            isLocked: false,
+            lockReason: null,
+          ),
+        ],
       );
 
       final actions = executeCleanup(landedPr, localInfo);
@@ -809,6 +916,19 @@ void main() {
           commitsAhead: 17,
           lastCommitDate: '2026-09-02',
           lastCommitSubject: 'Add contracts',
+          isLocked: false,
+          lockReason: null,
+        ),
+        (
+          repository: 'kevmoo/shelf',
+          worktreePath: '/home/user/github/_shelf-raw-socket',
+          branch: 'raw-socket',
+          sha: '1a2b3c4d',
+          commitsAhead: 2,
+          lastCommitDate: '2026-09-29',
+          lastCommitSubject: 'Raw socket prototype',
+          isLocked: true,
+          lockReason: 'HTTP/1.1 spike',
         ),
       ];
 
@@ -825,7 +945,8 @@ void main() {
         )
         ..contains('`pr-5098`')
         ..contains('| 17 |')
-        ..contains('| 2026-09-02 |');
+        ..contains('| 2026-09-02 |')
+        ..contains('📌 locked: HTTP/1.1 spike');
     });
 
     test('formatJsonReport includes unlinkedWorktrees', () {
@@ -838,6 +959,8 @@ void main() {
           commitsAhead: 17,
           lastCommitDate: '2026-09-02',
           lastCommitSubject: 'Add contracts',
+          isLocked: true,
+          lockReason: 'WIP contracts',
         ),
       ];
 
@@ -855,6 +978,8 @@ void main() {
       check(item['commitsAhead']).equals(17);
       check(item['lastCommitDate']).equals('2026-09-02');
       check(item['lastCommitSubject']).equals('Add contracts');
+      check(item['isLocked']).equals(true);
+      check(item['lockReason']).equals('WIP contracts');
     });
   });
 
@@ -1754,6 +1879,8 @@ void main() {
               path: '/path/to/_flutter-web-content-hash-phase-3',
               branch: 'web-content-hash-phase-2-5',
               sha: '9999999',
+              isLocked: false,
+              lockReason: null,
             ),
           ],
         );
@@ -1831,6 +1958,8 @@ void main() {
             path: '/path/to/_codable.dart-rope-chunks',
             branch: 'bytes-builder-copy',
             sha: 'abc1234',
+            isLocked: false,
+            lockReason: null,
           ),
         ],
       );
@@ -1976,6 +2105,8 @@ void main() {
             path: '/path/to/_codable.dart-rope-chunks',
             branch: 'rope-chunks',
             sha: '9dd884beab',
+            isLocked: false,
+            lockReason: null,
           ),
         ],
       );

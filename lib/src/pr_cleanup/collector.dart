@@ -15,6 +15,12 @@ import '../process_utils.dart';
 import 'models.dart';
 import 'pr_cleanup_options.dart';
 
+typedef _InitialSweepData = ({
+  List<LandedPr> landedPrs,
+  List<GhPr> activePrs,
+  GerritAnalysisResult? gerrit,
+});
+
 /// Collects PR and worktree data across GitHub and Gerrit concurrently.
 Future<PrSweepResult> collectPrSweep({
   required PrCleanupOptions options,
@@ -24,10 +30,8 @@ Future<PrSweepResult> collectPrSweep({
 }) async {
   final syncRunner = syncProcessRunner ?? defaultSyncProcessRunner;
   final asyncRunner = asyncProcessRunner ?? defaultProcessRunner;
-
   final rootPath = _resolveRootPath(options.localRoot);
   final dartSdkPath = _resolveDartSdkPath(options.dartSdkPath, rootPath);
-  final rootDir = Directory(rootPath);
 
   onProgress?.call('Starting parallel collection across GitHub & Gerrit...');
 
@@ -38,12 +42,31 @@ Future<PrSweepResult> collectPrSweep({
     asyncRunner: asyncRunner,
     onProgress: onProgress,
   );
-
   final localRepos = scanLocalGitRepositories(
-    rootDir,
+    Directory(rootPath),
     processRunner: syncRunner,
   );
+
+  return _assembleSweepResult(
+    initialData: initialData,
+    localRepos: localRepos,
+    options: options,
+    syncRunner: syncRunner,
+    onProgress: onProgress,
+  );
+}
+
+Future<PrSweepResult> _assembleSweepResult({
+  required _InitialSweepData initialData,
+  required List<LocalRepoInfo> localRepos,
+  required PrCleanupOptions options,
+  required SyncProcessRunner syncRunner,
+  void Function(String message)? onProgress,
+}) async {
   final repoMap = buildLocalRepoMap(localRepos);
+  final active = <ActiveItem>[];
+  _processGithubActivePrs(initialData.activePrs, repoMap, active);
+  _processGerritActiveCls(initialData.gerrit, active);
 
   final landedResolution = await _resolveAllLandedPrs(
     rawLandedPrs: initialData.landedPrs,
@@ -52,7 +75,6 @@ Future<PrSweepResult> collectPrSweep({
     syncRunner: syncRunner,
     onProgress: onProgress,
   );
-
   final ghCleanResults = _runGhClean(
     allLandedPrs: landedResolution.allLandedPrs,
     repoMap: repoMap,
@@ -60,50 +82,66 @@ Future<PrSweepResult> collectPrSweep({
     syncRunner: syncRunner,
     onProgress: onProgress,
   );
-
   final unlinkedWorktrees = await _findUnlinkedWorktrees(
     localRepos: localRepos,
     ghCleanResults: ghCleanResults,
     closedUnmergedPrs: landedResolution.closedUnmergedPrs,
+    activeItems: active,
     user: options.user,
     repoFilter: options.repo,
     syncRunner: syncRunner,
     onProgress: onProgress,
   );
 
-  final bucketA = <BucketAItem>[];
-  final bucketB = <BucketBItem>[];
-  final bucketC = <BucketCItem>[];
+  return _buildSweepResult(
+    active: active,
+    ghCleanResults: ghCleanResults,
+    gerrit: initialData.gerrit,
+    closedUnmergedPrs: landedResolution.closedUnmergedPrs,
+    unlinkedWorktrees: unlinkedWorktrees,
+    syncRunner: syncRunner,
+  );
+}
+
+PrSweepResult _buildSweepResult({
+  required List<ActiveItem> active,
+  required List<PrCleanResult> ghCleanResults,
+  required GerritAnalysisResult? gerrit,
+  required List<ClosedUnmergedPr> closedUnmergedPrs,
+  required List<UnlinkedWorktree> unlinkedWorktrees,
+  required SyncProcessRunner syncRunner,
+}) {
+  final readyToPrune = <PrunableItem>[];
+  final lockedWorktrees = <LockedWorktreeItem>[];
+  final needsTriage = <TriageItem>[];
   final candidateLandedIds = <int>{};
 
   _processGithubLandedPrs(
     ghCleanResults: ghCleanResults,
     syncRunner: syncRunner,
-    bucketB: bucketB,
-    bucketC: bucketC,
+    readyToPrune: readyToPrune,
+    needsTriage: needsTriage,
     candidateLandedIds: candidateLandedIds,
   );
-
   _processGerritClosedCls(
-    gerritAnalysis: initialData.gerrit,
+    gerritAnalysis: gerrit,
     syncRunner: syncRunner,
-    bucketB: bucketB,
-    bucketC: bucketC,
+    readyToPrune: readyToPrune,
+    needsTriage: needsTriage,
     candidateLandedIds: candidateLandedIds,
   );
-
-  _processGithubActivePrs(initialData.activePrs, repoMap, bucketA);
-  _processGerritActiveCls(initialData.gerrit, bucketA);
   _processClosedUnmergedAndUnlinked(
-    landedResolution.closedUnmergedPrs,
-    unlinkedWorktrees,
-    bucketC,
+    closedUnmergedPrs: closedUnmergedPrs,
+    unlinkedWorktrees: unlinkedWorktrees,
+    lockedWorktrees: lockedWorktrees,
+    needsTriage: needsTriage,
   );
 
   return PrSweepResult(
-    bucketA: bucketA,
-    bucketB: bucketB,
-    bucketC: bucketC,
+    active: active,
+    readyToPrune: readyToPrune,
+    lockedWorktrees: lockedWorktrees,
+    needsTriage: needsTriage,
     candidateLandedIds: candidateLandedIds.toList()..sort(),
     timestamp: DateTime.now(),
   );
@@ -261,6 +299,7 @@ Future<List<UnlinkedWorktree>> _findUnlinkedWorktrees({
   required List<LocalRepoInfo> localRepos,
   required List<PrCleanResult> ghCleanResults,
   required List<ClosedUnmergedPr> closedUnmergedPrs,
+  required List<ActiveItem> activeItems,
   required String user,
   required String? repoFilter,
   required SyncProcessRunner syncRunner,
@@ -271,10 +310,14 @@ Future<List<UnlinkedWorktree>> _findUnlinkedWorktrees({
     for (final c in closedUnmergedPrs)
       if (c.worktreePath != null) c.worktreePath!,
   };
+  final activeWorktreePaths = {
+    for (final a in activeItems)
+      if (a.worktreePath != null) a.worktreePath!,
+  };
 
   return findUnlinkedWorktrees(
     localRepos,
-    {...matchedWorktreePaths, ...closedWorktreePaths},
+    {...matchedWorktreePaths, ...closedWorktreePaths, ...activeWorktreePaths},
     user: user,
     repoFilter: repoFilter,
     processRunner: syncRunner,
@@ -285,16 +328,16 @@ Future<List<UnlinkedWorktree>> _findUnlinkedWorktrees({
 void _processGithubLandedPrs({
   required List<PrCleanResult> ghCleanResults,
   required SyncProcessRunner syncRunner,
-  required List<BucketBItem> bucketB,
-  required List<BucketCItem> bucketC,
+  required List<PrunableItem> readyToPrune,
+  required List<TriageItem> needsTriage,
   required Set<int> candidateLandedIds,
 }) {
   for (final result in ghCleanResults) {
     _classifySingleGhCleanResult(
       result,
       syncRunner,
-      bucketB,
-      bucketC,
+      readyToPrune,
+      needsTriage,
       candidateLandedIds,
     );
   }
@@ -303,12 +346,14 @@ void _processGithubLandedPrs({
 class _GhPlannedDetails {
   final bool hasPruneWorktree;
   final bool hasDeleteBranch;
+  final bool isWorktreeLocked;
   final String? worktreePath;
   final String? remoteBranch;
 
   const new({
     required this.hasPruneWorktree,
     required this.hasDeleteBranch,
+    required this.isWorktreeLocked,
     this.worktreePath,
     this.remoteBranch,
   });
@@ -320,16 +365,19 @@ _GhPlannedDetails _extractGhPlannedActions(PrCleanResult result) {
   String? worktreePath;
   String? remoteBranch;
 
+  final matchedWt = result.localRepo != null
+      ? findMatchingWorktreeForPr(result.localRepo!, result.pr)
+      : null;
+  final isWorktreeLocked = matchedWt != null && matchedWt.isLocked;
+
   for (final action in result.plannedActions) {
-    if (action.startsWith('Prune worktree')) {
+    if (action.startsWith('Prune worktree') && !isWorktreeLocked) {
       hasPruneWorktree = true;
-      if (result.localRepo != null) {
-        final wt = findMatchingWorktreeForPr(result.localRepo!, result.pr);
-        if (wt != null) worktreePath = wt.path;
-      }
+      if (matchedWt != null) worktreePath = matchedWt.path;
     } else if (action.startsWith('Delete branch') ||
+        action.startsWith('Delete local branch') ||
         action.startsWith('Safe to delete branch')) {
-      hasDeleteBranch = true;
+      if (!isWorktreeLocked) hasDeleteBranch = true;
     } else if (action.startsWith('Delete remote branch')) {
       remoteBranch = '${result.pr.headRepository}:${result.pr.headRefName}';
     }
@@ -338,6 +386,7 @@ _GhPlannedDetails _extractGhPlannedActions(PrCleanResult result) {
   return _GhPlannedDetails(
     hasPruneWorktree: hasPruneWorktree,
     hasDeleteBranch: hasDeleteBranch,
+    isWorktreeLocked: isWorktreeLocked,
     worktreePath: worktreePath,
     remoteBranch: remoteBranch,
   );
@@ -346,17 +395,18 @@ _GhPlannedDetails _extractGhPlannedActions(PrCleanResult result) {
 void _classifySingleGhCleanResult(
   PrCleanResult result,
   SyncProcessRunner syncRunner,
-  List<BucketBItem> bucketB,
-  List<BucketCItem> bucketC,
+  List<PrunableItem> readyToPrune,
+  List<TriageItem> needsTriage,
   Set<int> candidateLandedIds,
 ) {
   final pr = result.pr;
   final planned = _extractGhPlannedActions(result);
+  if (planned.isWorktreeLocked) return;
 
   if (planned.worktreePath != null &&
       isRepoDirtySync(planned.worktreePath!, processRunner: syncRunner)) {
-    bucketC.add(
-      BucketCItem(
+    needsTriage.add(
+      TriageItem(
         source: 'github',
         repository: pr.repository,
         branch: pr.headRefName,
@@ -378,8 +428,8 @@ void _classifySingleGhCleanResult(
       planned.remoteBranch != null;
   if (isPrunable) {
     candidateLandedIds.add(pr.number);
-    bucketB.add(
-      BucketBItem(
+    readyToPrune.add(
+      PrunableItem(
         source: 'github',
         repository: pr.repository,
         branch: pr.headRefName,
@@ -403,8 +453,8 @@ void _classifySingleGhCleanResult(
 void _processGerritClosedCls({
   required GerritAnalysisResult? gerritAnalysis,
   required SyncProcessRunner syncRunner,
-  required List<BucketBItem> bucketB,
-  required List<BucketCItem> bucketC,
+  required List<PrunableItem> readyToPrune,
+  required List<TriageItem> needsTriage,
   required Set<int> candidateLandedIds,
 }) {
   if (gerritAnalysis == null) return;
@@ -415,8 +465,8 @@ void _processGerritClosedCls({
       clInfo: entry.value,
       gerritAnalysis: gerritAnalysis,
       syncRunner: syncRunner,
-      bucketB: bucketB,
-      bucketC: bucketC,
+      readyToPrune: readyToPrune,
+      needsTriage: needsTriage,
       candidateLandedIds: candidateLandedIds,
     );
   }
@@ -427,8 +477,8 @@ void _classifySingleGerritClosedCl({
   required (int, CommitDetails, ClStatus) clInfo,
   required GerritAnalysisResult gerritAnalysis,
   required SyncProcessRunner syncRunner,
-  required List<BucketBItem> bucketB,
-  required List<BucketCItem> bucketC,
+  required List<PrunableItem> readyToPrune,
+  required List<TriageItem> needsTriage,
   required Set<int> candidateLandedIds,
 }) {
   final (clNumber, _, status) = clInfo;
@@ -440,8 +490,8 @@ void _classifySingleGerritClosedCl({
   final wtPath = gerritAnalysis.worktreeBranches[branchName];
 
   if (!safety.isSafe) {
-    bucketC.add(
-      BucketCItem(
+    needsTriage.add(
+      TriageItem(
         source: 'gerrit',
         repository: 'dart-sdk',
         branch: branchName,
@@ -456,8 +506,8 @@ void _classifySingleGerritClosedCl({
   }
 
   if (wtPath != null && isRepoDirtySync(wtPath, processRunner: syncRunner)) {
-    bucketC.add(
-      BucketCItem(
+    needsTriage.add(
+      TriageItem(
         source: 'gerrit',
         repository: 'dart-sdk',
         branch: branchName,
@@ -475,8 +525,8 @@ void _classifySingleGerritClosedCl({
   final loc = wtPath != null
       ? ', clean worktree `${p.basename(wtPath)}`'
       : ', local branch `$branchName`';
-  bucketB.add(
-    BucketBItem(
+  readyToPrune.add(
+    PrunableItem(
       source: 'gerrit',
       repository: 'dart-sdk',
       branch: branchName,
@@ -490,7 +540,7 @@ void _classifySingleGerritClosedCl({
 void _processGithubActivePrs(
   List<GhPr> activePrs,
   Map<String, LocalRepoInfo> repoMap,
-  List<BucketAItem> bucketA,
+  List<ActiveItem> active,
 ) {
   for (final pr in activePrs) {
     final repo = repoMap[pr.repository.toLowerCase()];
@@ -498,8 +548,8 @@ void _processGithubActivePrs(
     final ciBadge = _computeCiBadge(pr.ciStatus);
     final reviewBadge = _computeReviewBadge(pr);
 
-    bucketA.add(
-      BucketAItem(
+    active.add(
+      ActiveItem(
         source: 'github',
         repository: pr.repository,
         number: pr.number,
@@ -535,7 +585,7 @@ String? _findLocalWorktreeForGhPr(LocalRepoInfo? repo, GhPr pr) {
 
 void _processGerritActiveCls(
   GerritAnalysisResult? gerritAnalysis,
-  List<BucketAItem> bucketA,
+  List<ActiveItem> active,
 ) {
   if (gerritAnalysis == null) return;
 
@@ -547,8 +597,8 @@ void _processGerritActiveCls(
     final reviewBadge = _computeGerritReviewBadge(cl);
     final lastAuthorAt = DateTime.tryParse(cl.lastAuthorTouch);
 
-    bucketA.add(
-      BucketAItem(
+    active.add(
+      ActiveItem(
         source: 'gerrit',
         repository: 'dart-sdk',
         number: cl.number,
@@ -579,15 +629,16 @@ String? _findGerritClWorktree(int clNumber, GerritAnalysisResult analysis) {
   return null;
 }
 
-void _processClosedUnmergedAndUnlinked(
-  List<ClosedUnmergedPr> closedUnmergedPrs,
-  List<UnlinkedWorktree> unlinkedWorktrees,
-  List<BucketCItem> bucketC,
-) {
+void _processClosedUnmergedAndUnlinked({
+  required List<ClosedUnmergedPr> closedUnmergedPrs,
+  required List<UnlinkedWorktree> unlinkedWorktrees,
+  required List<LockedWorktreeItem> lockedWorktrees,
+  required List<TriageItem> needsTriage,
+}) {
   for (final c in closedUnmergedPrs) {
     if (c.commitsAhead != null && c.commitsAhead! > 0) {
-      bucketC.add(
-        BucketCItem(
+      needsTriage.add(
+        TriageItem(
           source: 'github',
           repository: c.repository,
           branch: c.branch,
@@ -604,24 +655,42 @@ void _processClosedUnmergedAndUnlinked(
   }
 
   for (final u in unlinkedWorktrees) {
-    if (u.commitsAhead != null && u.commitsAhead! > 0) {
-      final dateSuffix = u.lastCommitDate != null
-          ? ' (last commit: ${u.lastCommitDate})'
-          : '';
-      bucketC.add(
-        BucketCItem(
-          source: 'github',
-          repository: u.repository,
-          branch: u.branch,
-          worktreePath: u.worktreePath,
-          reason:
-              'Unlinked worktree `${p.basename(u.worktreePath)}` has '
-              '${u.commitsAhead} unpushed commit(s)$dateSuffix',
-          updatedAt: _parseWorktreeDatePrefix(u.lastCommitDate),
-        ),
-      );
+    if (u.isLocked) {
+      lockedWorktrees.add(_toLockedWorktreeItem(u));
+    } else if (u.commitsAhead != null && u.commitsAhead! > 0) {
+      needsTriage.add(_toUnlinkedTriageItem(u));
     }
   }
+}
+
+LockedWorktreeItem _toLockedWorktreeItem(UnlinkedWorktree u) =>
+    LockedWorktreeItem(
+      repository: u.repository,
+      worktreePath: u.worktreePath,
+      branch: u.branch,
+      lockReason: u.lockReason,
+      commitsAhead: u.commitsAhead,
+      lastCommitSubject: u.lastCommitSubject,
+      lastCommitDate: u.lastCommitDate,
+      updatedAt:
+          _parseWorktreeDatePrefix(u.lastCommitDate) ??
+          _readWorktreeModifiedAt(u.worktreePath),
+    );
+
+TriageItem _toUnlinkedTriageItem(UnlinkedWorktree u) {
+  final dateSuffix = u.lastCommitDate != null
+      ? ' (last commit: ${u.lastCommitDate})'
+      : '';
+  return TriageItem(
+    source: 'github',
+    repository: u.repository,
+    branch: u.branch,
+    worktreePath: u.worktreePath,
+    reason:
+        'Unlinked worktree `${p.basename(u.worktreePath)}` has '
+        '${u.commitsAhead} unpushed commit(s)$dateSuffix',
+    updatedAt: _parseWorktreeDatePrefix(u.lastCommitDate),
+  );
 }
 
 DateTime? _parseWorktreeDatePrefix(String? rawDate) {
@@ -630,15 +699,32 @@ DateTime? _parseWorktreeDatePrefix(String? rawDate) {
   return DateTime.tryParse(token);
 }
 
+DateTime? _readWorktreeModifiedAt(String worktreePath) {
+  try {
+    final gitStat = FileStat.statSync('$worktreePath/.git');
+    if (gitStat.type != FileSystemEntityType.notFound) {
+      return gitStat.modified;
+    }
+    final dirStat = FileStat.statSync(worktreePath);
+    if (dirStat.type != FileSystemEntityType.notFound) {
+      return dirStat.modified;
+    }
+  } catch (_) {
+    // Ignore stat errors on non-existent mock paths.
+  }
+  return null;
+}
+
 Set<String> _collectMatchedWorktreePaths(List<PrCleanResult> results) => {
   for (final r in results)
     if (r.localRepo != null)
       if (findMatchingWorktreeForPr(r.localRepo!, r.pr) case final wt?
-          when wt.isCheckedOutOnBranch(
-            r.pr.headRefName,
-            repoShortName: r.pr.repoShortName,
-            expectedSha: r.pr.headRefOid,
-          ))
+          when !wt.isLocked &&
+              wt.isCheckedOutOnBranch(
+                r.pr.headRefName,
+                repoShortName: r.pr.repoShortName,
+                expectedSha: r.pr.headRefOid,
+              ))
         wt.path,
 };
 

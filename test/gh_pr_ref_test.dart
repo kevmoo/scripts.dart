@@ -106,6 +106,8 @@ void main() {
               path: '/workspace/_scripts.dart-feature-worktree',
               branch: 'DETACHED',
               sha: '1112223',
+              isLocked: false,
+              lockReason: null,
             ),
           ],
         );

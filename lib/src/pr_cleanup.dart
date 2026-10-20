@@ -33,7 +33,7 @@ Future<void> runPrCleanup({
     onProgress: onProgress,
   );
 
-  if (options.apply && sweepResult.bucketB.isNotEmpty) {
+  if (options.apply && sweepResult.readyToPrune.isNotEmpty) {
     final rootPath =
         options.localRoot ??
         Platform.environment['GH_LOCAL_ROOT'] ??
@@ -43,8 +43,8 @@ Future<void> runPrCleanup({
       processRunner: syncProcessRunner ?? defaultSyncProcessRunner,
     );
 
-    await executeBucketBPruning(
-      bucketBItems: sweepResult.bucketB,
+    await executeReadyToPrune(
+      items: sweepResult.readyToPrune,
       localRepos: localRepos,
       dartSdkPath: options.dartSdkPath,
       syncProcessRunner: syncProcessRunner,

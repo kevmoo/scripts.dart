@@ -35,7 +35,13 @@ extension LocalBranchEntryExtension on LocalBranchEntry {
 }
 
 /// Information about a registered Git worktree.
-typedef LocalWorktreeEntry = ({String path, String branch, String sha});
+typedef LocalWorktreeEntry = ({
+  String path,
+  String branch,
+  String sha,
+  bool isLocked,
+  String? lockReason,
+});
 
 /// Checks if [dir] is a primary root Git repository (where `.git` is a
 /// directory).
@@ -306,6 +312,8 @@ List<LocalWorktreeEntry> _parseWorktrees(
   String? currentWtPath;
   String? currentBranch;
   String? currentSha;
+  var currentIsLocked = false;
+  String? currentLockReason;
 
   void flush() {
     if (currentWtPath != null) {
@@ -313,11 +321,15 @@ List<LocalWorktreeEntry> _parseWorktrees(
         path: currentWtPath!,
         branch: currentBranch ?? '',
         sha: currentSha ?? '',
+        isLocked: currentIsLocked,
+        lockReason: currentLockReason,
       ));
     }
     currentWtPath = null;
     currentBranch = null;
     currentSha = null;
+    currentIsLocked = false;
+    currentLockReason = null;
   }
 
   for (final line in (wtResult.stdout as String).trim().split('\n')) {
@@ -329,12 +341,23 @@ List<LocalWorktreeEntry> _parseWorktrees(
       currentBranch = line.substring('branch refs/heads/'.length).trim();
     } else if (line == 'detached') {
       currentBranch = 'DETACHED';
+    } else if (line == 'locked') {
+      currentIsLocked = true;
+      currentLockReason = null;
+    } else if (line.startsWith('locked ')) {
+      currentIsLocked = true;
+      currentLockReason = _parseLockReason(line);
     } else if (line.isEmpty) {
       flush();
     }
   }
   flush();
   return worktrees;
+}
+
+String? _parseLockReason(String line) {
+  final r = line.substring('locked '.length).trim();
+  return r.isEmpty ? null : r;
 }
 
 bool _folderBranchMatches(String folderBranch, String branchName) {
