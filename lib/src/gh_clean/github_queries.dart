@@ -483,6 +483,8 @@ UnlinkedWorktree _populateUnlinkedWorktreeDetails(
   final commitsAhead = _countCommitsAhead(wt.path, trunk, runner);
   final lastCommit = _getLastCommitInfo(wt.path, runner);
   final worktreeAge = _computeWorktreeAge(wt.path);
+  final isDirty = isRepoDirtySync(wt.path, processRunner: runner);
+
   final formattedDate = lastCommit.date != null && worktreeAge != null
       ? '${lastCommit.date} ($worktreeAge)'
       : lastCommit.date ?? worktreeAge;
@@ -497,6 +499,7 @@ UnlinkedWorktree _populateUnlinkedWorktreeDetails(
     lastCommitSubject: lastCommit.subject,
     isLocked: wt.isLocked,
     lockReason: wt.lockReason,
+    isDirty: isDirty,
   );
 }
 
