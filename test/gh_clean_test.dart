@@ -202,7 +202,6 @@ void main() {
             sha: '123',
             isLocked: false,
             lockReason: null,
-            isDirty: false,
           ),
         ],
       );
@@ -237,7 +236,6 @@ void main() {
             sha: '123',
             isLocked: false,
             lockReason: null,
-            isDirty: false,
           ),
         ],
       );
@@ -274,7 +272,6 @@ void main() {
             sha: '123',
             isLocked: true,
             lockReason: null,
-            isDirty: false,
           ),
         ],
       );
@@ -412,7 +409,6 @@ void main() {
             sha: '111',
             isLocked: false,
             lockReason: null,
-            isDirty: false,
           ),
         ],
       );
@@ -1886,7 +1882,6 @@ void main() {
               sha: '9999999',
               isLocked: false,
               lockReason: null,
-              isDirty: false,
             ),
           ],
         );
@@ -1966,7 +1961,6 @@ void main() {
             sha: 'abc1234',
             isLocked: false,
             lockReason: null,
-            isDirty: false,
           ),
         ],
       );
@@ -2114,7 +2108,6 @@ void main() {
             sha: '9dd884beab',
             isLocked: false,
             lockReason: null,
-            isDirty: false,
           ),
         ],
       );
