@@ -19,6 +19,7 @@ import 'shared/spot_sync.dart';
 import 'testable_print.dart';
 
 part 'pr_check_agent_docs.dart';
+part 'pr_check_rev_deps.dart';
 
 /// Pinned `package:cognitive_complexity` version used for `dart run` checks.
 const cognitiveComplexityPinnedVersion = '2.0.1';
@@ -134,6 +135,11 @@ Future<void> runPrCheckCli(
     processRunner: processRunner,
     customFetcher: fetchLatestCognitiveComplexityVersion,
   );
+  final revDepLookup = await _buildCliReverseDepLookup(
+    directory: targetDir,
+    baseRefOverride: results['base'] as String?,
+    processRunner: processRunner,
+  );
 
   final report = runPrCheck(
     directory: targetDir,
@@ -141,6 +147,7 @@ Future<void> runPrCheckCli(
     requireWip: results['require-wip'] as bool,
     runTests: results['test'] as bool,
     processRunner: processRunner,
+    reverseDepLookup: revDepLookup,
   );
 
   final latestVersion = await versionFuture.timeout(
@@ -266,6 +273,7 @@ PrCheckReport runPrCheck({
   bool runTests = false,
   String? latestCognitiveComplexityVersion,
   SyncProcessRunner processRunner = defaultSyncProcessRunner,
+  ReverseDepLookup? reverseDepLookup,
 }) {
   final repoRoot = _resolveGitTopLevel(directory, processRunner) ?? directory;
   final baseRef = _resolveBaseRef(repoRoot, baseRefOverride, processRunner);
@@ -278,6 +286,7 @@ PrCheckReport runPrCheck({
     dartBin: _resolveDartBinary(),
     isDartSdk: File(p.join(repoRoot.path, 'tools', 'VERSION')).existsSync(),
     runSync: processRunner,
+    reverseDepLookup: reverseDepLookup,
   );
   return runner.run(
     requireWip: requireWip,
@@ -294,6 +303,7 @@ final class _PrCheckRunner {
   final String dartBin;
   final bool isDartSdk;
   final SyncProcessRunner runSync;
+  final ReverseDepLookup? reverseDepLookup;
 
   final violations = <PrCheckViolation>[];
   final passedChecks = <String>[];
@@ -308,6 +318,7 @@ final class _PrCheckRunner {
     required this.dartBin,
     required this.isDartSdk,
     required this.runSync,
+    this.reverseDepLookup,
   });
 
   PrCheckReport run({
@@ -458,6 +469,18 @@ final class _PrCheckRunner {
         '"skip-changelog-check" PR label.',
       );
     }
+
+    final revDepViolation = _checkPackageReverseDepCollisions(
+      repoRoot: repoRoot,
+      baseRef: baseRef,
+      pkg: pkg,
+      prefix: prefix,
+      pkgChanged: pkgChanged,
+      baseVerStr: baseVer,
+      runSync: runSync,
+      reverseDepLookup: reverseDepLookup,
+    );
+    if (revDepViolation != null) pkgViolations.add(revDepViolation);
 
     _recordMulti('firehose:${pkg.name}', pkgViolations);
     return true;
