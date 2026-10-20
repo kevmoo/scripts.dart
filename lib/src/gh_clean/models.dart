@@ -74,6 +74,7 @@ typedef UnlinkedWorktree = ({
   String? lastCommitSubject,
   bool isLocked,
   String? lockReason,
+  bool isDirty,
 });
 
 /// Information about a local branch or worktree whose GitHub PR was closed
