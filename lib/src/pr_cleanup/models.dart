@@ -6,8 +6,8 @@ class PrCleanupException extends CliException {
   const new(super.message, {super.exitCode = 1});
 }
 
-/// An active or hands-off item (Bucket A).
-class BucketAItem {
+/// An active or hands-off item (open PR or active Gerrit CL).
+class ActiveItem {
   final String source; // 'github' or 'gerrit'
   final String repository;
   final int number;
@@ -61,8 +61,8 @@ class BucketAItem {
   };
 }
 
-/// An item safe to prune immediately (Bucket B).
-class BucketBItem {
+/// An item ready to prune immediately (landed PR or merged Gerrit CL).
+class PrunableItem {
   final String source; // 'github' or 'gerrit'
   final String repository;
   final String branch;
@@ -100,8 +100,42 @@ class BucketBItem {
   };
 }
 
-/// An item requiring explicit human confirmation (Bucket C).
-class BucketCItem {
+/// A local worktree safe-kept via `git worktree lock`.
+class LockedWorktreeItem {
+  final String repository;
+  final String worktreePath;
+  final String branch;
+  final String? lockReason;
+  final int? commitsAhead;
+  final String? lastCommitSubject;
+  final String? lastCommitDate;
+  final DateTime? updatedAt;
+
+  const new({
+    required this.repository,
+    required this.worktreePath,
+    required this.branch,
+    this.lockReason,
+    this.commitsAhead,
+    this.lastCommitSubject,
+    this.lastCommitDate,
+    this.updatedAt,
+  });
+
+  Map<String, dynamic> toJson() => {
+    'repository': repository,
+    'worktreePath': worktreePath,
+    'branch': branch,
+    'lockReason': lockReason,
+    'commitsAhead': commitsAhead,
+    'lastCommitSubject': lastCommitSubject,
+    'lastCommitDate': lastCommitDate,
+    'updatedAt': updatedAt?.toIso8601String(),
+  };
+}
+
+/// An item requiring explicit human triage.
+class TriageItem {
   final String source; // 'github' or 'gerrit'
   final String repository;
   final String branch;
@@ -136,16 +170,18 @@ class BucketCItem {
 
 /// Aggregated result of a PR and worktree sweep across GitHub and Gerrit.
 class PrSweepResult {
-  final List<BucketAItem> bucketA;
-  final List<BucketBItem> bucketB;
-  final List<BucketCItem> bucketC;
+  final List<ActiveItem> active;
+  final List<PrunableItem> readyToPrune;
+  final List<LockedWorktreeItem> lockedWorktrees;
+  final List<TriageItem> needsTriage;
   final List<int> candidateLandedIds;
   final DateTime timestamp;
 
   const new({
-    required this.bucketA,
-    required this.bucketB,
-    required this.bucketC,
+    required this.active,
+    required this.readyToPrune,
+    required this.lockedWorktrees,
+    required this.needsTriage,
     required this.candidateLandedIds,
     required this.timestamp,
   });
@@ -153,8 +189,9 @@ class PrSweepResult {
   Map<String, dynamic> toJson() => {
     'timestamp': timestamp.toIso8601String(),
     'candidateLandedIds': candidateLandedIds,
-    'bucketA': [for (final item in bucketA) item.toJson()],
-    'bucketB': [for (final item in bucketB) item.toJson()],
-    'bucketC': [for (final item in bucketC) item.toJson()],
+    'active': [for (final item in active) item.toJson()],
+    'readyToPrune': [for (final item in readyToPrune) item.toJson()],
+    'lockedWorktrees': [for (final item in lockedWorktrees) item.toJson()],
+    'needsTriage': [for (final item in needsTriage) item.toJson()],
   };
 }

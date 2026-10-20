@@ -495,6 +495,8 @@ UnlinkedWorktree _populateUnlinkedWorktreeDetails(
     commitsAhead: commitsAhead,
     lastCommitDate: formattedDate,
     lastCommitSubject: lastCommit.subject,
+    isLocked: wt.isLocked,
+    lockReason: wt.lockReason,
   );
 }
 

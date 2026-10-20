@@ -130,6 +130,24 @@ LocalWorktreeEntry? _findBlockingWorktreeForBranch(
   return null;
 }
 
+String _formatLockedWorktreeSkip(LocalWorktreeEntry matchingWt) {
+  final reason = matchingWt.lockReason != null
+      ? ': ${matchingWt.lockReason}'
+      : '';
+  return 'Skip worktree at ${matchingWt.path} (locked$reason)';
+}
+
+CleanAction _formatLockedWorktreePruneError(LocalWorktreeEntry matchingWt) {
+  final reason = matchingWt.lockReason != null
+      ? ' (${matchingWt.lockReason})'
+      : '';
+  return (
+    description: 'Pruning worktree at ${matchingWt.path}',
+    success: false,
+    error: 'Worktree is locked$reason.',
+  );
+}
+
 String? _planWorktreeAction(
   LandedPr pr,
   LocalRepoInfo localRepo, {
@@ -140,6 +158,7 @@ String? _planWorktreeAction(
 }) {
   final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
   if (matchingWt == null) return null;
+  if (matchingWt.isLocked) return _formatLockedWorktreeSkip(matchingWt);
 
   if (!matchingWt.isCheckedOutOnBranch(
     headBranch,
@@ -466,6 +485,7 @@ CleanAction? _executeWorktreePrune(
 }) {
   final matchingWt = findMatchingWorktree(localRepo, headBranch, repoShortName);
   if (matchingWt == null) return null;
+  if (matchingWt.isLocked) return _formatLockedWorktreePruneError(matchingWt);
 
   if (!matchingWt.isCheckedOutOnBranch(
     headBranch,

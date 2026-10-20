@@ -79,8 +79,8 @@ class PrCleanupOptions {
       'apply',
       negatable: false,
       help:
-          'Execute pruning of Bucket B (safe to prune) worktrees and '
-          'branches across GitHub and Gerrit.',
+          'Execute pruning of ready-to-prune worktrees and branches across '
+          'GitHub and Gerrit.',
     )
     ..addFlag(
       'markdown',

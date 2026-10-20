@@ -6,7 +6,7 @@ import '../local_repo_scanner.dart';
 import '../process_utils.dart';
 import 'models.dart';
 
-/// Result of executing pruning actions on Bucket B items.
+/// Result of executing pruning actions on ready-to-prune items.
 class PrCleanupApplyResult {
   final int prunedWorktrees;
   final int deletedBranches;
@@ -27,9 +27,9 @@ class _PruneCounts {
   int remoteBranches = 0;
 }
 
-/// Executes Bucket B pruning across GitHub and Gerrit checkouts.
-Future<PrCleanupApplyResult> executeBucketBPruning({
-  required List<BucketBItem> bucketBItems,
+/// Executes ready-to-prune cleanup across GitHub and Gerrit checkouts.
+Future<PrCleanupApplyResult> executeReadyToPrune({
+  required List<PrunableItem> items,
   required List<LocalRepoInfo> localRepos,
   String? dartSdkPath,
   SyncProcessRunner? syncProcessRunner,
@@ -42,9 +42,11 @@ Future<PrCleanupApplyResult> executeBucketBPruning({
   final counts = _PruneCounts();
   final errors = <String>[];
 
-  onProgress?.call('Executing Bucket B pruning across GitHub & Gerrit...');
+  onProgress?.call(
+    'Executing ready-to-prune cleanup across GitHub & Gerrit...',
+  );
 
-  for (final item in bucketBItems) {
+  for (final item in items) {
     if (item.source == 'github') {
       _pruneGithubItem(item, repoMap, runner, counts, errors, onProgress);
     } else if (item.source == 'gerrit' && gerritRepo != null) {
@@ -77,7 +79,7 @@ String? _resolveGerritRepoPath(String? dartSdkPath) {
 }
 
 void _pruneGithubItem(
-  BucketBItem item,
+  PrunableItem item,
   Map<String, LocalRepoInfo> repoMap,
   SyncProcessRunner runner,
   _PruneCounts counts,
@@ -114,7 +116,7 @@ void _tallyAction(String description, _PruneCounts counts) {
 }
 
 void _pruneGerritItem(
-  BucketBItem item,
+  PrunableItem item,
   String repoPath,
   SyncProcessRunner runner,
   _PruneCounts counts,
