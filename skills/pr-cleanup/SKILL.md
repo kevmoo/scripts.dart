@@ -56,8 +56,9 @@ view of `~/github` and `~/github/dart-sdk`:
    _(Concurrently queries landed GitHub PRs, open GitHub PRs, cross-author and
    closed-unmerged branches, unlinked local worktrees, and Dart SDK Gerrit CLs,
    rendering `✅ Ready to Prune`, `🚫 Active / Hands-Off` with
-   `Opened / Touched` dates, `📌 Locked Worktrees (FYI — Safe-Kept Local Work)`,
-   and `⚠️ Needs Triage`)._
+   `Opened / Touched` dates sorted by last `Touched` descending,
+   `⚠️ Needs Triage`, and `📌 Locked Worktrees (FYI — Safe-Kept Local Work)`
+   last)._
 2. **Targeted Individual Collectors** _(optional when scoping to a single
    view)_:
    - **Merged/Closed PRs, Stale Worktrees & Dangling Remote Branches**:
@@ -169,12 +170,14 @@ sweeps) organized into four descriptive categories:
   - List any linked tasks or waiting sessions whose PRs have landed so they can
     be reconciled after VCS cleanup.
 - **`🚫 Active / Hands-Off` (JSON field: `active` — Open PRs, Active Gerrit CLs,
-  In-Flight Worktrees)**:
+  In-Flight Worktrees, sorted by last `Touched` descending above
+  `⚠️ Needs Triage`)**:
   - List open PRs from `kscripts gh-view` and active Gerrit CLs from
-    `kscripts gerrit-view` with their CI status, reviewer state (`⏳ Awaiting`
-    vs `🔔 Ping Reviewer` vs `🔄 Re-request Review` vs `❌ Action Needed`), and
-    local worktree mapping (active open/draft PR worktrees remain here even when
-    they have local unpushed commits).
+    `kscripts gerrit-view` interleaved and sorted by last `Touched`
+    (`updatedAt`) descending, with their CI status, reviewer state
+    (`⏳ Awaiting` vs `🔔 Ping Reviewer` vs `🔄 Re-request Review` vs
+    `❌ Action Needed`), and local worktree mapping (active open/draft PR
+    worktrees remain here even when they have local unpushed commits).
   - When `kscripts gh-view` flags `🔄 **Re-request Review** (@reviewer)`, that
     human reviewer previously submitted a review (`COMMENTED`,
     `CHANGES_REQUESTED`, or `DISMISSED`) and was dropped from GitHub's
@@ -194,15 +197,6 @@ sweeps) organized into four descriptive categories:
        has already `APPROVED` (`🟢 Approved (@approver)`) and the prior
        `CHANGES_REQUESTED` review is a stale veto on an older commit, surface
        the option (gated via `ask_question`) to dismiss the stale review.
-- **`📌 Locked Worktrees (FYI — Safe-Kept Local Work)` (JSON field:
-  `lockedWorktrees`)**:
-  - Local worktrees locked via
-    `git worktree lock --reason "<descriptive reason>"` are omitted from
-    `⚠️ Needs Triage` (and skipped by `gh-clean` pruning) and surfaced in the
-    report as an FYI table (including `Lock Reason`, `Commits Ahead`, and
-    `Last Touched` date) so the human can periodically review safe-kept local
-    prototypes and decide if any should be unlocked
-    (`git worktree unlock <worktree_path>`) and pruned.
 - **`⚠️ Needs Triage` (JSON field: `needsTriage` — Unlocked Unlinked Worktrees,
   Closed-Unmerged PRs, Dirty Worktrees)**:
   - Detail the exact modified/untracked files (`git status -s`) or unmerged
@@ -214,6 +208,15 @@ sweeps) organized into four descriptive categories:
     (`git -C <parent_repo> worktree lock --reason "<descriptive reason with project, context, and why kept>" <worktree_path>`).
   - Explicitly encourage the human to provide a descriptive `--reason` that
     includes project context, ticket/goal, and why the worktree is being kept.
+- **`📌 Locked Worktrees (FYI — Safe-Kept Local Work)` (JSON field:
+  `lockedWorktrees`, placed LAST in the report)**:
+  - Local worktrees locked via
+    `git worktree lock --reason "<descriptive reason>"` are omitted from
+    `⚠️ Needs Triage` (and skipped by `gh-clean` pruning) and surfaced at the
+    end of the report as an FYI table (including `Lock Reason`, `Commits Ahead`,
+    and `Last Touched` date, sorted by `Last Touched` descending) so the human
+    can periodically review safe-kept local prototypes and decide if any should
+    be unlocked (`git worktree unlock <worktree_path>`) and pruned.
 
 ## 4. Approval Gate & Execution
 
