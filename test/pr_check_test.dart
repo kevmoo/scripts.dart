@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:checks/checks.dart';
@@ -696,194 +695,77 @@ $paddedBody
       ..contains('skill-unlinked-reference');
   });
 
-  test('parsePublicSymbolsFromApiTxt and parsePublicSymbolsFromLibFiles '
-      'extract top-level symbols and extension members', () {
-    const apiTxt = '''
-package:analyzer/dart/element/type.dart:
-  DartType (referenced)
-package:source_helper/source_helper.dart:
-  createSortedFieldSet (function: Iterable<FieldElement> Function(ClassElement))
-  DartTypeExtension (extension on DartType):
-    qualifiedName (getter: String?)
-    toStringNonNullable (method: String Function())
-''';
-    final fromApiTxt = parsePublicSymbolsFromApiTxt('source_helper', apiTxt);
-    check(fromApiTxt.map((s) => s.toString()).toSet()).deepEquals({
-      'package:source_helper/source_helper.dart:createSortedFieldSet',
-      'package:source_helper/source_helper.dart:DartTypeExtension',
-      'package:source_helper/source_helper.dart:DartTypeExtension.qualifiedName',
-      'package:source_helper/source_helper.dart:DartTypeExtension.toStringNonNullable',
-    });
+  test('prepareUnpackedConsumerForAnalysis and discoverPubCacheReverseDepNames '
+      'sanitize unpacked pubspec files and filter pub-cache directories', () {
+    final consumerDir = Directory(
+      p.join(tempDir.path, 'json_serializable-6.15.0'),
+    )..createSync(recursive: true);
+    File(p.join(consumerDir.path, 'analysis_options.yaml'))
+        .writeAsStringSync('include: package:lints/recommended.yaml\n');
+    File(p.join(consumerDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: json_serializable
+version: 6.15.0
+resolution: workspace
+workspace:
+  - example
+dependencies:
+  source_helper: ^1.3.4
+dev_dependencies:
+  _shared_test:
+    path: ../shared_test
+''');
 
-    final fromLib = parsePublicSymbolsFromLibFiles('source_helper', {
-      'lib/source_helper.dart': '''
-export 'src/dart_type_extension.dart' hide HiddenExt;
-export 'src/field_helpers.dart' show createSortedFieldSet;
-''',
-      'lib/src/dart_type_extension.dart': '''
-extension DartTypeExtension on Object {
-  String? get qualifiedName => null;
-  String toStringNonNullable() => '';
-  void _privateHelper() {}
-}
-extension HiddenExt on Object {
-  void hiddenMethod() {}
-}
-''',
-      'lib/src/field_helpers.dart': '''
-List<Object> createSortedFieldSet(Object cls) => [];
-void unshownHelper() {}
-''',
-    });
-    check(fromLib.map((s) => s.toString()).toSet()).deepEquals({
-      'package:source_helper/source_helper.dart:createSortedFieldSet',
-      'package:source_helper/source_helper.dart:DartTypeExtension',
-      'package:source_helper/source_helper.dart:DartTypeExtension.qualifiedName',
-      'package:source_helper/source_helper.dart:DartTypeExtension.toStringNonNullable',
-    });
-  });
+    prepareUnpackedConsumerForAnalysis(
+      unpackedDir: consumerDir,
+      dependencyName: 'source_helper',
+      localDependencyPath: '/local/source_helper',
+    );
 
-  test('findReverseDepApiCollisions flags unguarded declaration collisions '
-      'while sparing show/hide/prefix guards and call-only consumers', () {
-    const added = [
-      AddedPublicSymbol(
-        entrypoint: 'package:source_helper/source_helper.dart',
-        name: 'toStringNonNullable',
-        kind: PublicSymbolKind.extensionMember,
-        enclosingExtension: 'DartTypeExtension',
-      ),
-      AddedPublicSymbol(
-        entrypoint: 'package:source_helper/source_helper.dart',
-        name: 'createSortedFieldSet',
-        kind: PublicSymbolKind.topLevel,
-      ),
-    ];
+    check(File(p.join(consumerDir.path, 'analysis_options.yaml')).existsSync())
+        .isFalse();
+    final sanitizedPubspec = File(p.join(consumerDir.path, 'pubspec.yaml'))
+        .readAsStringSync();
+    check(sanitizedPubspec)
+      ..not((it) => it.contains('resolution:'))
+      ..not((it) => it.contains('workspace:'))
+      ..not((it) => it.contains('dev_dependencies:'))
+      ..contains('source_helper: ^1.3.4');
 
-    final consumers = [
-      const ReverseDepConsumer(
-        name: 'json_serializable',
-        version: '6.15.0',
-        libDartFiles: {
-          'lib/src/generator_helper.dart': '''
-import 'package:source_helper/source_helper.dart';
-import 'field_helpers.dart';
-''',
-          'lib/src/field_helpers.dart': '''
-List<Object> createSortedFieldSet(Object element) => [];
-''',
-          'lib/src/type_helper.dart': '''
-import 'package:source_helper/source_helper.dart';
-extension on Object {
-  String toStringNonNullable() => '';
-}
-''',
-        },
-      ),
-      const ReverseDepConsumer(
-        name: 'macro_kit',
-        version: '0.8.2',
-        libDartFiles: {
-          'lib/src/code_gen.dart': '''
-import 'package:source_helper/source_helper.dart' show escapeDartString;
-List<Object> createSortedFieldSet(Object element) => [];
-extension on Object {
-  String toStringNonNullable() => '';
-}
-''',
-        },
-      ),
-      const ReverseDepConsumer(
-        name: 'json_serializable_migrated',
-        version: '6.15.1',
-        libDartFiles: {
-          'lib/src/generator_helper.dart': '''
-import 'package:source_helper/source_helper.dart';
-void run(Object e) {
-  createSortedFieldSet(e);
-  e.toStringNonNullable();
-}
-''',
-        },
-      ),
-    ];
-
-    final collisions = findReverseDepApiCollisions(added, consumers);
-    const expectedFirst =
-        'json_serializable@6.15.0 (lib/src/type_helper.dart) already declares '
-        '`DartTypeExtension.toStringNonNullable` while importing '
-        '`package:source_helper/source_helper.dart`';
-    const expectedSecond =
-        'json_serializable@6.15.0 (lib/src/field_helpers.dart) already '
-        'declares `createSortedFieldSet` while importing '
-        '`package:source_helper/source_helper.dart`';
-    check(collisions.map((c) => c.formattedSummary).toList())
-        .deepEquals([expectedFirst, expectedSecond]);
-  });
-
-  test('extractLibDartFilesFromTarGz and discoverPublishedReverseDepConsumers '
-      'read tarballs and pub-cache directories', () {
-    List<int> buildSimpleTarGz(Map<String, String> entries) {
-      final tar = <int>[];
-      for (final MapEntry(:key, :value) in entries.entries) {
-        final data = utf8.encode(value);
-        final header = List<int>.filled(512, 0);
-        final nameBytes = utf8.encode(key);
-        header.setRange(0, nameBytes.length, nameBytes);
-        final sizeOctal = utf8.encode(data.length.toRadixString(8));
-        header.setRange(124, 124 + sizeOctal.length, sizeOctal);
-        header[156] = 0x30;
-        tar
-          ..addAll(header)
-          ..addAll(data);
-        final pad = (512 - (data.length % 512)) % 512;
-        if (pad > 0) tar.addAll(List<int>.filled(pad, 0));
-      }
-      tar.addAll(List<int>.filled(1024, 0));
-      return gzip.encode(tar);
-    }
-
-    final archiveBytes = buildSimpleTarGz({
-      'pubspec.yaml': 'name: pkg_b\n',
-      'lib/src/helper.dart': 'void foo() {}\n',
-    });
-    final extracted = extractLibDartFilesFromTarGz(archiveBytes);
-    check(extracted).deepEquals({'lib/src/helper.dart': 'void foo() {}\n'});
+    final overrides = File(p.join(consumerDir.path, 'pubspec_overrides.yaml'))
+        .readAsStringSync();
+    check(overrides)
+      ..contains('dependency_overrides:')
+      ..contains('source_helper:')
+      ..contains('path: "/local/source_helper"');
 
     final fakeHosted = Directory(p.join(tempDir.path, 'pub_cache_hosted'))
       ..createSync(recursive: true);
-    final oldDir = Directory(p.join(fakeHosted.path, 'consumer_pkg-1.0.0'))
+    final matchDir = Directory(p.join(fakeHosted.path, 'consumer_pkg-1.1.0'))
       ..createSync();
-    File(p.join(oldDir.path, 'pubspec.yaml')).writeAsStringSync('''
+    File(p.join(matchDir.path, 'pubspec.yaml')).writeAsStringSync('''
 name: consumer_pkg
 dependencies:
   source_helper: ^1.3.0
 ''');
-    Directory(p.join(oldDir.path, 'lib')).createSync();
-    File(p.join(oldDir.path, 'lib', 'a.dart')).writeAsStringSync('// old\n');
-
-    final newDir = Directory(p.join(fakeHosted.path, 'consumer_pkg-1.1.0'))
-      ..createSync();
-    File(p.join(newDir.path, 'pubspec.yaml')).writeAsStringSync('''
-name: consumer_pkg
+    final incompatibleDir = Directory(
+      p.join(fakeHosted.path, 'older_pkg-2.0.0'),
+    )..createSync();
+    File(p.join(incompatibleDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: older_pkg
 dependencies:
-  source_helper: ^1.3.0
+  source_helper: ^0.9.0
 ''');
-    Directory(p.join(newDir.path, 'lib')).createSync();
-    File(p.join(newDir.path, 'lib', 'a.dart')).writeAsStringSync('// new\n');
 
-    final discovered = discoverPublishedReverseDepConsumers(
+    final discovered = discoverPubCacheReverseDepNames(
       'source_helper',
-      Version(1, 4, 0),
+      targetReleaseVersion: Version(1, 4, 0),
       pubCacheHostedDir: fakeHosted,
     );
-    check(discovered).length.equals(1);
-    check(discovered.single.name).equals('consumer_pkg');
-    check(discovered.single.version).equals('1.1.0');
-    check(discovered.single.libDartFiles['lib/a.dart']).equals('// new\n');
+    check(discovered).deepEquals(['consumer_pkg']);
   });
 
-  test('runPrCheck reports rev-dep-api-collision on non-major additions and '
-      'skips on major version bumps', () {
+  test('runPrCheck skips rev-deps by default, runs dart pub unpack + analyze '
+      'when runRevDeps is true, and ignores major version bumps', () {
     File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
 name: source_helper
 version: 1.4.0-wip
@@ -897,11 +779,10 @@ environment:
 ''');
     final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
     File(p.join(libDir.path, 'source_helper.dart')).writeAsStringSync('''
-void existingHelper() {}
 List<Object> createSortedFieldSet(Object cls) => [];
 ''');
 
-    final minorReport = runPrCheck(
+    final defaultReport = runPrCheck(
       directory: tempDir,
       processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
         exe,
@@ -914,26 +795,68 @@ List<Object> createSortedFieldSet(Object cls) => [];
         ],
         gitShowFiles: {
           'pubspec.yaml': 'name: source_helper\nversion: 1.3.10\n',
-          'lib/source_helper.dart': 'void existingHelper() {}\n',
         },
       ),
-      reverseDepLookup: (pkgName, targetVer) => const [
-        ReverseDepConsumer(
-          name: 'json_serializable',
-          version: '6.15.0',
-          libDartFiles: {
-            'lib/src/field_helpers.dart': '''
-import 'package:source_helper/source_helper.dart';
-List<Object> createSortedFieldSet(Object cls) => [];
-''',
+    );
+    check(defaultReport.passed).isTrue();
+    check(defaultReport.skippedChecks.map((s) => s.toString()).toList())
+        .contains('rev-deps:source_helper (pass --rev-deps to run)');
+
+    final optInFailReport = runPrCheck(
+      directory: tempDir,
+      runRevDeps: true,
+      reverseDepNamesLookup: (_) => const ['json_serializable'],
+      processRunner: (exe, args, {workingDirectory}) {
+        if (args.length >= 3 &&
+            args[0] == 'pub' &&
+            args[1] == 'unpack' &&
+            args[2] == 'json_serializable') {
+          final outArg = args.firstWhere((a) => a.startsWith('--output='));
+          final outDir = outArg.substring('--output='.length);
+          final unpacked = Directory(p.join(outDir, 'json_serializable-6.15.0'))
+            ..createSync(recursive: true);
+          File(p.join(unpacked.path, 'pubspec.yaml')).writeAsStringSync('''
+name: json_serializable
+version: 6.15.0
+dependencies:
+  source_helper: ^1.3.4
+''');
+          Directory(p.join(unpacked.path, 'lib')).createSync();
+          File(p.join(unpacked.path, 'lib', 'json_serializable.dart'))
+              .writeAsStringSync('// consumer\n');
+          return ProcessResult(0, 0, '', '');
+        }
+        if (args.length == 2 && args[0] == 'analyze' && args[1] == 'lib') {
+          return ProcessResult(
+            0,
+            3,
+            '  error - lib/src/helper.dart:10:5 - A member named '
+                "'toStringNonNullable' is defined in two extensions. - "
+                'ambiguous_extension_member_access',
+            '',
+          );
+        }
+        return fakeGitAndTools(
+          exe,
+          args,
+          workingDirectory: workingDirectory,
+          changedFiles: [
+            'pubspec.yaml',
+            'CHANGELOG.md',
+            'lib/source_helper.dart',
+          ],
+          gitShowFiles: {
+            'pubspec.yaml': 'name: source_helper\nversion: 1.3.10\n',
           },
-        ),
-      ],
+        );
+      },
     );
 
-    check(minorReport.passed).isFalse();
-    check(minorReport.violations.map((v) => v.check))
-        .contains('rev-dep-api-collision');
+    check(optInFailReport.passed).isFalse();
+    check(optInFailReport.violations.map((v) => v.check)).contains('rev-deps');
+    check(optInFailReport.violations.single.message)
+      ..contains('json_serializable-6.15.0')
+      ..contains('ambiguous_extension_member_access');
 
     File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
 name: source_helper
@@ -949,6 +872,8 @@ environment:
 
     final majorReport = runPrCheck(
       directory: tempDir,
+      runRevDeps: true,
+      reverseDepNamesLookup: (_) => const ['json_serializable'],
       processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
         exe,
         args,
@@ -960,23 +885,9 @@ environment:
         ],
         gitShowFiles: {
           'pubspec.yaml': 'name: source_helper\nversion: 1.3.10\n',
-          'lib/source_helper.dart': 'void existingHelper() {}\n',
         },
       ),
-      reverseDepLookup: (pkgName, targetVer) => const [
-        ReverseDepConsumer(
-          name: 'json_serializable',
-          version: '6.15.0',
-          libDartFiles: {
-            'lib/src/field_helpers.dart': '''
-import 'package:source_helper/source_helper.dart';
-List<Object> createSortedFieldSet(Object cls) => [];
-''',
-          },
-        ),
-      ],
     );
-
     check(majorReport.passed).isTrue();
   });
 }

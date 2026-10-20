@@ -12,6 +12,7 @@ import 'package:markdown/markdown.dart' as md;
 import 'package:path/path.dart' as p;
 import 'package:pub_semver/pub_semver.dart';
 import 'package:yaml/yaml.dart';
+import 'package:yaml_edit/yaml_edit.dart';
 
 import 'process_utils.dart';
 import 'shared/gh_args.dart';
@@ -99,6 +100,13 @@ ArgParser _buildPrCheckArgParser() => ArgParser()
     help: 'Run "dart test" in touched packages that have a test/ directory.',
   )
   ..addFlag(
+    'rev-deps',
+    negatable: false,
+    help:
+        'Unpack and analyze published reverse dependencies against touched '
+        'publishable packages.',
+  )
+  ..addFlag(
     'help',
     abbr: 'h',
     negatable: false,
@@ -135,9 +143,11 @@ Future<void> runPrCheckCli(
     processRunner: processRunner,
     customFetcher: fetchLatestCognitiveComplexityVersion,
   );
-  final revDepLookup = await _buildCliReverseDepLookup(
+  final runRevDeps = results['rev-deps'] as bool;
+  final revDepLookup = await _buildCliReverseDepNamesLookup(
     directory: targetDir,
     baseRefOverride: results['base'] as String?,
+    runRevDeps: runRevDeps,
     processRunner: processRunner,
   );
 
@@ -146,8 +156,9 @@ Future<void> runPrCheckCli(
     baseRefOverride: results['base'] as String?,
     requireWip: results['require-wip'] as bool,
     runTests: results['test'] as bool,
+    runRevDeps: runRevDeps,
     processRunner: processRunner,
-    reverseDepLookup: revDepLookup,
+    reverseDepNamesLookup: revDepLookup,
   );
 
   final latestVersion = await versionFuture.timeout(
@@ -271,9 +282,10 @@ PrCheckReport runPrCheck({
   String? baseRefOverride,
   bool requireWip = true,
   bool runTests = false,
+  bool runRevDeps = false,
   String? latestCognitiveComplexityVersion,
   SyncProcessRunner processRunner = defaultSyncProcessRunner,
-  ReverseDepLookup? reverseDepLookup,
+  ReverseDepNamesLookup? reverseDepNamesLookup,
 }) {
   final repoRoot = _resolveGitTopLevel(directory, processRunner) ?? directory;
   final baseRef = _resolveBaseRef(repoRoot, baseRefOverride, processRunner);
@@ -286,11 +298,12 @@ PrCheckReport runPrCheck({
     dartBin: _resolveDartBinary(),
     isDartSdk: File(p.join(repoRoot.path, 'tools', 'VERSION')).existsSync(),
     runSync: processRunner,
-    reverseDepLookup: reverseDepLookup,
+    reverseDepNamesLookup: reverseDepNamesLookup,
   );
   return runner.run(
     requireWip: requireWip,
     runTests: runTests,
+    runRevDeps: runRevDeps,
     latestCognitiveComplexityVersion: latestCognitiveComplexityVersion,
   );
 }
@@ -303,7 +316,7 @@ final class _PrCheckRunner {
   final String dartBin;
   final bool isDartSdk;
   final SyncProcessRunner runSync;
-  final ReverseDepLookup? reverseDepLookup;
+  final ReverseDepNamesLookup? reverseDepNamesLookup;
 
   final violations = <PrCheckViolation>[];
   final passedChecks = <String>[];
@@ -318,12 +331,13 @@ final class _PrCheckRunner {
     required this.dartBin,
     required this.isDartSdk,
     required this.runSync,
-    this.reverseDepLookup,
+    this.reverseDepNamesLookup,
   });
 
   PrCheckReport run({
     required bool requireWip,
     required bool runTests,
+    required bool runRevDeps,
     required String? latestCognitiveComplexityVersion,
   }) {
     final versionNote = checkCognitiveComplexityVersionNote(
@@ -337,7 +351,7 @@ final class _PrCheckRunner {
       return _toReport();
     }
 
-    _runFirehoseChecks(requireWip: requireWip);
+    _runFirehoseChecks(requireWip: requireWip, runRevDeps: runRevDeps);
     _runDartFileChecks(changedFiles.where((f) => f.endsWith('.dart')).toList());
     _runMarkdownChecks(changedFiles.where((f) => f.endsWith('.md')).toList());
     _runPackageTestChecks(runTests: runTests);
@@ -373,7 +387,10 @@ final class _PrCheckRunner {
     skippedChecks.add(PrCheckSkip(check: checkName, reason: reason));
   }
 
-  void _runFirehoseChecks({required bool requireWip}) {
+  void _runFirehoseChecks({
+    required bool requireWip,
+    required bool runRevDeps,
+  }) {
     final packages = runZoned(
       () => firehose.Repository(repoRoot).locatePackages(),
       zoneSpecification: ZoneSpecification(print: (_, _, _, _) {}),
@@ -381,7 +398,12 @@ final class _PrCheckRunner {
     final changedSet = changedFiles.toSet();
     var checkedAny = false;
     for (final pkg in packages) {
-      if (_validateFirehosePackage(pkg, changedSet, requireWip: requireWip)) {
+      if (_validateFirehosePackage(
+        pkg,
+        changedSet,
+        requireWip: requireWip,
+        runRevDeps: runRevDeps,
+      )) {
         checkedAny = true;
       }
     }
@@ -394,6 +416,7 @@ final class _PrCheckRunner {
     firehose.Package pkg,
     Set<String> changedSet, {
     required bool requireWip,
+    required bool runRevDeps,
   }) {
     final relDir = p.relative(pkg.directory.path, from: repoRoot.path);
     final prefix = relDir == '.' ? '' : '$relDir/';
@@ -470,19 +493,14 @@ final class _PrCheckRunner {
       );
     }
 
-    final revDepViolation = _checkPackageReverseDepCollisions(
-      repoRoot: repoRoot,
-      baseRef: baseRef,
+    _recordMulti('firehose:${pkg.name}', pkgViolations);
+    _runPackageRevDepChecks(
+      runner: this,
       pkg: pkg,
-      prefix: prefix,
       pkgChanged: pkgChanged,
       baseVerStr: baseVer,
-      runSync: runSync,
-      reverseDepLookup: reverseDepLookup,
+      runRevDeps: runRevDeps,
     );
-    if (revDepViolation != null) pkgViolations.add(revDepViolation);
-
-    _recordMulti('firehose:${pkg.name}', pkgViolations);
     return true;
   }
 
