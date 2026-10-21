@@ -133,8 +133,13 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
      tests in `test/` first and verify failure on unpatched code, then apply the
      fix and run `dart format` (explicitly targeting touched `.dart` files when
      hooks or `--no-verify` are used), `dart analyze`, and `dart test`.
-   - **Sync PR Title & Description**: If public APIs or architecture changed,
-     update via `cat << 'EOF' | gh pr edit <pr> --title "..." --body-file -`.
+   - **Sync PR Title & Description (Read-Modify-Write)**: When public APIs or
+     architecture change, first fetch the live body via
+     `gh pr view <pr> --json body --jq .body`, update only the affected summary
+     sections while preserving all existing human-authored notes, sections, and
+     `.github/PULL_REQUEST_TEMPLATE.md` checklists and checkbox states verbatim,
+     and apply the merged body via
+     `cat << 'EOF' | gh pr edit <pr> --title "..." --body-file -`.
    - **Live Read-Only Smoke Check**: Auto-run side-effect-free CLI paths
      (`--help`, `--dry-run`, `status`/`list`/`view`) when `<= 15s` and `~0`
      risk; offer in Step 8 when `> 15s`.
