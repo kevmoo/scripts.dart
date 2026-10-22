@@ -133,13 +133,18 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
      tests in `test/` first and verify failure on unpatched code, then apply the
      fix and run `dart format` (explicitly targeting touched `.dart` files when
      hooks or `--no-verify` are used), `dart analyze`, and `dart test`.
-   - **Sync PR Title & Description (Read-Modify-Write)**: When public APIs or
-     architecture change, first fetch the live body via
-     `gh pr view <pr> --json body --jq .body`, update only the affected summary
-     sections while preserving all existing human-authored notes, sections, and
-     `.github/PULL_REQUEST_TEMPLATE.md` checklists and checkbox states verbatim,
-     and apply the merged body via
-     `cat << 'EOF' | gh pr edit <pr> --title "..." --body-file -`.
+   - **Sync PR Title & Description (Read-Modify-Write)**: Whenever editing a PR
+     body (for example, when public APIs, architecture, behavior, or
+     verification notes change), save the live body with
+     `gh pr view <pr> --json body --jq .body > /tmp/pr_<pr>.md`, copy it to
+     `/tmp/pr_<pr>.orig.md`, and update only the affected summary lines with
+     targeted file edits (never a full rewrite). Leave all human-authored
+     sections and `.github/PULL_REQUEST_TEMPLATE.md` checklist lines, including
+     their `[x]`/`[ ]` states, untouched. Run
+     `diff -u /tmp/pr_<pr>.orig.md /tmp/pr_<pr>.md || true` to confirm only
+     summary lines changed, then apply with
+     `gh pr edit <pr> --body-file /tmp/pr_<pr>.md` (add `--title "..."` only
+     when the title changes).
    - **Live Read-Only Smoke Check**: Auto-run side-effect-free CLI paths
      (`--help`, `--dry-run`, `status`/`list`/`view`) when `<= 15s` and `~0`
      risk; offer in Step 8 when `> 15s`.
