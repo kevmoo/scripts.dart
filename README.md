@@ -277,6 +277,43 @@ generation, or starting workspace bootstraps.
 If the post-command returns a non-zero exit code, `git-up` will abort and exit
 with that same exit code.
 
+**Per-Repository Overrides (`~/.config/kscripts/repos.yaml`):**
+
+For bare-repository worktree layouts, multi-remote forks, or custom sync flows,
+you can configure per-checkout overrides keyed by canonical directory path (`~/`
+is expanded and symlinks are resolved automatically):
+
+```yaml
+~/github/dart-sdk/core/main/sdk:
+  git-up:
+    allowWorktree: true
+    branch: core-main
+    upstream: upstream-sdk/main
+    post: "./scripts/sync.sh"
+```
+
+Supported `git-up` keys (unknown keys exit with code `78`):
+
+- `allowWorktree` (`bool`, default `false`): Allow `git-up` inside this linked
+  worktree while keeping unlisted sibling/task worktrees blocked. Also flips the
+  `cleanBranches` default to `false`, because branches and worktrees are shared
+  across every checkout of a bare repository.
+- `branch` (`String`): Target local branch instead of `origin/HEAD`.
+- `upstream` (`String`): Expected upstream ref instead of `origin/<branch>`.
+- `cleanBranches` (`bool`, default `true`; `false` when `allowWorktree: true`):
+  Set to `false` to skip gone-branch and PR cleanup in shared multi-remote
+  repositories, or to `true` to opt a linked worktree into cleanup. `--check` is
+  also skipped when cleanup is disabled, with a notice.
+- `before` / `post` (`String`): Override `git-up.before` / `git-up.post` for
+  this checkout (use `""` to suppress a repo-wide Git config hook).
+- `override` (`String`): Shell command to run in place of the built-in branch
+  checkout, `--ff-only` pull, and branch cleanup (after dirty-tree and `before`
+  checks, before `post`). `--check` is skipped for this checkout, with a notice.
+
+The entire `repos.yaml` file is validated on every `git-up` run, so an invalid
+entry for any repository (unknown key, wrong type, relative path, or two keys
+resolving to the same directory) exits with code `78` in every repository.
+
 ### `kscripts`
 
 Unified CLI runner for `kevmoo_scripts` developer utilities.
