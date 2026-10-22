@@ -23,6 +23,12 @@ class GitUpRepoConfig {
   final bool allowWorktree;
   final String? branch;
   final String? upstream;
+
+  /// Whether to run gone-branch and PR cleanup after the pull.
+  ///
+  /// When parsed from `repos.yaml`, defaults to `true` unless [allowWorktree]
+  /// is `true`, in which case it defaults to `false` and must be opted into
+  /// explicitly.
   final bool cleanBranches;
   final String? before;
   final String? post;
@@ -199,9 +205,11 @@ GitUpRepoConfig? _parseGitUpSection(
     }
   }
 
+  final allowWorktree =
+      _readBool(rawSection, 'allowWorktree', configPath, repoKey) ?? false;
+
   return GitUpRepoConfig(
-    allowWorktree:
-        _readBool(rawSection, 'allowWorktree', configPath, repoKey) ?? false,
+    allowWorktree: allowWorktree,
     branch: _readString(
       rawSection,
       'branch',
@@ -216,8 +224,11 @@ GitUpRepoConfig? _parseGitUpSection(
       repoKey,
       allowEmpty: false,
     ),
+    // Linked worktrees share branches and worktrees with every sibling in a
+    // bare layout, so branch cleanup is opt-in there.
     cleanBranches:
-        _readBool(rawSection, 'cleanBranches', configPath, repoKey) ?? true,
+        _readBool(rawSection, 'cleanBranches', configPath, repoKey) ??
+        !allowWorktree,
     before: _readString(
       rawSection,
       'before',

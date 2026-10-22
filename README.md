@@ -289,19 +289,21 @@ is expanded and symlinks are resolved automatically):
     allowWorktree: true
     branch: core-main
     upstream: upstream-sdk/main
-    cleanBranches: false
     post: "./scripts/sync.sh"
 ```
 
 Supported `git-up` keys (unknown keys exit with code `78`):
 
 - `allowWorktree` (`bool`, default `false`): Allow `git-up` inside this linked
-  worktree while keeping unlisted sibling/task worktrees blocked.
+  worktree while keeping unlisted sibling/task worktrees blocked. Also flips the
+  `cleanBranches` default to `false`, because branches and worktrees are shared
+  across every checkout of a bare repository.
 - `branch` (`String`): Target local branch instead of `origin/HEAD`.
 - `upstream` (`String`): Expected upstream ref instead of `origin/<branch>`.
-- `cleanBranches` (`bool`, default `true`): Set to `false` to skip gone-branch
-  and PR cleanup in shared multi-remote repositories. `--check` is also skipped
-  for this checkout, with a notice.
+- `cleanBranches` (`bool`, default `true`; `false` when `allowWorktree: true`):
+  Set to `false` to skip gone-branch and PR cleanup in shared multi-remote
+  repositories, or to `true` to opt a linked worktree into cleanup. `--check` is
+  also skipped when cleanup is disabled, with a notice.
 - `before` / `post` (`String`): Override `git-up.before` / `git-up.post` for
   this checkout (use `""` to suppress a repo-wide Git config hook).
 - `override` (`String`): Shell command to run in place of the built-in branch

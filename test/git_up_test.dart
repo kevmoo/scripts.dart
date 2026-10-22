@@ -1182,7 +1182,8 @@ void main() {
     await upstreamGit.runCommand(['add', 'CORE.md']);
     await upstreamGit.runCommand(['commit', '-m', 'Core v2']);
 
-    // Write ~/.config/kscripts/repos.yaml inside sandbox home
+    // Write ~/.config/kscripts/repos.yaml inside sandbox home. No explicit
+    // `cleanBranches`: `allowWorktree: true` must imply `false`.
     File(p.join(d.sandbox, '.config', 'kscripts', 'repos.yaml'))
       ..createSync(recursive: true)
       ..writeAsStringSync('''
@@ -1191,7 +1192,6 @@ void main() {
     allowWorktree: true
     branch: core-main
     upstream: upstream-sdk/main
-    cleanBranches: false
     post: "echo custom_post>post.txt"
 ''');
 

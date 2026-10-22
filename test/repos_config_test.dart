@@ -71,6 +71,29 @@ void main() {
     },
   );
 
+  test('allowWorktree: true defaults cleanBranches to false unless set', () {
+    final configPath = p.join(d.sandbox, 'repos.yaml');
+    final repo = p.join(d.sandbox, 'repo');
+
+    bool? cleanBranchesFor(String gitUpSection) {
+      File(configPath).writeAsStringSync('~/repo:\n  git-up:\n$gitUpSection');
+      return loadGitUpRepoConfig(
+        repo,
+        configPath: configPath,
+        homeDirectory: d.sandbox,
+      )?.cleanBranches;
+    }
+
+    check(cleanBranchesFor('    branch: main\n')).isNotNull().isTrue();
+    check(cleanBranchesFor('    allowWorktree: true\n')).isNotNull().isFalse();
+    check(
+      cleanBranchesFor('    allowWorktree: true\n    cleanBranches: true\n'),
+    ).isNotNull().isTrue();
+    check(
+      cleanBranchesFor('    allowWorktree: false\n    cleanBranches: false\n'),
+    ).isNotNull().isFalse();
+  });
+
   test('rejects unknown keys, bad types, empty branch, duplicates', () async {
     await d.dir('real_target').create();
     final realTarget = p.join(d.sandbox, 'real_target');
