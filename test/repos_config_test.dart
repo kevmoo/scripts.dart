@@ -78,9 +78,15 @@ void main() {
     Link(aliasTarget).createSync(realTarget);
 
     final cases = <({String yaml, String expectedError})>[
+      (yaml: 'foo: [unclosed\n', expectedError: 'Invalid YAML syntax'),
       (
         yaml: 'not-a-map\n',
         expectedError: 'Top-level value must be a YAML map',
+      ),
+      (
+        yaml: 'github/repo:\n  git-up: {}\n',
+        expectedError:
+            'Repository path "github/repo" must be absolute or start with "~/"',
       ),
       (
         yaml: '~/repo:\n  git-up:\n    allow_worktree: true\n',

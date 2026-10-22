@@ -13,11 +13,15 @@ import 'testable_print.dart';
 /// This function orchestrates the following steps:
 /// 1. Finds the Git root directory and loads any matching entry from
 ///    `~/.config/kscripts/repos.yaml`.
-/// 2. Determines the target branch (`repos.yaml` `branch`, `origin/HEAD`, or
-///    fallback to `main`/`master`).
-/// 3. Verifies that the local branch exists and tracks the expected upstream.
-/// 4. Checks out the target branch and pulls updates with `--ff-only` (or runs
-///    the `repos.yaml` `override` command).
+/// 2. Rejects secondary worktrees (unless `allowWorktree` is configured) and
+///    dirty working trees.
+/// 3. Runs the `before` hook (`repos.yaml` `before` or `git-up.before`).
+/// 4. Runs the `repos.yaml` `override` command, or: determines the target
+///    branch (`repos.yaml` `branch`, `origin/HEAD`, or fallback to
+///    `main`/`master`), verifies that the local branch exists and tracks the
+///    expected upstream, checks it out, pulls with `--ff-only`, and cleans up
+///    gone branches (unless `cleanBranches: false`).
+/// 5. Runs the `post` hook (`repos.yaml` `post` or `git-up.post`).
 ///
 /// Throws a [GitUpException] if any step fails with a clear message and
 /// exit code.
@@ -27,7 +31,6 @@ import 'testable_print.dart';
 Future<void> gitUp({
   String? workingDirectory,
   bool check = false,
-  String? reposConfigPath,
   String? homeDirectory,
 }) async {
   workingDirectory ??= Directory.current.path;
@@ -35,7 +38,6 @@ Future<void> gitUp({
   final gitDir = await getGitDir(workingDirectory);
   final repoConfig = loadGitUpRepoConfig(
     gitDir.path,
-    configPath: reposConfigPath,
     homeDirectory: homeDirectory,
   );
 
@@ -60,6 +62,7 @@ Future<void> gitUp({
   );
 
   if (repoConfig?.override case final overrideCommand?) {
+    if (check) _printCheckSkipped('override');
     await _runShellCommand(gitDir.path, overrideCommand, hookName: 'Override');
   } else {
     await _syncDefaultBranch(gitDir, repoConfig: repoConfig, check: check);
@@ -117,7 +120,14 @@ Future<void> _syncDefaultBranch(
 
   if (repoConfig?.cleanBranches ?? true) {
     await _cleanBranches(gitDir, defaultBranch, check: check);
+  } else if (check) {
+    _printCheckSkipped('cleanBranches: false');
   }
+}
+
+void _printCheckSkipped(String reason) {
+  final message = '--check skipped: repos.yaml sets $reason for this checkout.';
+  print(styleDim.wrap(message) ?? message);
 }
 
 Future<void> _runGit(

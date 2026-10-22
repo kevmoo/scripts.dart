@@ -128,6 +128,13 @@ String canonicalizeRepoPath(
     expanded = trimmed == '~' ? home : p.join(home, trimmed.substring(2));
   }
 
+  if (!p.isAbsolute(expanded)) {
+    _failConfig(
+      sourceConfigPath ?? 'repos.yaml',
+      'Repository path "$rawPath" must be absolute or start with "~/".',
+    );
+  }
+
   final dir = Directory(expanded);
   if (dir.existsSync()) {
     return p.canonicalize(dir.resolveSymbolicLinksSync());
@@ -270,8 +277,7 @@ String? _readString(
   return trimmed;
 }
 
-Never _failConfig(String configPath, String reason) {
-  final message = 'Error in $configPath: $reason';
-  printError(message);
-  throw GitUpException(message, exitCode: ExitCode.config.code);
-}
+Never _failConfig(String configPath, String reason) => throw GitUpException(
+  'Error in $configPath: $reason',
+  exitCode: ExitCode.config.code,
+);

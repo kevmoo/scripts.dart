@@ -1245,13 +1245,20 @@ void main() {
 
       final prints = await capturePrints(() async {
         final code = await wrappedForTesting(
-          () => gitUp(workingDirectory: localPath, homeDirectory: d.sandbox),
+          () => gitUp(
+            workingDirectory: localPath,
+            homeDirectory: d.sandbox,
+            check: true,
+          ),
         );
         check(code).equals(0);
       });
 
       check(prints.join('\n'))
         ..contains('Running before-command: echo pre>order.txt')
+        ..contains(
+          '--check skipped: repos.yaml sets override for this checkout.',
+        )
         ..contains('Running override-command: echo custom_sync>>order.txt')
         ..not((it) => it.contains('Default branch:'));
       check(
