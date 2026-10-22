@@ -1082,4 +1082,184 @@ void main() {
     final mainPath = await wtGitDir.getMainWorktreePath();
     check(mainPath).equals(worktreePath);
   });
+
+  test('repos.yaml allows configured bare worktree via symlink while blocking '
+      'unlisted sibling worktrees', () async {
+    // 1. Set up two distinct remotes: origin (bazel fork) and upstream-sdk
+    await d.dir('upstream_sdk', [d.file('CORE.md', 'core v1')]).create();
+    final upstreamPath = p.join(d.sandbox, 'upstream_sdk');
+    final upstreamGit = await GitDir.init(upstreamPath, allowContent: true);
+    await upstreamGit.configureTestIdentity();
+    await upstreamGit.runCommand(['branch', '-M', 'main']);
+    await upstreamGit.runCommand(['add', '.']);
+    await upstreamGit.runCommand(['commit', '-m', 'Core v1']);
+
+    // 2. Create bare repo with both remotes and two root worktrees + sandbox
+    final barePath = p.join(d.sandbox, 'dart-sdk', '.bare');
+    await Process.run('git', ['init', '--bare', barePath]);
+    final remotePath = p.join(d.sandbox, 'remote');
+    await Process.run('git', [
+      '--git-dir',
+      barePath,
+      'remote',
+      'add',
+      'origin',
+      remotePath,
+    ]);
+    await Process.run('git', [
+      '--git-dir',
+      barePath,
+      'remote',
+      'add',
+      'upstream-sdk',
+      upstreamPath,
+    ]);
+    await Process.run('git', ['--git-dir', barePath, 'fetch', '--all']);
+    await Process.run('git', [
+      '--git-dir',
+      barePath,
+      'remote',
+      'set-head',
+      'origin',
+      'main',
+    ]);
+    await Process.run('git', [
+      '--git-dir',
+      barePath,
+      'config',
+      'git-up.before',
+      'echo bare_before>before.txt',
+    ]);
+    await Process.run('git', [
+      '--git-dir',
+      barePath,
+      'config',
+      'git-up.post',
+      'exit 99',
+    ]);
+
+    final bazelWt = p.join(d.sandbox, 'dart-sdk', 'bazel', 'main', 'sdk');
+    final coreWt = p.join(d.sandbox, 'dart-sdk', 'core', 'main', 'sdk');
+    final agentWt = p.join(d.sandbox, 'dart-sdk', 'core', 'agent-task', 'sdk');
+    await Process.run('git', [
+      '--git-dir',
+      barePath,
+      'worktree',
+      'add',
+      '-b',
+      'main',
+      bazelWt,
+      'origin/main',
+    ]);
+    await Process.run('git', [
+      '--git-dir',
+      barePath,
+      'worktree',
+      'add',
+      '-b',
+      'core-main',
+      coreWt,
+      'upstream-sdk/main',
+    ]);
+    await Process.run('git', [
+      '--git-dir',
+      barePath,
+      'worktree',
+      'add',
+      '-b',
+      'agent-branch',
+      agentWt,
+      'upstream-sdk/main',
+    ]);
+
+    // Symlink ~/dart/sdk -> ~/dart-sdk/core/main/sdk
+    await d.dir('dart').create();
+    final symlinkSdk = p.join(d.sandbox, 'dart', 'sdk');
+    Link(symlinkSdk).createSync(coreWt);
+
+    // Advance upstream-sdk/main with a second commit
+    File(p.join(upstreamPath, 'CORE.md')).writeAsStringSync('core v2');
+    await upstreamGit.runCommand(['add', 'CORE.md']);
+    await upstreamGit.runCommand(['commit', '-m', 'Core v2']);
+
+    // Write ~/.config/kscripts/repos.yaml inside sandbox home
+    File(p.join(d.sandbox, '.config', 'kscripts', 'repos.yaml'))
+      ..createSync(recursive: true)
+      ..writeAsStringSync('''
+~/dart-sdk/core/main/sdk:
+  git-up:
+    allowWorktree: true
+    branch: core-main
+    upstream: upstream-sdk/main
+    cleanBranches: false
+    post: "echo custom_post>post.txt"
+''');
+
+    // 3. Running gitUp via the symlink updates core-main from upstream-sdk/main
+    final prints = await capturePrints(() async {
+      final code = await wrappedForTesting(
+        () => gitUp(workingDirectory: symlinkSdk, homeDirectory: d.sandbox),
+      );
+      check(code).equals(0);
+    });
+
+    check(prints.join('\n'))
+      ..contains('Default branch: core-main')
+      ..contains('Successfully updated core-main.')
+      ..not((it) => it.contains('Fetching and pruning...'));
+    check(File(p.join(coreWt, 'CORE.md')).readAsStringSync()).equals('core v2');
+    check(File(p.join(coreWt, 'before.txt')).readAsStringSync().trim())
+        .equals('bare_before');
+    check(File(p.join(coreWt, 'post.txt')).readAsStringSync().trim())
+        .equals('custom_post');
+
+    // 4. Unlisted child worktree still fails closed!
+    await capturePrints(() async {
+      await check(
+        wrappedForTesting(
+          () => gitUp(workingDirectory: agentWt, homeDirectory: d.sandbox),
+        ),
+      ).throws<GitUpException>(
+        (it) => it
+            .has((e) => e.message, 'message')
+            .contains('Cannot run git-up from inside a secondary worktree.'),
+      );
+    });
+  });
+
+  test(
+    'repos.yaml supports override escape hatch and empty hook suppression',
+    () async {
+      await localGitDir.runCommand(['config', 'git-up.post', 'exit 42']);
+      await localGitDir.runCommand(['remote', 'set-head', 'origin', '-d']);
+
+      File(p.join(d.sandbox, '.config', 'kscripts', 'repos.yaml'))
+        ..createSync(recursive: true)
+        ..writeAsStringSync('''
+~/local:
+  git-up:
+    before: "echo pre>order.txt"
+    override: "echo custom_sync>>order.txt"
+    post: ""
+''');
+
+      final prints = await capturePrints(() async {
+        final code = await wrappedForTesting(
+          () => gitUp(workingDirectory: localPath, homeDirectory: d.sandbox),
+        );
+        check(code).equals(0);
+      });
+
+      check(prints.join('\n'))
+        ..contains('Running before-command: echo pre>order.txt')
+        ..contains('Running override-command: echo custom_sync>>order.txt')
+        ..not((it) => it.contains('Default branch:'));
+      check(
+        File(p.join(localPath, 'order.txt'))
+            .readAsLinesSync()
+            .map((l) => l.trim())
+            .toList(),
+      ).deepEquals(['pre', 'custom_sync']);
+    },
+  );
 }

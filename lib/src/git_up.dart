@@ -5,29 +5,42 @@ import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 
 import 'git_extensions.dart';
+import 'repos_config.dart';
 import 'testable_print.dart';
 
 /// Safely switches to and updates the default branch of a Git repository.
 ///
 /// This function orchestrates the following steps:
-/// 1. Finds the Git root directory.
-/// 2. Determines the default branch (sniffing for `origin/HEAD` or fallback
-///    to `main`/`master`).
-/// 3. Verifies that the local branch exists and tracks the correct upstream.
-/// 4. Checks out the default branch.
-/// 5. Pulls updates with `--ff-only`.
+/// 1. Finds the Git root directory and loads any matching entry from
+///    `~/.config/kscripts/repos.yaml`.
+/// 2. Determines the target branch (`repos.yaml` `branch`, `origin/HEAD`, or
+///    fallback to `main`/`master`).
+/// 3. Verifies that the local branch exists and tracks the expected upstream.
+/// 4. Checks out the target branch and pulls updates with `--ff-only` (or runs
+///    the `repos.yaml` `override` command).
 ///
 /// Throws a [GitUpException] if any step fails with a clear message and
 /// exit code.
 ///
 /// [workingDirectory] specifies the directory to start searching for the
 /// Git root. Defaults to [Directory.current]`.path`.
-Future<void> gitUp({String? workingDirectory, bool check = false}) async {
+Future<void> gitUp({
+  String? workingDirectory,
+  bool check = false,
+  String? reposConfigPath,
+  String? homeDirectory,
+}) async {
   workingDirectory ??= Directory.current.path;
 
   final gitDir = await getGitDir(workingDirectory);
+  final repoConfig = loadGitUpRepoConfig(
+    gitDir.path,
+    configPath: reposConfigPath,
+    homeDirectory: homeDirectory,
+  );
 
-  if (await gitDir.isSecondaryWorktree()) {
+  if (!(repoConfig?.allowWorktree ?? false) &&
+      await gitDir.isSecondaryWorktree()) {
     final mainPath =
         await gitDir.getMainWorktreePath() ?? 'the main repository root';
     printError('Please move to "$mainPath" and run git-up again.');
@@ -39,10 +52,34 @@ Future<void> gitUp({String? workingDirectory, bool check = false}) async {
     throw GitUpException('Working tree is dirty.');
   }
 
-  await _runHookCommand(gitDir, configKey: 'git-up.before', hookName: 'Before');
+  await _runHookCommand(
+    gitDir,
+    configKey: 'git-up.before',
+    hookName: 'Before',
+    commandOverride: repoConfig?.before,
+  );
 
+  if (repoConfig?.override case final overrideCommand?) {
+    await _runShellCommand(gitDir.path, overrideCommand, hookName: 'Override');
+  } else {
+    await _syncDefaultBranch(gitDir, repoConfig: repoConfig, check: check);
+  }
+
+  await _runHookCommand(
+    gitDir,
+    configKey: 'git-up.post',
+    hookName: 'Post',
+    commandOverride: repoConfig?.post,
+  );
+}
+
+Future<void> _syncDefaultBranch(
+  GitDir gitDir, {
+  required GitUpRepoConfig? repoConfig,
+  required bool check,
+}) async {
   // 1. Determine Default Branch
-  final defaultBranch = await getDefaultBranch(gitDir);
+  final defaultBranch = repoConfig?.branch ?? await getDefaultBranch(gitDir);
 
   final boldBranch = styleBold.wrap(defaultBranch) ?? defaultBranch;
   print(
@@ -51,7 +88,11 @@ Future<void> gitUp({String? workingDirectory, bool check = false}) async {
   );
 
   // 2. Verify Alignment
-  await verifyAlignment(gitDir, defaultBranch);
+  await verifyAlignment(
+    gitDir,
+    defaultBranch,
+    expectedUpstream: repoConfig?.upstream,
+  );
 
   // 3. Checkout default branch
   await _runGit(
@@ -74,9 +115,9 @@ Future<void> gitUp({String? workingDirectory, bool check = false}) async {
         'Successfully updated $defaultBranch.',
   );
 
-  await _cleanBranches(gitDir, defaultBranch, check: check);
-
-  await _runHookCommand(gitDir, configKey: 'git-up.post', hookName: 'Post');
+  if (repoConfig?.cleanBranches ?? true) {
+    await _cleanBranches(gitDir, defaultBranch, check: check);
+  }
 }
 
 Future<void> _runGit(
@@ -182,13 +223,19 @@ Future<String> getDefaultBranch(GitDir gitDir) async {
 /// Checks:
 /// 1. The local branch with name [defaultBranch] exists.
 /// 2. The local branch has an upstream configured.
-/// 3. The upstream is `origin/[defaultBranch]`.
+/// 3. The upstream matches [expectedUpstream] (defaults to
+///    `origin/[defaultBranch]`).
 ///
 /// Throws a [GitUpException] with specific advice if any check fails.
 ///
 /// [gitDir] is the Git repository.
 /// [defaultBranch] is the name of the default branch to verify.
-Future<void> verifyAlignment(GitDir gitDir, String defaultBranch) async {
+Future<void> verifyAlignment(
+  GitDir gitDir,
+  String defaultBranch, {
+  String? expectedUpstream,
+}) async {
+  final targetUpstream = expectedUpstream ?? 'origin/$defaultBranch';
   if (!await gitDir.hasBranch(defaultBranch)) {
     printError('Warning: Local branch "$defaultBranch" does not exist.');
     throw GitUpException(
@@ -203,18 +250,19 @@ Future<void> verifyAlignment(GitDir gitDir, String defaultBranch) async {
     printError(
       'Error: Local branch "$defaultBranch" has no upstream configured.',
     );
-    _printUpstreamFixSuggestion(defaultBranch);
+    _printUpstreamFixSuggestion(defaultBranch, targetUpstream);
     throw GitUpException(
       'Branch has no upstream.',
       exitCode: ExitCode.config.code,
     );
   }
 
-  if (upstream != 'origin/$defaultBranch') {
+  if (upstream != targetUpstream) {
     printError(
-      'Error: Local branch "$defaultBranch" tracks "$upstream", not "origin/$defaultBranch".',
+      'Error: Local branch "$defaultBranch" tracks "$upstream", '
+      'not "$targetUpstream".',
     );
-    _printUpstreamFixSuggestion(defaultBranch);
+    _printUpstreamFixSuggestion(defaultBranch, targetUpstream);
     throw GitUpException(
       'Branch alignment failed.',
       exitCode: ExitCode.config.code,
@@ -222,33 +270,44 @@ Future<void> verifyAlignment(GitDir gitDir, String defaultBranch) async {
   }
 }
 
-void _printUpstreamFixSuggestion(String defaultBranch) {
+void _printUpstreamFixSuggestion(String defaultBranch, String targetUpstream) {
   printError('To fix this, run:');
-  printError(
-    '  git branch --set-upstream-to=origin/$defaultBranch $defaultBranch',
-  );
+  printError('  git branch --set-upstream-to=$targetUpstream $defaultBranch');
 }
 
 Future<void> _runHookCommand(
   GitDir gitDir, {
   required String configKey,
   required String hookName,
+  String? commandOverride,
 }) async {
-  final configResult = await gitDir.runCommand([
-    'config',
-    '--get',
-    configKey,
-  ], throwOnError: false);
-
-  if (configResult.exitCode != 0) {
-    return;
+  final String command;
+  if (commandOverride != null) {
+    command = commandOverride;
+  } else {
+    final configResult = await gitDir.runCommand([
+      'config',
+      '--get',
+      configKey,
+    ], throwOnError: false);
+    if (configResult.exitCode != 0) {
+      return;
+    }
+    command = (configResult.stdout as String).trim();
   }
 
-  final command = (configResult.stdout as String).trim();
   if (command.isEmpty) {
     return;
   }
 
+  await _runShellCommand(gitDir.path, command, hookName: hookName);
+}
+
+Future<void> _runShellCommand(
+  String workingDirectory,
+  String command, {
+  required String hookName,
+}) async {
   print(
     styleDim.wrap('Running ${hookName.toLowerCase()}-command: $command') ??
         'Running ${hookName.toLowerCase()}-command: $command',
@@ -260,7 +319,7 @@ Future<void> _runHookCommand(
   final process = await Process.start(
     shell,
     shellArgs,
-    workingDirectory: gitDir.path,
+    workingDirectory: workingDirectory,
     mode: ProcessStartMode.inheritStdio,
   );
 
