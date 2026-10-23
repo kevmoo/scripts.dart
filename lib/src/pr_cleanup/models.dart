@@ -19,6 +19,8 @@ class ActiveItem {
   final String reviewBadge;
   final String author;
   final bool isDraft;
+  final int unresolvedReviewerThreads;
+  final int unresolvedAuthorThreads;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final DateTime? lastAuthorActivityAt;
@@ -36,6 +38,8 @@ class ActiveItem {
     required this.reviewBadge,
     required this.author,
     required this.isDraft,
+    this.unresolvedReviewerThreads = 0,
+    this.unresolvedAuthorThreads = 0,
     this.createdAt,
     this.updatedAt,
     this.lastAuthorActivityAt,
@@ -54,6 +58,8 @@ class ActiveItem {
     'reviewBadge': reviewBadge,
     'author': author,
     'isDraft': isDraft,
+    'unresolvedReviewerThreads': unresolvedReviewerThreads,
+    'unresolvedAuthorThreads': unresolvedAuthorThreads,
     'createdAt': createdAt?.toIso8601String(),
     'updatedAt': updatedAt?.toIso8601String(),
     'lastAuthorActivityAt': lastAuthorActivityAt?.toIso8601String(),

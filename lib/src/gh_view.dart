@@ -27,7 +27,8 @@ class GhPr extends GhPrRef {
   final List<String> activeReviewers;
   final List<String> approvedReviewers;
   final int totalReviewThreads;
-  final int unresolvedReviewThreads;
+  final int unresolvedReviewerThreads;
+  final int unresolvedAuthorThreads;
   final DateTime? lastAuthorCommentAt;
   final DateTime? lastReviewerActivityAt;
   final MergeableState mergeable;
@@ -54,7 +55,8 @@ class GhPr extends GhPrRef {
     this.reviewAuthors,
     this.approvedReviewers = const [],
     required this.totalReviewThreads,
-    required this.unresolvedReviewThreads,
+    required this.unresolvedReviewerThreads,
+    required this.unresolvedAuthorThreads,
     this.lastAuthorCommentAt,
     this.lastAuthorReviewAt,
     this.lastCommitAt,
@@ -104,9 +106,13 @@ extension GhPrStatus on GhPr {
       mergeable == MergeableState.mergeable &&
       !isInMergeQueue;
 
-  /// True when approved, passing CI, and mergeable, but blocked by branch protection/rulesets.
+  /// True when approved, passing CI, and mergeable with no unanswered review
+  /// threads, but blocked by branch protection/rulesets.
   bool get isBlockedByProtection =>
-      isBlockedMergeState && isApproved && isCiPassing;
+      isBlockedMergeState &&
+      isApproved &&
+      unresolvedReviewerThreads == 0 &&
+      isCiPassing;
 
   /// Returns human reviewers (from `activeReviewers` or human
   /// `requestedReviewers`) who have not already approved the PR (unless
@@ -174,7 +180,7 @@ extension GhPrStatus on GhPr {
       !isRepoArchived &&
       !isDraft &&
       !isApproved &&
-      unresolvedReviewThreads == 0 &&
+      unresolvedReviewerThreads == 0 &&
       hasAuthorRespondedSinceLastReview &&
       unrequestedActiveReviewers.isNotEmpty;
 
@@ -291,6 +297,7 @@ bool isReadyToMerge(GhPr pr) {
   final isMergeStateValid =
       pr.mergeStateStatus != MergeStateStatus.blocked || pr.isInMergeQueue;
   return pr.isApproved &&
+      pr.unresolvedReviewerThreads == 0 &&
       pr.isCiPassing &&
       pr.isMergeableOrQueued &&
       isMergeStateValid;
@@ -304,7 +311,8 @@ bool _isActionNeeded(GhPr pr) {
   final isCiFailure =
       pr.ciStatus == CiStatus.failure || pr.ciStatus == CiStatus.actionRequired;
   final isConflicting = pr.mergeable == MergeableState.conflicting;
-  return isChangesRequested ||
+  return pr.unresolvedReviewerThreads > 0 ||
+      isChangesRequested ||
       pr.needsReviewReRequest ||
       isCiFailure ||
       isConflicting ||
@@ -561,7 +569,8 @@ Future<GhPr> _attachLocalStatus(
   reviewAuthors: pr.reviewAuthors,
   approvedReviewers: pr.approvedReviewers,
   totalReviewThreads: pr.totalReviewThreads,
-  unresolvedReviewThreads: pr.unresolvedReviewThreads,
+  unresolvedReviewerThreads: pr.unresolvedReviewerThreads,
+  unresolvedAuthorThreads: pr.unresolvedAuthorThreads,
   lastAuthorCommentAt: pr.lastAuthorCommentAt,
   lastAuthorReviewAt: pr.lastAuthorReviewAt,
   lastCommitAt: pr.lastCommitAt,

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math' as math;
 
 import '../gh_view.dart';
 import '../process_utils.dart';
@@ -41,10 +42,18 @@ query($q: String!, $limit: Int!, $cursor: String) {
             }
           }
         }
-        reviewThreads(first: 25) {
+        reviewThreads(last: 50) {
           totalCount
           nodes {
             isResolved
+            comments(last: 1) {
+              nodes {
+                author {
+                  __typename
+                  login
+                }
+              }
+            }
           }
         }
         reviews(last: 25) {
@@ -319,6 +328,7 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
 
   final threads = _extractReviewThreads(
     node['reviewThreads'] as Map<String, dynamic>?,
+    prAuthor,
   );
   final ciStatus = extractCiStatus(
     core.repository,
@@ -341,7 +351,8 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     reviewAuthors: reviewerActivity.reviewAuthors,
     approvedReviewers: approvedReviewers,
     totalReviewThreads: threads.total,
-    unresolvedReviewThreads: threads.unresolved,
+    unresolvedReviewerThreads: threads.unresolvedReviewer,
+    unresolvedAuthorThreads: threads.unresolvedAuthor,
     lastAuthorCommentAt: lastAuthorCommentAt,
     lastAuthorReviewAt: lastAuthorReviewAt,
     lastCommitAt: lastCommitAt,
@@ -563,16 +574,44 @@ List<String> _extractApprovedReviewers(
       .toList();
 }
 
-({int total, int unresolved}) _extractReviewThreads(
-  Map<String, dynamic>? reviewThreadsObj,
+({String login, bool isBot}) _extractLastThreadAuthor(
+  Map<String, dynamic> thread,
 ) {
+  if (thread case {
+    'comments': {'nodes': [..., {'author': final Map<String, dynamic> author}]},
+  }) {
+    final login = author['login'] as String? ?? '';
+    final isBot =
+        author['__typename'] == 'Bot' ||
+        (login.isNotEmpty && isBotLogin(login));
+    return (login: login, isBot: isBot);
+  }
+  return (login: '', isBot: false);
+}
+
+({int total, int unresolvedReviewer, int unresolvedAuthor})
+_extractReviewThreads(Map<String, dynamic>? reviewThreadsObj, String prAuthor) {
   final totalThreads = reviewThreadsObj?['totalCount'] as int? ?? 0;
-  final threadNodes = reviewThreadsObj?['nodes'] as List<dynamic>? ?? [];
-  var unresolvedThreads = 0;
-  for (final t in threadNodes) {
-    if (t is Map<String, dynamic> && t['isResolved'] == false) {
-      unresolvedThreads++;
+  final threadNodes = reviewThreadsObj?['nodes'] as List<dynamic>? ?? const [];
+  var botThreads = 0;
+  var unresolvedReviewer = 0;
+  var unresolvedAuthor = 0;
+  for (final thread in threadNodes.whereType<Map<String, dynamic>>()) {
+    final author = _extractLastThreadAuthor(thread);
+    if (author.isBot) {
+      botThreads++;
+      continue;
+    }
+    if (thread['isResolved'] != false) continue;
+    if (prAuthor.isNotEmpty && author.login == prAuthor) {
+      unresolvedAuthor++;
+    } else {
+      unresolvedReviewer++;
     }
   }
-  return (total: totalThreads, unresolved: unresolvedThreads);
+  return (
+    total: math.max(0, totalThreads - botThreads),
+    unresolvedReviewer: unresolvedReviewer,
+    unresolvedAuthor: unresolvedAuthor,
+  );
 }
