@@ -176,7 +176,7 @@ sweeps) organized into four descriptive categories:
     `kscripts gerrit-view` interleaved and sorted by last `Touched`
     (`updatedAt`) descending, with their CI status, reviewer state
     (`⏳ Awaiting` vs `🔔 Ping Reviewer` vs `🔄 Re-request Review` vs
-    `❌ Action Needed`), and local worktree mapping (active open/draft PR
+    `❌ Unresolved Comments`), and local worktree mapping (active open/draft PR
     worktrees remain here even when they have local unpushed commits).
   - When `kscripts gh-view` flags `🔄 **Re-request Review** (@reviewer)`, that
     human reviewer previously submitted a review (`COMMENTED`,

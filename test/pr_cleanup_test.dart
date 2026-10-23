@@ -3,7 +3,9 @@ import 'dart:io';
 
 import 'package:args/command_runner.dart';
 import 'package:checks/checks.dart';
+import 'package:kevmoo_scripts/src/gerrit_view.dart';
 import 'package:kevmoo_scripts/src/gerrit_view/gerrit_queries.dart';
+import 'package:kevmoo_scripts/src/gerrit_view/models.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/collector.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/models.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/pr_cleanup_options.dart';
@@ -453,6 +455,69 @@ void main() {
         ..contains('⚠️ *(No --reason provided)*')
         ..contains('_demo-unlocked-dangling');
     });
+
+    test('surfaces unanswered reviewer comments and thread counts across '
+        'GitHub PRs and Gerrit CLs', () async {
+      final sweep = await collectPrSweep(
+        options: PrCleanupOptions(localRoot: tempRoot.path),
+        syncProcessRunner: (exe, args, {workingDirectory}) => ProcessResult(
+          0,
+          0,
+          exe == 'gh'
+              ? jsonEncode({
+                  'data': {
+                    'search': {'nodes': <Object?>[]},
+                  },
+                })
+              : '',
+          '',
+        ),
+        asyncProcessRunner: (exe, args, {workingDirectory}) async =>
+            _mockUntriagedGithubPrsRunner(),
+        gerritAnalyzer: () async => _mockGerritAnalysisResult(tempRoot.path),
+      );
+
+      final byNumber = {for (final item in sweep.active) item.number: item};
+
+      check(byNumber[2633]!.reviewBadge)
+          .equals('❌ Unresolved Comments (2, Approved)');
+      check(byNumber[2633]!.unresolvedReviewerThreads).equals(2);
+      check(byNumber[2633]!.unresolvedAuthorThreads).equals(0);
+
+      check(byNumber[2638]!.reviewBadge).equals('❌ Unresolved Comments (5)');
+      check(byNumber[2638]!.unresolvedReviewerThreads).equals(5);
+
+      check(byNumber[2640]!.reviewBadge)
+          .equals('🔴 Changes Requested (1 unresolved)');
+
+      check(byNumber[18855]!.reviewBadge).equals('🔄 Re-request Review');
+      check(byNumber[18855]!.unresolvedReviewerThreads).equals(0);
+      check(byNumber[18855]!.unresolvedAuthorThreads).equals(1);
+
+      check(byNumber[517]!.reviewBadge)
+          .equals('⚪ Work in progress (2 unresolved)');
+
+      check(byNumber[567604]!.reviewBadge).equals('❌ Unresolved Comments (1)');
+      check(byNumber[567604]!.unresolvedReviewerThreads).equals(1);
+
+      check(byNumber[567582]!.reviewBadge)
+          .equals('❌ Unresolved Comments (1, Approved)');
+
+      check(byNumber[563381]!.reviewBadge)
+          .equals('🔴 Changes Requested (2 unresolved)');
+
+      check(byNumber[507265]!.reviewBadge).equals('⏳ Awaiting Review');
+      check(byNumber[507265]!.unresolvedReviewerThreads).equals(0);
+      check(byNumber[507265]!.unresolvedAuthorThreads).equals(1);
+
+      final decoded =
+          jsonDecode(formatJsonReport(sweep)) as Map<String, dynamic>;
+      final activeJson = (decoded['active'] as List)
+          .cast<Map<String, dynamic>>();
+      final gerritJson = activeJson.firstWhere((i) => i['number'] == 567604);
+      check(gerritJson['unresolvedReviewerThreads']).equals(1);
+      check(gerritJson['unresolvedAuthorThreads']).equals(0);
+    });
   });
 
   group('parseGerritTimestamp', () {
@@ -633,4 +698,177 @@ ProcessResult _mockSyncRunner(
     return ProcessResult(0, 0, '2026-10-18|WIP commit\n', '');
   }
   return ProcessResult(0, 0, 'main\n', '');
+}
+
+Map<String, dynamic> _mockPrNode({
+  required int number,
+  required String? reviewDecision,
+  bool isDraft = false,
+  List<String> requestedReviewers = const [],
+  List<Map<String, dynamic>> reviews = const [],
+  List<Map<String, dynamic>> threadNodes = const [],
+  String? committedDate,
+}) => {
+  'number': number,
+  'title': 'PR $number',
+  'url': 'https://github.com/dart-lang/tools/pull/$number',
+  'author': {'login': 'kevmoo'},
+  'isDraft': isDraft,
+  'state': 'OPEN',
+  'reviewDecision': reviewDecision,
+  'reviewRequests': {
+    'nodes': [
+      for (final r in requestedReviewers)
+        {
+          'requestedReviewer': {'login': r},
+        },
+    ],
+  },
+  'reviews': {'nodes': reviews},
+  'reviewThreads': {'totalCount': threadNodes.length, 'nodes': threadNodes},
+  'comments': {'nodes': <Object?>[]},
+  'commits': {
+    'nodes': [
+      if (committedDate != null)
+        {
+          'commit': {
+            'committedDate': committedDate,
+            'statusCheckRollup': {'state': 'SUCCESS'},
+          },
+        },
+    ],
+  },
+  'mergeable': 'MERGEABLE',
+  'mergeStateStatus': 'CLEAN',
+  'headRefName': 'branch-$number',
+  'headRefOid': 'sha-$number',
+  'baseRefName': 'main',
+  'repository': {
+    'nameWithOwner': 'dart-lang/tools',
+    'url': 'https://github.com/dart-lang/tools',
+    'isArchived': false,
+  },
+  'createdAt': '2026-10-20T00:00:00Z',
+  'updatedAt': '2026-10-23T00:00:00Z',
+};
+
+Map<String, dynamic> _mockThread(String login, {bool isResolved = false}) => {
+  'isResolved': isResolved,
+  'comments': {
+    'nodes': [
+      {
+        'author': {'__typename': 'User', 'login': login},
+      },
+    ],
+  },
+};
+
+ProcessResult _mockUntriagedGithubPrsRunner() {
+  final payload = {
+    'data': {
+      'search': {
+        'nodes': [
+          _mockPrNode(
+            number: 2633,
+            reviewDecision: 'APPROVED',
+            threadNodes: [_mockThread('natebosch'), _mockThread('natebosch')],
+          ),
+          _mockPrNode(
+            number: 2638,
+            reviewDecision: 'REVIEW_REQUIRED',
+            requestedReviewers: ['jakemac53'],
+            threadNodes: List.filled(5, _mockThread('jakemac53')),
+          ),
+          _mockPrNode(
+            number: 2640,
+            reviewDecision: 'CHANGES_REQUESTED',
+            threadNodes: [_mockThread('jakemac53')],
+          ),
+          _mockPrNode(
+            number: 18855,
+            reviewDecision: 'REVIEW_REQUIRED',
+            requestedReviewers: ['Lyokone'],
+            reviews: [
+              {
+                'author': {'login': 'SelaseKay'},
+                'submittedAt': '2026-10-21T01:00:00Z',
+                'state': 'COMMENTED',
+              },
+            ],
+            threadNodes: [_mockThread('kevmoo')],
+            committedDate: '2026-10-22T01:00:00Z',
+          ),
+          _mockPrNode(
+            number: 517,
+            reviewDecision: null,
+            isDraft: true,
+            threadNodes: [_mockThread('alice'), _mockThread('alice')],
+          ),
+        ],
+      },
+    },
+  };
+  return ProcessResult(0, 0, jsonEncode(payload), '');
+}
+
+RemoteCL _mockGerritCl({
+  required int number,
+  List<String> reviewers = const ['reviewer@google.com'],
+  List<String> crVotes = const [],
+  int unresolvedReviewerLeaves = 0,
+  int unresolvedAuthorLeaves = 0,
+}) => (
+  number: number,
+  changeId: 'I$number',
+  subject: 'CL $number',
+  status: 'NEW',
+  currentRevision: 'rev-$number',
+  currentRevisionNumber: 1,
+  lastAuthorTouch: '2026-10-23T00:00:00Z',
+  createdAt: DateTime.utc(2026, 10, 20),
+  updatedAt: DateTime.utc(2026, 10, 23),
+  reviewers: reviewers,
+  crVotes: crVotes,
+  cqStatus: 'PASS',
+  threads: (
+    totalThreads: unresolvedReviewerLeaves + unresolvedAuthorLeaves,
+    unresolvedReviewerLeaves: unresolvedReviewerLeaves,
+    unresolvedAuthorLeaves: unresolvedAuthorLeaves,
+  ),
+  nextAction: '',
+  submittable: true,
+  unsatisfiedRequirements: const [],
+);
+
+GerritAnalysisResult _mockGerritAnalysisResult(String rootPath) {
+  final cls = <int, RemoteCL>{
+    567604: _mockGerritCl(number: 567604, unresolvedReviewerLeaves: 1),
+    567582: _mockGerritCl(
+      number: 567582,
+      crVotes: ['reviewer:+1'],
+      unresolvedReviewerLeaves: 1,
+    ),
+    563381: _mockGerritCl(
+      number: 563381,
+      crVotes: ['reviewer:-1'],
+      unresolvedReviewerLeaves: 2,
+    ),
+    507265: _mockGerritCl(number: 507265, unresolvedAuthorLeaves: 1),
+  };
+  return (
+    actualRepoRoot: rootPath,
+    defaultBranch: 'main',
+    currentBranch: 'main',
+    gerritHost: 'dart-review.googlesource.com',
+    gerritProject: 'sdk',
+    gerritRemote: 'origin',
+    remoteCLs: cls,
+    branchDetails: const {},
+    alignedBranches: const {},
+    closedClBranches: const {},
+    conflatedBranches: const {},
+    mismatchedChangeIdBranches: const {},
+    remoteOnlyCLs: cls,
+    worktreeBranches: const {},
+  );
 }

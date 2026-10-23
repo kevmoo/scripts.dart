@@ -106,9 +106,13 @@ extension GhPrStatus on GhPr {
       mergeable == MergeableState.mergeable &&
       !isInMergeQueue;
 
-  /// True when approved, passing CI, and mergeable, but blocked by branch protection/rulesets.
+  /// True when approved, passing CI, and mergeable with no unanswered review
+  /// threads, but blocked by branch protection/rulesets.
   bool get isBlockedByProtection =>
-      isBlockedMergeState && isApproved && isCiPassing;
+      isBlockedMergeState &&
+      isApproved &&
+      unresolvedReviewerThreads == 0 &&
+      isCiPassing;
 
   /// Returns human reviewers (from `activeReviewers` or human
   /// `requestedReviewers`) who have not already approved the PR (unless
@@ -293,6 +297,7 @@ bool isReadyToMerge(GhPr pr) {
   final isMergeStateValid =
       pr.mergeStateStatus != MergeStateStatus.blocked || pr.isInMergeQueue;
   return pr.isApproved &&
+      pr.unresolvedReviewerThreads == 0 &&
       pr.isCiPassing &&
       pr.isMergeableOrQueued &&
       isMergeStateValid;
@@ -306,7 +311,8 @@ bool _isActionNeeded(GhPr pr) {
   final isCiFailure =
       pr.ciStatus == CiStatus.failure || pr.ciStatus == CiStatus.actionRequired;
   final isConflicting = pr.mergeable == MergeableState.conflicting;
-  return isChangesRequested ||
+  return pr.unresolvedReviewerThreads > 0 ||
+      isChangesRequested ||
       pr.needsReviewReRequest ||
       isCiFailure ||
       isConflicting ||

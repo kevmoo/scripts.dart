@@ -26,6 +26,7 @@ Future<PrSweepResult> collectPrSweep({
   required PrCleanupOptions options,
   SyncProcessRunner? syncProcessRunner,
   ProcessRunner? asyncProcessRunner,
+  Future<GerritAnalysisResult?> Function()? gerritAnalyzer,
   void Function(String message)? onProgress,
 }) async {
   final syncRunner = syncProcessRunner ?? defaultSyncProcessRunner;
@@ -40,6 +41,7 @@ Future<PrSweepResult> collectPrSweep({
     dartSdkPath: dartSdkPath,
     syncRunner: syncRunner,
     asyncRunner: asyncRunner,
+    gerritAnalyzer: gerritAnalyzer,
     onProgress: onProgress,
   );
   final localRepos = scanLocalGitRepositories(
@@ -172,6 +174,7 @@ _fetchInitialData({
   required String dartSdkPath,
   required SyncProcessRunner syncRunner,
   required ProcessRunner asyncRunner,
+  Future<GerritAnalysisResult?> Function()? gerritAnalyzer,
   void Function(String message)? onProgress,
 }) async {
   final landedPrsFuture = fetchLandedPrs(
@@ -190,8 +193,9 @@ _fetchInitialData({
     processRunner: asyncRunner,
   );
 
-  final gerritFuture =
-      (!options.skipGerrit && Directory(dartSdkPath).existsSync())
+  final gerritFuture = gerritAnalyzer != null
+      ? gerritAnalyzer()
+      : (!options.skipGerrit && Directory(dartSdkPath).existsSync())
       ? analyzeGerritWork(
           gerritRepo: dartSdkPath,
           failSilently: true,
@@ -564,6 +568,8 @@ void _processGithubActivePrs(
         reviewBadge: reviewBadge,
         author: pr.author,
         isDraft: pr.isDraft,
+        unresolvedReviewerThreads: pr.unresolvedReviewerThreads,
+        unresolvedAuthorThreads: pr.unresolvedAuthorThreads,
         createdAt: pr.createdAt,
         updatedAt: pr.updatedAt,
         lastAuthorActivityAt: pr.lastAuthorActivityAt,
@@ -615,6 +621,8 @@ void _processGerritActiveCls(
         reviewBadge: reviewBadge,
         author: 'self',
         isDraft: false,
+        unresolvedReviewerThreads: cl.threads.unresolvedReviewerLeaves,
+        unresolvedAuthorThreads: cl.threads.unresolvedAuthorLeaves,
         createdAt: cl.createdAt,
         updatedAt: cl.updatedAt ?? lastAuthorAt,
         lastAuthorActivityAt: lastAuthorAt,
@@ -804,23 +812,24 @@ String _computeCiBadge(CiStatus status) {
 }
 
 String _computeReviewBadge(GhPr pr) {
-  if (pr.unresolvedReviewerThreads > 0) {
-    return '❌ Unresolved Comments';
-  }
-  if (pr.isApproved) return '🟢 Approved';
-  if (pr.isDraft) return '⚪ Work in progress';
-  if (pr.reviewDecision == ReviewDecision.changesRequested) {
-    if (pr.lastAuthorCommentAt != null &&
-        pr.lastReviewerActivityAt != null &&
-        pr.lastAuthorCommentAt!.isAfter(pr.lastReviewerActivityAt!)) {
-      return '🔄 Re-request Review';
-    }
-    return '🔴 Changes Requested';
-  }
-  if (pr.requestedReviewers.isNotEmpty) {
-    return '⏳ In Review Queue';
-  }
-  return '⚪ None';
+  final unresolved = pr.unresolvedReviewerThreads;
+  final isQueuedReReview =
+      pr.requestedReviewers.isNotEmpty && pr.unrequestedActiveReviewers.isEmpty;
+  return switch ((pr.isDraft, unresolved > 0, pr.reviewDecision)) {
+    (true, true, _) => '⚪ Work in progress ($unresolved unresolved)',
+    (true, false, _) => '⚪ Work in progress',
+    (false, true, ReviewDecision.approved) =>
+      '❌ Unresolved Comments ($unresolved, Approved)',
+    (false, true, ReviewDecision.changesRequested) =>
+      '🔴 Changes Requested ($unresolved unresolved)',
+    (false, true, _) => '❌ Unresolved Comments ($unresolved)',
+    (false, false, ReviewDecision.approved) => '🟢 Approved',
+    (false, false, _) when pr.needsReviewReRequest => '🔄 Re-request Review',
+    (false, false, ReviewDecision.changesRequested) =>
+      isQueuedReReview ? '🟡 Re-review Requested' : '🔴 Changes Requested',
+    (false, false, _) =>
+      pr.requestedReviewers.isNotEmpty ? '⏳ In Review Queue' : '⚪ None',
+  };
 }
 
 String _computeGerritCqBadge(String cqStatus) {
@@ -834,21 +843,24 @@ String _computeGerritCqBadge(String cqStatus) {
 }
 
 String _computeGerritReviewBadge(RemoteCL cl) {
-  if (cl.threads.unresolvedReviewerLeaves > 0) {
-    return '❌ Unresolved Comments';
-  }
-  if (cl.crVotes.any((v) => v.endsWith(':-1') || v.endsWith(':-2'))) {
-    return '🔴 Changes Requested';
-  }
-  if (cl.crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'))) {
-    if (cl.submittable == false) {
-      final reqs = cl.unsatisfiedRequirements.isNotEmpty
-          ? 'Needs ${cl.unsatisfiedRequirements.join(', ')}'
-          : 'Missing submit requirements';
-      return '🟡 Approved ($reqs)';
-    }
-    return '🟢 Approved';
-  }
-  if (cl.reviewers.isNotEmpty) return '⏳ Awaiting Review';
-  return '⚪ None';
+  final unresolved = cl.threads.unresolvedReviewerLeaves;
+  final hasNegative = cl.crVotes.any(
+    (v) => v.endsWith(':-1') || v.endsWith(':-2'),
+  );
+  final hasPositive = cl.crVotes.any(
+    (v) => v.endsWith(':+1') || v.endsWith(':+2'),
+  );
+  final reqs = cl.unsatisfiedRequirements.isNotEmpty
+      ? 'Needs ${cl.unsatisfiedRequirements.join(', ')}'
+      : 'Missing submit requirements';
+  return switch ((unresolved > 0, hasNegative, hasPositive)) {
+    (true, true, _) => '🔴 Changes Requested ($unresolved unresolved)',
+    (true, false, true) => '❌ Unresolved Comments ($unresolved, Approved)',
+    (true, false, false) => '❌ Unresolved Comments ($unresolved)',
+    (false, true, _) => '🔴 Changes Requested',
+    (false, false, true) =>
+      cl.submittable == false ? '🟡 Approved ($reqs)' : '🟢 Approved',
+    (false, false, false) =>
+      cl.reviewers.isNotEmpty ? '⏳ Awaiting Review' : '⚪ None',
+  };
 }
