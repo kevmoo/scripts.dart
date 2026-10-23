@@ -45,6 +45,13 @@ query($q: String!, $limit: Int!, $cursor: String) {
           totalCount
           nodes {
             isResolved
+            comments(last: 1) {
+              nodes {
+                author {
+                  login
+                }
+              }
+            }
           }
         }
         reviews(last: 25) {
@@ -319,6 +326,7 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
 
   final threads = _extractReviewThreads(
     node['reviewThreads'] as Map<String, dynamic>?,
+    prAuthor,
   );
   final ciStatus = extractCiStatus(
     core.repository,
@@ -341,7 +349,8 @@ GhPr? parsePrNode(Map<String, dynamic> node) {
     reviewAuthors: reviewerActivity.reviewAuthors,
     approvedReviewers: approvedReviewers,
     totalReviewThreads: threads.total,
-    unresolvedReviewThreads: threads.unresolved,
+    unresolvedReviewerThreads: threads.unresolvedReviewer,
+    unresolvedAuthorThreads: threads.unresolvedAuthor,
     lastAuthorCommentAt: lastAuthorCommentAt,
     lastAuthorReviewAt: lastAuthorReviewAt,
     lastCommitAt: lastCommitAt,
@@ -563,16 +572,31 @@ List<String> _extractApprovedReviewers(
       .toList();
 }
 
-({int total, int unresolved}) _extractReviewThreads(
-  Map<String, dynamic>? reviewThreadsObj,
-) {
+({int total, int unresolvedReviewer, int unresolvedAuthor})
+_extractReviewThreads(Map<String, dynamic>? reviewThreadsObj, String prAuthor) {
   final totalThreads = reviewThreadsObj?['totalCount'] as int? ?? 0;
   final threadNodes = reviewThreadsObj?['nodes'] as List<dynamic>? ?? [];
-  var unresolvedThreads = 0;
+  var unresolvedReviewer = 0;
+  var unresolvedAuthor = 0;
   for (final t in threadNodes) {
     if (t is Map<String, dynamic> && t['isResolved'] == false) {
-      unresolvedThreads++;
+      final commentsNode = t['comments'] as Map<String, dynamic>?;
+      final commentNodes = commentsNode?['nodes'] as List<dynamic>? ?? [];
+      final lastComment = commentNodes.isNotEmpty
+          ? commentNodes.last as Map<String, dynamic>?
+          : null;
+      final lastAuthorNode = lastComment?['author'] as Map<String, dynamic>?;
+      final lastAuthorLogin = lastAuthorNode?['login'] as String? ?? '';
+      if (lastAuthorLogin == prAuthor) {
+        unresolvedAuthor++;
+      } else {
+        unresolvedReviewer++;
+      }
     }
   }
-  return (total: totalThreads, unresolved: unresolvedThreads);
+  return (
+    total: totalThreads,
+    unresolvedReviewer: unresolvedReviewer,
+    unresolvedAuthor: unresolvedAuthor,
+  );
 }

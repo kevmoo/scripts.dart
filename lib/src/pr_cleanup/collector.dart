@@ -804,6 +804,9 @@ String _computeCiBadge(CiStatus status) {
 }
 
 String _computeReviewBadge(GhPr pr) {
+  if (pr.unresolvedReviewerThreads > 0) {
+    return '❌ Unresolved Comments';
+  }
   if (pr.isApproved) return '🟢 Approved';
   if (pr.isDraft) return '⚪ Work in progress';
   if (pr.reviewDecision == ReviewDecision.changesRequested) {
@@ -831,6 +834,9 @@ String _computeGerritCqBadge(String cqStatus) {
 }
 
 String _computeGerritReviewBadge(RemoteCL cl) {
+  if (cl.threads.unresolvedReviewerLeaves > 0) {
+    return '❌ Unresolved Comments';
+  }
   if (cl.crVotes.any((v) => v.endsWith(':-1') || v.endsWith(':-2'))) {
     return '🔴 Changes Requested';
   }

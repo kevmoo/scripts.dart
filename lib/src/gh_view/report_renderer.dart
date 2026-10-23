@@ -147,7 +147,7 @@ void _writeMarkdownPrRow(StringBuffer buffer, GhPr pr, DateTime now) {
   final branchLines = <String>['`${pr.headRefName}`', localMapping];
 
   final areThreadsResolved =
-      pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0;
+      pr.totalReviewThreads > 0 && pr.unresolvedReviewerThreads == 0;
   final isReady = isReadyToMerge(pr);
 
   final statusLines = <String>[
@@ -283,11 +283,12 @@ String _formatChangesRequestedActionMarkdown(
   final crReviewersText = crReviewers.isNotEmpty
       ? '@${crReviewers.join(', @')}'
       : '';
-  if (pr.unresolvedReviewThreads > 0) {
+  if (pr.unresolvedReviewerThreads > 0 || pr.unresolvedAuthorThreads > 0) {
     final suffix = crReviewersText.isNotEmpty ? ' · $crReviewersText' : '';
-    final plural = pr.unresolvedReviewThreads > 1 ? 's' : '';
+
     return '🔴 **Changes Requested** '
-        '(${pr.unresolvedReviewThreads} open thread$plural$suffix)';
+        '(${pr.unresolvedReviewerThreads} reviewer open, '
+        '${pr.unresolvedAuthorThreads} author-replied open$suffix)';
   }
   return crReviewersText.isNotEmpty
       ? '🔴 **Changes Requested** ($crReviewersText)'
@@ -329,38 +330,42 @@ String _resolveReviewRequiredActionMarkdown(
   return '👤 **Request Reviewer** (none in queue)';
 }
 
-String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) =>
-    switch (pr.reviewDecision) {
-      ReviewDecision.approved => '🟢 Approved',
-      ReviewDecision.changesRequested when pr.needsReviewReRequest =>
-        '🔴 Changes Requested · Re-request '
-            '(@${pr.unrequestedActiveReviewers.join(', @')})',
-      ReviewDecision.changesRequested
-          when pr.requestedReviewers.isNotEmpty &&
-              pr.unrequestedActiveReviewers.isEmpty &&
-              pr.approvedReviewers.isNotEmpty =>
-        '🟡 Re-review Requested (@${pr.targetReviewers.join(', @')}) · '
-            '🟢 Approved (@${pr.approvedReviewers.join(', @')})',
-      ReviewDecision.changesRequested
-          when pr.requestedReviewers.isNotEmpty &&
-              pr.unrequestedActiveReviewers.isEmpty =>
-        '🟡 Re-review Requested (@${pr.targetReviewers.join(', @')})',
-      ReviewDecision.changesRequested
-          when areThreadsResolved && pr.hasAuthorRespondedSinceLastReview =>
-        '🔴 Changes Requested (Resolved)',
-      ReviewDecision.changesRequested when pr.unresolvedReviewThreads > 0 =>
-        '🔴 Changes Requested (${pr.unresolvedReviewThreads} open)',
-      ReviewDecision.changesRequested
-          when pr.changesRequestedReviewers.isNotEmpty =>
-        '🔴 Changes Requested (@${pr.changesRequestedReviewers.join(', @')})',
-      ReviewDecision.changesRequested => '🔴 Changes Requested',
-      ReviewDecision.reviewRequired when pr.needsReviewReRequest =>
-        '🟠 Re-request Review (@${pr.unrequestedActiveReviewers.join(', @')})',
-      ReviewDecision.reviewRequired when pr.targetReviewers.isNotEmpty =>
-        '🟡 Review Required (@${pr.targetReviewers.join(', @')})',
-      ReviewDecision.reviewRequired => '🟡 Review Required',
-      _ => '⚪ None',
-    };
+String _formatReviewBadgeMarkdown(
+  GhPr pr,
+  bool areThreadsResolved,
+) => switch (pr.reviewDecision) {
+  ReviewDecision.approved => '🟢 Approved',
+  ReviewDecision.changesRequested when pr.needsReviewReRequest =>
+    '🔴 Changes Requested · Re-request '
+        '(@${pr.unrequestedActiveReviewers.join(', @')})',
+  ReviewDecision.changesRequested
+      when pr.requestedReviewers.isNotEmpty &&
+          pr.unrequestedActiveReviewers.isEmpty &&
+          pr.approvedReviewers.isNotEmpty =>
+    '🟡 Re-review Requested (@${pr.targetReviewers.join(', @')}) · '
+        '🟢 Approved (@${pr.approvedReviewers.join(', @')})',
+  ReviewDecision.changesRequested
+      when pr.requestedReviewers.isNotEmpty &&
+          pr.unrequestedActiveReviewers.isEmpty =>
+    '🟡 Re-review Requested (@${pr.targetReviewers.join(', @')})',
+  ReviewDecision.changesRequested
+      when areThreadsResolved && pr.hasAuthorRespondedSinceLastReview =>
+    '🔴 Changes Requested (Resolved)',
+  ReviewDecision.changesRequested
+      when pr.unresolvedReviewerThreads > 0 || pr.unresolvedAuthorThreads > 0 =>
+    '🔴 Changes Requested '
+        '(${pr.unresolvedReviewerThreads + pr.unresolvedAuthorThreads} open)',
+  ReviewDecision.changesRequested
+      when pr.changesRequestedReviewers.isNotEmpty =>
+    '🔴 Changes Requested (@${pr.changesRequestedReviewers.join(', @')})',
+  ReviewDecision.changesRequested => '🔴 Changes Requested',
+  ReviewDecision.reviewRequired when pr.needsReviewReRequest =>
+    '🟠 Re-request Review (@${pr.unrequestedActiveReviewers.join(', @')})',
+  ReviewDecision.reviewRequired when pr.targetReviewers.isNotEmpty =>
+    '🟡 Review Required (@${pr.targetReviewers.join(', @')})',
+  ReviewDecision.reviewRequired => '🟡 Review Required',
+  _ => '⚪ None',
+};
 
 String _formatCiBadgeMarkdown(CiStatus ciStatus) => switch (ciStatus) {
   CiStatus.success => '🟢 Passing',
@@ -576,7 +581,7 @@ String _formatReviewBadgeTerminal(GhPr pr) {
       _formatTerminalQueuedChangesRequestedBadge(pr, formatRequested),
     ReviewDecision.changesRequested
         when pr.totalReviewThreads > 0 &&
-            pr.unresolvedReviewThreads == 0 &&
+            pr.unresolvedReviewerThreads == 0 &&
             pr.hasAuthorRespondedSinceLastReview =>
       yellow.wrap('Changes Requested (Resolved: Re-review Needed)') ??
           'Changes Requested (Resolved: Re-review Needed)',
@@ -636,9 +641,10 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'lastCommitAt': pr.lastCommitAt?.toIso8601String(),
     'lastReviewerActivityAt': pr.lastReviewerActivityAt?.toIso8601String(),
     'totalReviewThreads': pr.totalReviewThreads,
-    'unresolvedReviewThreads': pr.unresolvedReviewThreads,
+    'unresolvedReviewerThreads': pr.unresolvedReviewerThreads,
+    'unresolvedAuthorThreads': pr.unresolvedAuthorThreads,
     'areAllReviewThreadsResolved':
-        pr.totalReviewThreads > 0 && pr.unresolvedReviewThreads == 0,
+        pr.totalReviewThreads > 0 && pr.unresolvedReviewerThreads == 0,
     'ciStatus': pr.ciStatus,
     'ciDetail': pr.ciDetail,
     'mergeable': pr.mergeable,

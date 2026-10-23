@@ -27,7 +27,8 @@ class GhPr extends GhPrRef {
   final List<String> activeReviewers;
   final List<String> approvedReviewers;
   final int totalReviewThreads;
-  final int unresolvedReviewThreads;
+  final int unresolvedReviewerThreads;
+  final int unresolvedAuthorThreads;
   final DateTime? lastAuthorCommentAt;
   final DateTime? lastReviewerActivityAt;
   final MergeableState mergeable;
@@ -54,7 +55,8 @@ class GhPr extends GhPrRef {
     this.reviewAuthors,
     this.approvedReviewers = const [],
     required this.totalReviewThreads,
-    required this.unresolvedReviewThreads,
+    required this.unresolvedReviewerThreads,
+    required this.unresolvedAuthorThreads,
     this.lastAuthorCommentAt,
     this.lastAuthorReviewAt,
     this.lastCommitAt,
@@ -174,7 +176,7 @@ extension GhPrStatus on GhPr {
       !isRepoArchived &&
       !isDraft &&
       !isApproved &&
-      unresolvedReviewThreads == 0 &&
+      unresolvedReviewerThreads == 0 &&
       hasAuthorRespondedSinceLastReview &&
       unrequestedActiveReviewers.isNotEmpty;
 
@@ -561,7 +563,8 @@ Future<GhPr> _attachLocalStatus(
   reviewAuthors: pr.reviewAuthors,
   approvedReviewers: pr.approvedReviewers,
   totalReviewThreads: pr.totalReviewThreads,
-  unresolvedReviewThreads: pr.unresolvedReviewThreads,
+  unresolvedReviewerThreads: pr.unresolvedReviewerThreads,
+  unresolvedAuthorThreads: pr.unresolvedAuthorThreads,
   lastAuthorCommentAt: pr.lastAuthorCommentAt,
   lastAuthorReviewAt: pr.lastAuthorReviewAt,
   lastCommitAt: pr.lastCommitAt,
