@@ -484,6 +484,9 @@ void main() {
       check(byNumber[2633]!.unresolvedReviewerThreads).equals(2);
       check(byNumber[2633]!.unresolvedAuthorThreads).equals(0);
 
+      check(byNumber[78]!.reviewBadge)
+          .equals('❌ Unresolved Comments (4, Approved)');
+
       check(byNumber[2638]!.reviewBadge).equals('❌ Unresolved Comments (5)');
       check(byNumber[2638]!.unresolvedReviewerThreads).equals(5);
 
@@ -803,6 +806,18 @@ ProcessResult _mockUntriagedGithubPrsRunner() {
             reviewDecision: null,
             isDraft: true,
             threadNodes: [_mockThread('alice'), _mockThread('alice')],
+          ),
+          _mockPrNode(
+            number: 78,
+            reviewDecision: '',
+            reviews: [
+              {
+                'author': {'login': 'davidmorgan'},
+                'submittedAt': '2026-10-22T12:00:00Z',
+                'state': 'APPROVED',
+              },
+            ],
+            threadNodes: List.filled(4, _mockThread('davidmorgan')),
           ),
         ],
       },

@@ -890,4 +890,179 @@ environment:
     );
     check(majorReport.passed).isTrue();
   });
+
+  test('passes --git-diff and --fail-on-increase to cognitive_complexity when '
+      'workflow configures diff-base and fail-on-increase', () {
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: sample_pkg
+publish_to: none
+environment:
+  sdk: ^3.5.0
+''');
+    final wfDir = Directory(p.join(tempDir.path, '.github', 'workflows'))
+      ..createSync(recursive: true);
+    File(p.join(wfDir.path, 'complexity.yml')).writeAsStringSync(r'''
+jobs:
+  audit:
+    steps:
+      - uses: kevmoo/analytica.dart/packages/cognitive_complexity@main
+        with:
+          diff-base: origin/${{ github.base_ref }}
+          fail-threshold: 15
+          fail-on-increase: true
+''');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'foo.dart')).writeAsStringSync('void main() {}\n');
+
+    final diffCalls = <(String, List<String>, String?)>[];
+    final report = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+        recordedCalls: diffCalls,
+      ),
+    );
+    check(report.passed).isTrue();
+    final ccCall = diffCalls.singleWhere(
+      (c) => c.$2.contains(cognitiveComplexityPackageSpec),
+    );
+    check(ccCall.$2).deepEquals([
+      'run',
+      cognitiveComplexityPackageSpec,
+      '--git-diff=origin/HEAD',
+      '--fail-threshold=15',
+      '--fail-on-increase',
+      'lib/foo.dart',
+    ]);
+
+    File(p.join(wfDir.path, 'complexity.yml')).writeAsStringSync('''
+jobs:
+  audit:
+    steps:
+      - run: dart run cognitive_complexity --fail-threshold 20 lib
+''');
+    final cliCalls = <(String, List<String>, String?)>[];
+    runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+        recordedCalls: cliCalls,
+      ),
+    );
+    final cliCcCall = cliCalls.singleWhere(
+      (c) => c.$2.contains(cognitiveComplexityPackageSpec),
+    );
+    check(cliCcCall.$2).deepEquals([
+      'run',
+      cognitiveComplexityPackageSpec,
+      '--fail-threshold=20',
+      'lib/foo.dart',
+    ]);
+  });
+
+  test('skips firehose in Dart SDK checkouts and handles malformed fixture '
+      'pubspec.yaml files without crashing', () {
+    final brokenFixture = Directory(
+      p.join(tempDir.path, 'pkg', 'front_end', 'testcases', 'bad'),
+    )..createSync(recursive: true);
+    File(p.join(brokenFixture.path, 'pubspec.yaml')).writeAsStringSync(':::');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'foo.dart')).writeAsStringSync('void main() {}\n');
+
+    // Non-SDK repo with a malformed fixture pubspec.yaml degrades gracefully.
+    final malformedReport = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+      ),
+    );
+    check(malformedReport.passed).isTrue();
+    check(malformedReport.skippedChecks.map((s) => s.toString()))
+        .contains('firehose (malformed pubspec.yaml)');
+    check(malformedReport.warnings).isNotEmpty();
+
+    // Dart SDK repo (tools/VERSION present) skips firehose immediately.
+    Directory(p.join(tempDir.path, 'tools')).createSync();
+    File(p.join(tempDir.path, 'tools', 'VERSION')).writeAsStringSync('3.14.0');
+    final sdkReport = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+      ),
+    );
+    check(sdkReport.passed).isTrue();
+    check(sdkReport.skippedChecks.map((s) => s.toString()))
+        .contains('firehose (Dart SDK repo)');
+    check(sdkReport.warnings).isEmpty();
+  });
+
+  test('prefers upstream/HEAD on external forks while keeping origin/HEAD on '
+      'standalone github/<owner>/<repo> checkouts', () {
+    final forkDir = Directory(p.join(tempDir.path, 'github', '_http-fix'))
+      ..createSync(recursive: true);
+    final forkReport = runPrCheck(
+      directory: forkDir,
+      processRunner: (exe, args, {workingDirectory}) {
+        if (exe == 'git' && args.contains('--show-toplevel')) {
+          return ProcessResult(0, 0, forkDir.path, '');
+        }
+        if (exe == 'git' &&
+            args.length == 3 &&
+            args[0] == 'remote' &&
+            args[1] == 'get-url' &&
+            args[2] == 'upstream') {
+          return ProcessResult(0, 0, 'https://github.com/dart-lang/http\n', '');
+        }
+        return fakeGitAndTools(exe, args, workingDirectory: workingDirectory);
+      },
+    );
+    check(forkReport.baseRef).equals('upstream/HEAD');
+
+    final personalDir = Directory(
+      p.join(tempDir.path, 'github', 'kevmoo', 'my_pkg'),
+    )..createSync(recursive: true);
+    final personalReport = runPrCheck(
+      directory: personalDir,
+      processRunner: (exe, args, {workingDirectory}) {
+        if (exe == 'git' && args.contains('--show-toplevel')) {
+          return ProcessResult(0, 0, personalDir.path, '');
+        }
+        if (exe == 'git' &&
+            args.length == 3 &&
+            args[0] == 'remote' &&
+            args[1] == 'get-url' &&
+            args[2] == 'upstream') {
+          return ProcessResult(0, 0, 'https://github.com/other/my_pkg\n', '');
+        }
+        return fakeGitAndTools(exe, args, workingDirectory: workingDirectory);
+      },
+    );
+    check(personalReport.baseRef).equals('origin/HEAD');
+
+    final ghResolvedReport = runPrCheck(
+      directory: personalDir,
+      processRunner: (exe, args, {workingDirectory}) {
+        if (exe == 'git' && args.contains('--show-toplevel')) {
+          return ProcessResult(0, 0, personalDir.path, '');
+        }
+        if (exe == 'git' && args.contains('remote.upstream.gh-resolved')) {
+          return ProcessResult(0, 0, 'base\n', '');
+        }
+        return fakeGitAndTools(exe, args, workingDirectory: workingDirectory);
+      },
+    );
+    check(ghResolvedReport.baseRef).equals('upstream/HEAD');
+  });
 }

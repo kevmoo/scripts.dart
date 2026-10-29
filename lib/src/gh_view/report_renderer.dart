@@ -203,7 +203,7 @@ String _resolveActionItemMarkdown(
   return switch ((
     pr.mergeable == MergeableState.conflicting,
     pr.ciStatus == CiStatus.failure,
-    pr.reviewDecision,
+    pr.effectiveReviewDecision,
     pr.isDraft,
   )) {
     (true, _, _, true) => '⚠️ **Conflicting** (draft)',
@@ -377,7 +377,7 @@ String _formatPendingReviewBadgeMarkdown(GhPr pr) {
     return '🟠 Re-request Review '
         '(@${pr.unrequestedActiveReviewers.join(', @')})';
   }
-  if (pr.reviewDecision == ReviewDecision.reviewRequired) {
+  if (pr.effectiveReviewDecision == ReviewDecision.reviewRequired) {
     return pr.targetReviewers.isNotEmpty
         ? '🟡 Review Required (@${pr.targetReviewers.join(', @')})'
         : '🟡 Review Required';
@@ -386,7 +386,7 @@ String _formatPendingReviewBadgeMarkdown(GhPr pr) {
 }
 
 String _formatReviewBadgeMarkdown(GhPr pr, bool areThreadsResolved) =>
-    switch (pr.reviewDecision) {
+    switch (pr.effectiveReviewDecision) {
       ReviewDecision.approved =>
         pr.unresolvedReviewerThreads > 0
             ? '🟠 Approved (${pr.unresolvedReviewerThreads} unresolved)'
@@ -638,22 +638,25 @@ String _formatPendingReviewBadgeTerminal(GhPr pr) {
       pr.unrequestedActiveReviewers,
     );
   }
-  if (pr.reviewDecision == ReviewDecision.reviewRequired) {
+  if (pr.effectiveReviewDecision == ReviewDecision.reviewRequired) {
     return _formatTerminalRequestedBadge(pr, 'Review Required');
   }
   return 'No Reviewers';
 }
 
-String _formatReviewBadgeTerminal(GhPr pr) => switch (pr.reviewDecision) {
-  ReviewDecision.approved when pr.unresolvedReviewerThreads > 0 =>
-    yellow.wrap('Approved (${pr.unresolvedReviewerThreads} unresolved)') ??
-        'Approved (${pr.unresolvedReviewerThreads} unresolved)',
-  ReviewDecision.approved when pr.mergeable == MergeableState.conflicting =>
-    green.wrap('Approved (Conflicting)') ?? 'Approved (Conflicting)',
-  ReviewDecision.approved => green.wrap('Approved') ?? 'Approved',
-  ReviewDecision.changesRequested => _formatChangesRequestedBadgeTerminal(pr),
-  _ => _formatPendingReviewBadgeTerminal(pr),
-};
+String _formatReviewBadgeTerminal(GhPr pr) =>
+    switch (pr.effectiveReviewDecision) {
+      ReviewDecision.approved when pr.unresolvedReviewerThreads > 0 =>
+        yellow.wrap('Approved (${pr.unresolvedReviewerThreads} unresolved)') ??
+            'Approved (${pr.unresolvedReviewerThreads} unresolved)',
+      ReviewDecision.approved when pr.mergeable == MergeableState.conflicting =>
+        green.wrap('Approved (Conflicting)') ?? 'Approved (Conflicting)',
+      ReviewDecision.approved => green.wrap('Approved') ?? 'Approved',
+      ReviewDecision.changesRequested => _formatChangesRequestedBadgeTerminal(
+        pr,
+      ),
+      _ => _formatPendingReviewBadgeTerminal(pr),
+    };
 
 String _formatCiBadgeTerminal(GhPr pr) => switch (pr.ciStatus) {
   CiStatus.success => green.wrap('CI: Passing') ?? 'CI: Passing',
@@ -682,7 +685,7 @@ String renderJsonOutput(List<GhPr> prs, {DateTime? currentTime}) {
     'isRepoArchived': pr.isRepoArchived,
     'isDraft': pr.isDraft,
     'state': pr.state,
-    'reviewDecision': pr.reviewDecision,
+    'reviewDecision': pr.effectiveReviewDecision,
     'requestedReviewers': pr.requestedReviewers,
     'activeReviewers': pr.activeReviewers,
     'approvedReviewers': pr.approvedReviewers,
