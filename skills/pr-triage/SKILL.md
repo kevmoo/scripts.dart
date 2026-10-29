@@ -129,6 +129,17 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
    - DO NOT edit repository files until the user approves via `ask_question`.
 
 7. **Surgical Implementation & Verification (Red-Green TDD)**:
+   - **Strict Diff Scope (No Unsolicited Adjacent Edits)**: Keep fixes strictly
+     scoped to the reviewed defect. Never bundle unsolicited behavior or style
+     cleanups in adjacent visitors, helpers, or call sites; when a fix touches
+     AST/symbol resolution or visitor order, include tests covering
+     forward-referenced and unresolved/error inputs.
+   - **Whole-Diff Nit Sweep (`git diff <base>...HEAD`)**: When fixing a reviewer
+     style, wording, doc-comment, or naming nit (for example, `see` vs.
+     `refer to` or identifier naming), sweep the entire PR diff
+     (`git diff origin/<baseRefName>...HEAD`) for sibling occurrences of the
+     same pattern so identical nits are not left behind for a second review
+     round.
    - **Test First (Red) -> Implementation (Green)**: Write approved companion
      tests in `test/` first and verify failure on unpatched code, then apply the
      fix and run `dart format` (explicitly targeting touched `.dart` files when
@@ -186,6 +197,12 @@ state-machine notes, and underlying GraphQL/REST schemas.
   `kscripts pr-triage re-request --dir <repo-path> [--pr <pr_number>] <reviewer_login>`.
 - **Stop When Already Queued**: If `<login>` is already in `reviewRequests` and
   all feedback is addressed on the latest commit, **STOP**.
+- **Multi-PR Stack & Release Trunk Verification**: When landing multiple PRs
+  that touch `CHANGELOG.md` or shared files ahead of a release, verify every PR
+  reached `state == "MERGED"` via `gh pr view <N> --json state,mergeCommit`,
+  fast-forward local trunk
+  (`git fetch origin && git merge --ff-only origin/<baseRefName>`), and run a
+  clean `dart test` on trunk before tagging or preparing the release PR.
 
 ## Constraints
 

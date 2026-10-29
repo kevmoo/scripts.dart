@@ -26,6 +26,7 @@ class GhPr extends GhPrRef {
   final List<String> requestedReviewers;
   final List<String> activeReviewers;
   final List<String> approvedReviewers;
+  final List<String> changesRequestedByReviewers;
   final int totalReviewThreads;
   final int unresolvedReviewerThreads;
   final int unresolvedAuthorThreads;
@@ -54,6 +55,7 @@ class GhPr extends GhPrRef {
     this.activeReviewers = const [],
     this.reviewAuthors,
     this.approvedReviewers = const [],
+    this.changesRequestedByReviewers = const [],
     required this.totalReviewThreads,
     required this.unresolvedReviewerThreads,
     required this.unresolvedAuthorThreads,
@@ -93,7 +95,24 @@ DateTime? _maxDateTime(DateTime? a, DateTime? b) {
 
 /// Domain status helpers for [GhPr].
 extension GhPrStatus on GhPr {
-  bool get isApproved => reviewDecision == ReviewDecision.approved;
+  /// Effective review decision, falling back to opinionated reviewer states
+  /// from `reviews` when GitHub returns an empty/`NONE` `reviewDecision` on
+  /// repositories without branch-protection review requirements.
+  ReviewDecision get effectiveReviewDecision {
+    if (reviewDecision != ReviewDecision.none &&
+        reviewDecision.value.isNotEmpty) {
+      return reviewDecision;
+    }
+    if (changesRequestedByReviewers.isNotEmpty) {
+      return ReviewDecision.changesRequested;
+    }
+    if (approvedReviewers.any((r) => !requestedReviewers.contains(r))) {
+      return ReviewDecision.approved;
+    }
+    return ReviewDecision.none;
+  }
+
+  bool get isApproved => effectiveReviewDecision == ReviewDecision.approved;
 
   bool get isCiPassing => ciStatus.isPassing;
 
@@ -147,13 +166,19 @@ extension GhPrStatus on GhPr {
           )
           .toList();
 
-  /// Reviewers to attribute on a `CHANGES_REQUESTED` PR: prefers
-  /// [unrequestedActiveReviewers] (excluding already-approved reviewers and
-  /// issue-only commenters) when non-empty, falling back to [targetReviewers].
-  List<String> get changesRequestedReviewers =>
-      unrequestedActiveReviewers.isNotEmpty
-      ? unrequestedActiveReviewers
-      : targetReviewers;
+  /// Reviewers to attribute on a `CHANGES_REQUESTED` PR: prefers unrequested
+  /// [changesRequestedByReviewers], then [unrequestedActiveReviewers]
+  /// (excluding already-approved reviewers and issue-only commenters), falling
+  /// back to [targetReviewers].
+  List<String> get changesRequestedReviewers {
+    final unrequestedCr = changesRequestedByReviewers
+        .where((r) => !requestedReviewers.contains(r))
+        .toList();
+    if (unrequestedCr.isNotEmpty) return unrequestedCr;
+    return unrequestedActiveReviewers.isNotEmpty
+        ? unrequestedActiveReviewers
+        : targetReviewers;
+  }
 
   /// Latest timestamp of any PR author activity (commit push/author date,
   /// top-level issue comment, or inline review reply).
@@ -305,7 +330,7 @@ bool isReadyToMerge(GhPr pr) {
 
 bool _isActionNeeded(GhPr pr) {
   final isChangesRequested =
-      pr.reviewDecision == ReviewDecision.changesRequested &&
+      pr.effectiveReviewDecision == ReviewDecision.changesRequested &&
       (pr.requestedReviewers.isEmpty ||
           pr.unrequestedActiveReviewers.isNotEmpty);
   final isCiFailure =
@@ -568,6 +593,7 @@ Future<GhPr> _attachLocalStatus(
   activeReviewers: pr.activeReviewers,
   reviewAuthors: pr.reviewAuthors,
   approvedReviewers: pr.approvedReviewers,
+  changesRequestedByReviewers: pr.changesRequestedByReviewers,
   totalReviewThreads: pr.totalReviewThreads,
   unresolvedReviewerThreads: pr.unresolvedReviewerThreads,
   unresolvedAuthorThreads: pr.unresolvedAuthorThreads,

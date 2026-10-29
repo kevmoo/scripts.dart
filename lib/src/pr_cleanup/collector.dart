@@ -815,7 +815,7 @@ String _computeReviewBadge(GhPr pr) {
   final unresolved = pr.unresolvedReviewerThreads;
   final isQueuedReReview =
       pr.requestedReviewers.isNotEmpty && pr.unrequestedActiveReviewers.isEmpty;
-  return switch ((pr.isDraft, unresolved > 0, pr.reviewDecision)) {
+  return switch ((pr.isDraft, unresolved > 0, pr.effectiveReviewDecision)) {
     (true, true, _) => '⚪ Work in progress ($unresolved unresolved)',
     (true, false, _) => '⚪ Work in progress',
     (false, true, ReviewDecision.approved) =>

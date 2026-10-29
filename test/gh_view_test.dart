@@ -2269,6 +2269,147 @@ void main() {
       check(md).contains('⏳ **Awaiting @jakemac53**');
       check(md).not((it) => it.contains('Ping Reviewer'));
     });
+
+    test('infers effectiveReviewDecision from reviews when GraphQL returns '
+        'empty reviewDecision on unprotected repositories', () {
+      final now = DateTime.parse('2026-10-28T18:00:00Z');
+      Map<String, dynamic> unprotectedNode({
+        required int number,
+        required List<Map<String, dynamic>> reviews,
+        required List<Map<String, dynamic>> threadNodes,
+      }) => {
+        'number': number,
+        'title': 'PR $number on unprotected repo',
+        'url': 'https://github.com/google/source_helper.dart/pull/$number',
+        'author': {'login': 'kevmoo'},
+        'isDraft': false,
+        'state': 'OPEN',
+        'reviewDecision': '',
+        'reviewRequests': {'nodes': <Object>[]},
+        'reviews': {'nodes': reviews},
+        'reviewThreads': {
+          'totalCount': threadNodes.length,
+          'nodes': threadNodes,
+        },
+        'commits': {
+          'nodes': [
+            {
+              'commit': {
+                'committedDate': '2026-10-28T12:00:00Z',
+                'statusCheckRollup': {'state': 'SUCCESS'},
+              },
+            },
+          ],
+        },
+        'mergeable': 'MERGEABLE',
+        'mergeStateStatus': 'CLEAN',
+        'isInMergeQueue': false,
+        'headRefName': 'branch-$number',
+        'headRefOid': 'sha-$number',
+        'baseRefName': 'main',
+        'updatedAt': '2026-10-28T17:00:00Z',
+        'repository': {
+          'nameWithOwner': 'google/source_helper.dart',
+          'url': 'https://github.com/google/source_helper.dart',
+          'isArchived': false,
+        },
+      };
+
+      Map<String, dynamic> openThread(String login) => {
+        'isResolved': false,
+        'comments': {
+          'nodes': [
+            {
+              'author': {'__typename': 'User', 'login': login},
+            },
+          ],
+        },
+      };
+
+      final approvedWithUnresolved = parsePrNode(
+        unprotectedNode(
+          number: 78,
+          reviews: [
+            {
+              'author': {'login': 'davidmorgan'},
+              'submittedAt': '2026-10-28T16:00:00Z',
+              'state': 'APPROVED',
+            },
+          ],
+          threadNodes: List.filled(4, openThread('davidmorgan')),
+        ),
+      )!;
+      check(approvedWithUnresolved.reviewDecision).equals(ReviewDecision.none);
+      check(approvedWithUnresolved.effectiveReviewDecision)
+          .equals(ReviewDecision.approved);
+      check(approvedWithUnresolved.isApproved).isTrue();
+
+      final approvedClean = parsePrNode(
+        unprotectedNode(
+          number: 79,
+          reviews: [
+            {
+              'author': {'login': 'davidmorgan'},
+              'submittedAt': '2026-10-28T16:00:00Z',
+              'state': 'APPROVED',
+            },
+          ],
+          threadNodes: const [],
+        ),
+      )!;
+
+      final changesRequestedPr = parsePrNode(
+        unprotectedNode(
+          number: 80,
+          reviews: [
+            {
+              'author': {'login': 'carol'},
+              'submittedAt': '2026-10-28T15:00:00Z',
+              'state': 'COMMENTED',
+            },
+            {
+              'author': {'login': 'bob'},
+              'submittedAt': '2026-10-28T16:00:00Z',
+              'state': 'CHANGES_REQUESTED',
+            },
+            {
+              'author': {'login': 'bob'},
+              'submittedAt': '2026-10-28T16:05:00Z',
+              'state': 'COMMENTED',
+            },
+          ],
+          threadNodes: const [],
+        ),
+      )!;
+      check(changesRequestedPr.changesRequestedByReviewers).deepEquals(['bob']);
+      check(changesRequestedPr.effectiveReviewDecision)
+          .equals(ReviewDecision.changesRequested);
+      check(changesRequestedPr.changesRequestedReviewers).deepEquals(['bob']);
+
+      final prs = [approvedWithUnresolved, approvedClean, changesRequestedPr];
+      final categorized = categorizePullRequests(prs);
+      check(categorized.readyToMerge.map((p) => p.number)).deepEquals([79]);
+      check(categorized.actionNeeded.map((p) => p.number)).deepEquals([78, 80]);
+
+      final md = renderMarkdownReport(prs, currentTime: now);
+      check(md)
+        ..contains('Review:&nbsp;🟠&nbsp;Approved&nbsp;(4&nbsp;unresolved)')
+        ..contains('❌ **Address 4 unresolved comment(s)**')
+        ..contains('Review:&nbsp;🟢&nbsp;Approved')
+        ..contains('🔴 **Changes Requested** (@bob)');
+
+      final term = renderTerminalReport(prs, currentTime: now);
+      check(term)
+        ..contains('Approved (4 unresolved)')
+        ..contains('Changes Requested (@bob)');
+
+      final jsonMap = jsonDecode(
+        renderJsonOutput(prs, currentTime: now),
+      ) as Map<String, dynamic>;
+      final items = (jsonMap['items'] as List).cast<Map<String, dynamic>>();
+      final json78 = items.firstWhere((i) => i['number'] == 78);
+      check(json78['reviewDecision']).equals('APPROVED');
+    });
   });
 }
 
