@@ -1,25 +1,12 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 import '../gh_clean.dart' show buildLocalRepoMap;
 import '../gh_clean/cleanup_actions.dart';
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
 import 'models.dart';
-
-/// Result of executing pruning actions on ready-to-prune items.
-class PrCleanupApplyResult {
-  final int prunedWorktrees;
-  final int deletedBranches;
-  final int deletedRemoteBranches;
-  final List<String> errors;
-
-  const new({
-    required this.prunedWorktrees,
-    required this.deletedBranches,
-    required this.deletedRemoteBranches,
-    required this.errors,
-  });
-}
 
 class _PruneCounts {
   int worktrees = 0;
@@ -31,6 +18,7 @@ class _PruneCounts {
 Future<PrCleanupApplyResult> executeReadyToPrune({
   required List<PrunableItem> items,
   required List<LocalRepoInfo> localRepos,
+  Iterable<String> excludedWorktrees = const [],
   String? dartSdkPath,
   SyncProcessRunner? syncProcessRunner,
   void Function(String message)? onProgress,
@@ -38,8 +26,14 @@ Future<PrCleanupApplyResult> executeReadyToPrune({
   final runner = syncProcessRunner ?? defaultSyncProcessRunner;
   final repoMap = buildLocalRepoMap(localRepos);
   final gerritRepo = _resolveGerritRepoPath(dartSdkPath);
+  final normalizedExcluded = excludedWorktrees
+      .map((s) => s.trim())
+      .where((s) => s.isNotEmpty)
+      .map(p.normalize)
+      .toSet();
 
   final counts = _PruneCounts();
+  final skippedWorktrees = <String>[];
   final errors = <String>[];
 
   onProgress?.call(
@@ -47,6 +41,12 @@ Future<PrCleanupApplyResult> executeReadyToPrune({
   );
 
   for (final item in items) {
+    final wtPath = _resolveItemWorktreePath(item, repoMap);
+    if (wtPath != null && normalizedExcluded.contains(p.normalize(wtPath))) {
+      skippedWorktrees.add(wtPath);
+      onProgress?.call('  ⏭ Skipped excluded worktree: $wtPath');
+      continue;
+    }
     if (item.source == 'github') {
       _pruneGithubItem(item, repoMap, runner, counts, errors, onProgress);
     } else if (item.source == 'gerrit' && gerritRepo != null) {
@@ -64,8 +64,25 @@ Future<PrCleanupApplyResult> executeReadyToPrune({
     prunedWorktrees: counts.worktrees,
     deletedBranches: counts.branches,
     deletedRemoteBranches: counts.remoteBranches,
+    skippedWorktrees: skippedWorktrees,
     errors: errors,
   );
+}
+
+String? _resolveItemWorktreePath(
+  PrunableItem item,
+  Map<String, LocalRepoInfo> repoMap,
+) {
+  if (item.worktreePath != null && item.worktreePath!.isNotEmpty) {
+    return item.worktreePath;
+  }
+  if (item.source == 'github' && item.landedPr != null) {
+    final repo = repoMap[item.repository.toLowerCase()];
+    if (repo != null) {
+      return findMatchingWorktreeForPr(repo, item.landedPr!)?.path;
+    }
+  }
+  return null;
 }
 
 String? _resolveGerritRepoPath(String? dartSdkPath) {
@@ -104,14 +121,16 @@ void _pruneGithubItem(
 }
 
 void _tallyAction(String description, _PruneCounts counts) {
-  if (description.contains('Pruned worktree') ||
-      description.contains('Removed worktree')) {
+  if ((description.startsWith('Pruned ') ||
+          description.startsWith('Removed ')) &&
+      description.contains('worktree')) {
     counts.worktrees++;
-  } else if (description.contains('Deleted branch') ||
-      description.contains('Removed branch')) {
-    counts.branches++;
   } else if (description.contains('remote branch')) {
     counts.remoteBranches++;
+  } else if ((description.startsWith('Deleted ') ||
+          description.startsWith('Removed ')) &&
+      description.contains('branch')) {
+    counts.branches++;
   }
 }
 

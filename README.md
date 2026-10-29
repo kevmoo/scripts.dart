@@ -366,21 +366,22 @@ Unified multi-repo GitHub and Gerrit PR, CL, and worktree cleanup sweep.
 ```shell
 kscripts pr-cleanup [options]
 
--u, --user             GitHub user to query for PRs.
-                       (defaults to "@me")
--R, --repo             Filter to specific repository/repositories (e.g. -R dart-lang/tools).
--l, --limit            Maximum landed PRs to fetch from GitHub (max 100).
-                       (defaults to "50")
--d, --last-n-days      Include PRs and activity from the last N days (default 14; pass empty/0 to query all).
-                       (defaults to "14")
-    --local-root       Root directory for local Git repositories (default ~/github).
--p, --dart-sdk         Path to local dart-sdk repository for Gerrit check (default ~/github/dart-sdk).
-    --skip-gerrit      Skip Gerrit Dart SDK inspection even if ~/github/dart-sdk exists.
-    --apply            Execute pruning of ready-to-prune worktrees and branches across GitHub and Gerrit.
-    --[no-]markdown    Output a concise Markdown summary.
-                       (defaults to on)
-    --json             Output machine-readable JSON.
--h, --help             Print this usage information.
+-u, --user                GitHub user to query for PRs.
+                          (defaults to "@me")
+-R, --repo                Filter to specific repository/repositories (e.g. -R dart-lang/tools).
+-l, --limit               Maximum landed PRs to fetch from GitHub (max 100).
+                          (defaults to "50")
+-d, --last-n-days         Include PRs and activity from the last N days (default 14; pass empty/0 to query all).
+                          (defaults to "14")
+    --local-root          Root directory for local Git repositories (default ~/github).
+-p, --dart-sdk            Path to local dart-sdk repository for Gerrit check (default ~/github/dart-sdk).
+    --skip-gerrit         Skip Gerrit Dart SDK inspection even if ~/github/dart-sdk exists.
+    --apply               Execute pruning of ready-to-prune worktrees and branches across GitHub and Gerrit.
+    --exclude-worktree    Worktree path(s) to skip during --apply.
+    --[no-]markdown       Output a concise Markdown summary.
+                          (defaults to on)
+    --json                Output machine-readable JSON.
+-h, --help                Print this usage information.
 ```
 
 ### `pr-triage`

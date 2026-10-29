@@ -201,3 +201,28 @@ class PrSweepResult {
     'lockedWorktrees': [for (final item in lockedWorktrees) item.toJson()],
   };
 }
+
+/// Result of executing pruning actions on ready-to-prune items.
+class PrCleanupApplyResult {
+  final int prunedWorktrees;
+  final int deletedBranches;
+  final int deletedRemoteBranches;
+  final List<String> skippedWorktrees;
+  final List<String> errors;
+
+  const new({
+    this.prunedWorktrees = 0,
+    this.deletedBranches = 0,
+    this.deletedRemoteBranches = 0,
+    this.skippedWorktrees = const [],
+    this.errors = const [],
+  });
+
+  Map<String, dynamic> toJson() => {
+    'prunedWorktrees': prunedWorktrees,
+    'deletedBranches': deletedBranches,
+    'deletedRemoteBranches': deletedRemoteBranches,
+    'skippedWorktrees': skippedWorktrees,
+    'errors': errors,
+  };
+}

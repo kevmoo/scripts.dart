@@ -262,7 +262,15 @@ void _formatLandedIdsSection(
 }
 
 /// Formats the PR sweep report as JSON.
-String formatJsonReport(PrSweepResult result, {bool applied = false}) {
-  final map = {'applied': applied, ...result.toJson()};
+String formatJsonReport(
+  PrSweepResult result, {
+  bool applied = false,
+  PrCleanupApplyResult? applyResult,
+}) {
+  final map = {
+    'applied': applied,
+    if (applyResult != null) 'applyResult': applyResult.toJson(),
+    ...result.toJson(),
+  };
   return const JsonEncoder.withIndent('  ').convert(map);
 }

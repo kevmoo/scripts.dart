@@ -3,6 +3,7 @@ import 'dart:io';
 import 'local_repo_scanner.dart';
 import 'pr_cleanup/cleanup_executor.dart';
 import 'pr_cleanup/collector.dart';
+import 'pr_cleanup/models.dart';
 import 'pr_cleanup/pr_cleanup_options.dart';
 import 'pr_cleanup/report_formatter.dart';
 import 'process_utils.dart';
@@ -33,26 +34,36 @@ Future<void> runPrCleanup({
     onProgress: onProgress,
   );
 
-  if (options.apply && sweepResult.readyToPrune.isNotEmpty) {
-    final rootPath =
-        options.localRoot ??
-        Platform.environment['GH_LOCAL_ROOT'] ??
-        '${Platform.environment['HOME']}/github';
-    final localRepos = scanLocalGitRepositories(
-      Directory(rootPath),
-      processRunner: syncProcessRunner ?? defaultSyncProcessRunner,
-    );
+  PrCleanupApplyResult? applyResult;
+  if (options.apply) {
+    if (sweepResult.readyToPrune.isEmpty) {
+      applyResult = const PrCleanupApplyResult();
+    } else {
+      final rootPath =
+          options.localRoot ??
+          Platform.environment['GH_LOCAL_ROOT'] ??
+          '${Platform.environment['HOME']}/github';
+      final localRepos = scanLocalGitRepositories(
+        Directory(rootPath),
+        processRunner: syncProcessRunner ?? defaultSyncProcessRunner,
+      );
 
-    await executeReadyToPrune(
-      items: sweepResult.readyToPrune,
-      localRepos: localRepos,
-      dartSdkPath: options.dartSdkPath,
-      syncProcessRunner: syncProcessRunner,
-      onProgress: onProgress,
-    );
+      applyResult = await executeReadyToPrune(
+        items: sweepResult.readyToPrune,
+        localRepos: localRepos,
+        excludedWorktrees: options.excludeWorktrees,
+        dartSdkPath: options.dartSdkPath,
+        syncProcessRunner: syncProcessRunner,
+        onProgress: onProgress,
+      );
+    }
   }
 
-  final jsonReport = formatJsonReport(sweepResult, applied: options.apply);
+  final jsonReport = formatJsonReport(
+    sweepResult,
+    applied: options.apply,
+    applyResult: applyResult,
+  );
   if (jsonCachePath != null && jsonCachePath.isNotEmpty) {
     try {
       File(jsonCachePath).writeAsStringSync(jsonReport);

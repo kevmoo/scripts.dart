@@ -6,10 +6,11 @@ import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/gerrit_view.dart';
 import 'package:kevmoo_scripts/src/gerrit_view/gerrit_queries.dart';
 import 'package:kevmoo_scripts/src/gerrit_view/models.dart';
+import 'package:kevmoo_scripts/src/gh_clean/models.dart';
+import 'package:kevmoo_scripts/src/local_repo_scanner.dart';
+import 'package:kevmoo_scripts/src/pr_cleanup.dart';
+import 'package:kevmoo_scripts/src/pr_cleanup/cleanup_executor.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/collector.dart';
-import 'package:kevmoo_scripts/src/pr_cleanup/models.dart';
-import 'package:kevmoo_scripts/src/pr_cleanup/pr_cleanup_options.dart';
-import 'package:kevmoo_scripts/src/pr_cleanup/report_formatter.dart';
 import 'package:test/scaffolding.dart';
 
 void main() {
@@ -25,6 +26,7 @@ void main() {
       check(options.lastNDays).equals(14);
       check(options.skipGerrit).isFalse();
       check(options.apply).isFalse();
+      check(options.excludeWorktrees).isEmpty();
       check(options.markdown).isTrue();
       check(options.json).isFalse();
       check(parser.usage).contains(
@@ -52,6 +54,10 @@ void main() {
         '/custom/sdk',
         '--skip-gerrit',
         '--apply',
+        '--exclude-worktree',
+        '/custom/root/_demo-hold',
+        '--exclude-worktree',
+        ' /custom/root/_demo-second ',
         '--json',
       ]);
       final options = PrCleanupOptions.parse(results);
@@ -64,6 +70,8 @@ void main() {
       check(options.dartSdkPath).equals('/custom/sdk');
       check(options.skipGerrit).isTrue();
       check(options.apply).isTrue();
+      check(options.excludeWorktrees)
+          .deepEquals(['/custom/root/_demo-hold', '/custom/root/_demo-second']);
       check(options.json).isTrue();
     });
 
@@ -312,12 +320,34 @@ void main() {
       final decoded = jsonDecode(jsonStr) as Map<String, dynamic>;
 
       check(decoded['applied']).equals(true);
+      check(decoded.containsKey('applyResult')).isFalse();
       check((decoded['active'] as List).length).equals(1);
       check((decoded['readyToPrune'] as List).length).equals(1);
       check((decoded['lockedWorktrees'] as List).length).equals(1);
       check((decoded['needsTriage'] as List).length).equals(0);
       check((decoded['candidateLandedIds'] as List).cast<int>())
           .deepEquals([41]);
+
+      final withApplyStr = formatJsonReport(
+        result,
+        applied: true,
+        applyResult: const PrCleanupApplyResult(
+          prunedWorktrees: 2,
+          deletedBranches: 3,
+          deletedRemoteBranches: 1,
+          skippedWorktrees: ['/tmp/_demo-busy'],
+          errors: ['failed branch delete'],
+        ),
+      );
+      final withApply = jsonDecode(withApplyStr) as Map<String, dynamic>;
+      final applyMap = withApply['applyResult'] as Map<String, dynamic>;
+      check(applyMap['prunedWorktrees']).equals(2);
+      check(applyMap['deletedBranches']).equals(3);
+      check(applyMap['deletedRemoteBranches']).equals(1);
+      check((applyMap['skippedWorktrees'] as List).cast<String>())
+          .deepEquals(['/tmp/_demo-busy']);
+      check((applyMap['errors'] as List).cast<String>())
+          .deepEquals(['failed branch delete']);
     });
 
     test('includes createdAt, updatedAt, and activity timestamps in Markdown '
@@ -532,7 +562,244 @@ void main() {
       check(parseGerritTimestamp('')).isNull();
     });
   });
+
+  group('executeReadyToPrune and runPrCleanup --apply', () {
+    late Directory tempRoot;
+
+    setUp(() {
+      tempRoot = Directory.systemTemp.createTempSync('pr_cleanup_apply_test_');
+    });
+
+    tearDown(() {
+      if (tempRoot.existsSync()) {
+        tempRoot.deleteSync(recursive: true);
+      }
+    });
+
+    test('skips excluded GitHub and Gerrit worktrees while pruning sibling '
+        'items in the same repository', () async {
+      final repoPath = '${tempRoot.path}/demo';
+      final wtHold = '${tempRoot.path}/_demo-feat-hold';
+      final wtPrune = '${tempRoot.path}/_demo-feat-prune';
+      final gerritSdk = Directory('${tempRoot.path}/dart-sdk')..createSync();
+      final wtGerritHold = '${gerritSdk.path}/core/cl-99/sdk';
+      final wtGerritPrune = '${gerritSdk.path}/core/cl-100/sdk';
+
+      final localRepo = <LocalRepoInfo>[
+        (
+          repoName: 'kevmoo/demo',
+          repoNames: ['kevmoo/demo'],
+          repoPath: repoPath,
+          currentBranch: 'main',
+          branches: [
+            (
+              name: 'main',
+              sha: '0000',
+              upstream: 'origin/main',
+              upstreamTrack: '',
+            ),
+            (
+              name: 'feat-hold',
+              sha: '1111',
+              upstream: 'origin/feat-hold',
+              upstreamTrack: '',
+            ),
+            (
+              name: 'feat-prune',
+              sha: '2222',
+              upstream: 'origin/feat-prune',
+              upstreamTrack: '',
+            ),
+          ],
+          worktrees: [
+            (
+              path: repoPath,
+              branch: 'main',
+              sha: '0000',
+              isLocked: false,
+              lockReason: null,
+            ),
+            (
+              path: wtHold,
+              branch: 'feat-hold',
+              sha: '1111',
+              isLocked: false,
+              lockReason: null,
+            ),
+            (
+              path: wtPrune,
+              branch: 'feat-prune',
+              sha: '2222',
+              isLocked: false,
+              lockReason: null,
+            ),
+          ],
+        ),
+      ];
+
+      final commands = <String>[];
+      final applyResult = await executeReadyToPrune(
+        items: [
+          PrunableItem(
+            source: 'github',
+            repository: 'kevmoo/demo',
+            branch: 'feat-hold',
+            worktreePath: wtHold,
+            remoteBranch: 'kevmoo/demo:feat-hold',
+            prOrClNumber: 10,
+            description: 'Landed PR #10',
+            landedPr: _buildTestLandedPr(
+              number: 10,
+              branch: 'feat-hold',
+              sha: '1111',
+            ),
+          ),
+          PrunableItem(
+            source: 'github',
+            repository: 'kevmoo/demo',
+            branch: 'feat-prune',
+            worktreePath: wtPrune,
+            remoteBranch: 'kevmoo/demo:feat-prune',
+            prOrClNumber: 11,
+            description: 'Landed PR #11',
+            landedPr: _buildTestLandedPr(
+              number: 11,
+              branch: 'feat-prune',
+              sha: '2222',
+            ),
+          ),
+          PrunableItem(
+            source: 'gerrit',
+            repository: 'dart-sdk',
+            branch: 'cl-99',
+            worktreePath: wtGerritHold,
+            prOrClNumber: 99,
+            description: 'CL 99 (merged)',
+          ),
+          PrunableItem(
+            source: 'gerrit',
+            repository: 'dart-sdk',
+            branch: 'cl-100',
+            worktreePath: wtGerritPrune,
+            prOrClNumber: 100,
+            description: 'CL 100 (merged)',
+          ),
+        ],
+        localRepos: localRepo,
+        excludedWorktrees: ['$wtHold/', wtGerritHold],
+        dartSdkPath: gerritSdk.path,
+        syncProcessRunner: (exe, args, {workingDirectory}) {
+          commands.add('$exe ${args.join(' ')}');
+          return ProcessResult(0, 0, '', '');
+        },
+      );
+
+      check(applyResult.skippedWorktrees).deepEquals([wtHold, wtGerritHold]);
+      check(applyResult.prunedWorktrees).equals(2);
+      check(applyResult.deletedBranches).equals(2);
+      check(applyResult.deletedRemoteBranches).equals(1);
+      check(applyResult.errors).isEmpty();
+
+      check(commands).any((it) => it.contains('worktree remove $wtPrune'));
+      check(commands).any((it) => it.contains('branch -D feat-prune'));
+      check(commands).any(
+        (it) =>
+            it.contains('DELETE repos/kevmoo/demo/git/refs/heads/feat-prune'),
+      );
+      check(commands)
+          .any((it) => it.contains('worktree remove $wtGerritPrune'));
+      check(commands).any((it) => it.contains('branch -D cl-100'));
+
+      for (final cmd in commands) {
+        check(cmd)
+          ..not((it) => it.contains(wtHold))
+          ..not((it) => it.contains('feat-hold'))
+          ..not((it) => it.contains(wtGerritHold))
+          ..not((it) => it.contains('cl-99'));
+      }
+    });
+
+    test('runPrCleanup writes applyResult in JSON cache when apply is true and '
+        'omits it when apply is false', () async {
+      final cacheFile = File('${tempRoot.path}/sweep_cache.json');
+      ProcessResult emptyGhSync(
+        String exe,
+        List<String> args, {
+        String? workingDirectory,
+      }) => ProcessResult(
+        0,
+        0,
+        exe == 'gh'
+            ? jsonEncode({
+                'data': {
+                  'search': {'nodes': <Object?>[]},
+                },
+              })
+            : '',
+        '',
+      );
+      Future<ProcessResult> emptyGhAsync(
+        String exe,
+        List<String> args, {
+        String? workingDirectory,
+      }) async => emptyGhSync(exe, args, workingDirectory: workingDirectory);
+
+      await runPrCleanup(
+        options: PrCleanupOptions(
+          localRoot: tempRoot.path,
+          skipGerrit: true,
+          json: true,
+        ),
+        syncProcessRunner: emptyGhSync,
+        asyncProcessRunner: emptyGhAsync,
+        jsonCachePath: cacheFile.path,
+      );
+      final dryRunJson =
+          jsonDecode(cacheFile.readAsStringSync()) as Map<String, dynamic>;
+      check(dryRunJson['applied']).equals(false);
+      check(dryRunJson.containsKey('applyResult')).isFalse();
+
+      await runPrCleanup(
+        options: PrCleanupOptions(
+          localRoot: tempRoot.path,
+          skipGerrit: true,
+          apply: true,
+          json: true,
+        ),
+        syncProcessRunner: emptyGhSync,
+        asyncProcessRunner: emptyGhAsync,
+        jsonCachePath: cacheFile.path,
+      );
+      final applyJson =
+          jsonDecode(cacheFile.readAsStringSync()) as Map<String, dynamic>;
+      check(applyJson['applied']).equals(true);
+      final applyResult = applyJson['applyResult'] as Map<String, dynamic>;
+      check(applyResult['prunedWorktrees']).equals(0);
+      check(applyResult['deletedBranches']).equals(0);
+      check(applyResult['deletedRemoteBranches']).equals(0);
+      check(applyResult['skippedWorktrees'] as List).isEmpty();
+      check(applyResult['errors'] as List).isEmpty();
+    });
+  });
 }
+
+LandedPr _buildTestLandedPr({
+  required int number,
+  required String branch,
+  required String sha,
+}) => LandedPr(
+  number: number,
+  title: 'PR $number',
+  url: 'https://github.com/kevmoo/demo/pull/$number',
+  repository: 'kevmoo/demo',
+  repoUrl: 'https://github.com/kevmoo/demo',
+  headRefName: branch,
+  headRefOid: sha,
+  baseRefName: 'main',
+  headRefExists: true,
+  headRepository: 'kevmoo/demo',
+  headRepoPermission: 'ADMIN',
+);
 
 ProcessResult _mockAsyncOpenPrsRunner() {
   final payload = {
