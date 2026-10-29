@@ -13,6 +13,7 @@ class PrCleanupOptions {
   final String? dartSdkPath;
   final bool skipGerrit;
   final bool apply;
+  final List<String> excludeWorktrees;
   final bool markdown;
   final bool json;
 
@@ -25,6 +26,7 @@ class PrCleanupOptions {
     this.dartSdkPath,
     this.skipGerrit = false,
     this.apply = false,
+    this.excludeWorktrees = const [],
     this.markdown = true,
     this.json = false,
   });
@@ -82,6 +84,11 @@ class PrCleanupOptions {
           'Execute pruning of ready-to-prune worktrees and branches across '
           'GitHub and Gerrit.',
     )
+    ..addMultiOption(
+      'exclude-worktree',
+      splitCommas: false,
+      help: 'Worktree path(s) to skip during --apply.',
+    )
     ..addFlag(
       'markdown',
       defaultsTo: true,
@@ -127,6 +134,10 @@ class PrCleanupOptions {
       dartSdkPath: results['dart-sdk'] as String?,
       skipGerrit: results['skip-gerrit'] as bool? ?? false,
       apply: results['apply'] as bool? ?? false,
+      excludeWorktrees: (results['exclude-worktree'] as List<String>)
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList(),
       markdown: results['markdown'] as bool? ?? true,
       json: results['json'] as bool? ?? false,
     );
