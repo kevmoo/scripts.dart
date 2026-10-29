@@ -11,6 +11,8 @@ import 'package:kevmoo_scripts/src/local_repo_scanner.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/cleanup_executor.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/collector.dart';
+import 'package:kevmoo_scripts/src/process_utils.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 
 void main() {
@@ -576,151 +578,250 @@ void main() {
       }
     });
 
-    test('skips excluded GitHub and Gerrit worktrees while pruning sibling '
-        'items in the same repository', () async {
-      final repoPath = '${tempRoot.path}/demo';
-      final wtHold = '${tempRoot.path}/_demo-feat-hold';
-      final wtPrune = '${tempRoot.path}/_demo-feat-prune';
-      final gerritSdk = Directory('${tempRoot.path}/dart-sdk')..createSync();
-      final wtGerritHold = '${gerritSdk.path}/core/cl-99/sdk';
-      final wtGerritPrune = '${gerritSdk.path}/core/cl-100/sdk';
+    test('canonicalizeWorktreePath resolves symlinks, file URIs, tilde, and '
+        'relative paths', () {
+      final realDir = Directory('${tempRoot.path}/real/_demo-wt')
+        ..createSync(recursive: true);
+      final symlink = Link('${tempRoot.path}/links/wt_link')
+        ..createSync(realDir.path, recursive: true);
 
-      final localRepo = <LocalRepoInfo>[
-        (
-          repoName: 'kevmoo/demo',
-          repoNames: ['kevmoo/demo'],
-          repoPath: repoPath,
-          currentBranch: 'main',
-          branches: [
-            (
-              name: 'main',
-              sha: '0000',
-              upstream: 'origin/main',
-              upstreamTrack: '',
-            ),
-            (
-              name: 'feat-hold',
-              sha: '1111',
-              upstream: 'origin/feat-hold',
-              upstreamTrack: '',
-            ),
-            (
-              name: 'feat-prune',
-              sha: '2222',
-              upstream: 'origin/feat-prune',
-              upstreamTrack: '',
-            ),
-          ],
-          worktrees: [
-            (
-              path: repoPath,
-              branch: 'main',
-              sha: '0000',
-              isLocked: false,
-              lockReason: null,
-            ),
-            (
-              path: wtHold,
+      final expected = canonicalizeWorktreePath(realDir.path);
+      check(canonicalizeWorktreePath('${symlink.path}/')).equals(expected);
+      check(canonicalizeWorktreePath(Uri.directory(realDir.path).toString()))
+          .equals(expected);
+      final relative = p.relative(realDir.path, from: Directory.current.path);
+      check(canonicalizeWorktreePath(relative)).equals(expected);
+
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isNotEmpty) {
+        check(canonicalizeWorktreePath('~/sub/example_wt'))
+            .equals(canonicalizeWorktreePath('$home/sub/example_wt'));
+      }
+      check(canonicalizeWorktreePath('   ')).equals('');
+    });
+
+    test(
+      'prunes real GitHub and bare-clone Gerrit worktrees while preserving '
+      'symlink-excluded worktrees and deduplicating skippedWorktrees',
+      () async {
+        final ghFixture = _createRealGithubFixture(tempRoot);
+        final gerritFixture = _createRealBareGerritFixture(tempRoot);
+        final holdSymlink = Link('${tempRoot.path}/links/hold_symlink')
+          ..createSync(ghFixture.wtHold, recursive: true);
+
+        final scannedRepos = scanLocalGitRepositories(
+          Directory('${tempRoot.path}/repos'),
+        );
+        final ghCommands = <String>[];
+
+        final applyResult = await executeReadyToPrune(
+          items: [
+            PrunableItem(
+              source: 'github',
+              repository: 'kevmoo/demo',
               branch: 'feat-hold',
-              sha: '1111',
-              isLocked: false,
-              lockReason: null,
+              worktreePath: ghFixture.wtHold,
+              remoteBranch: 'kevmoo/demo:feat-hold',
+              prOrClNumber: 10,
+              description: 'Landed PR #10',
+              landedPr: _buildTestLandedPr(
+                number: 10,
+                branch: 'feat-hold',
+                sha: ghFixture.shaHold,
+              ),
             ),
-            (
-              path: wtPrune,
+            PrunableItem(
+              source: 'github',
+              repository: 'kevmoo/demo',
+              branch: 'feat-hold',
+              worktreePath: ghFixture.wtHold,
+              remoteBranch: 'kevmoo/demo:feat-hold',
+              prOrClNumber: 12,
+              description: 'Follow-up PR #12 on same branch',
+              landedPr: _buildTestLandedPr(
+                number: 12,
+                branch: 'feat-hold',
+                sha: ghFixture.shaHold,
+              ),
+            ),
+            PrunableItem(
+              source: 'github',
+              repository: 'kevmoo/demo',
               branch: 'feat-prune',
-              sha: '2222',
-              isLocked: false,
-              lockReason: null,
+              worktreePath: ghFixture.wtPrune,
+              remoteBranch: 'kevmoo/demo:feat-prune',
+              prOrClNumber: 11,
+              description: 'Landed PR #11',
+              landedPr: _buildTestLandedPr(
+                number: 11,
+                branch: 'feat-prune',
+                sha: ghFixture.shaPrune,
+              ),
+            ),
+            PrunableItem(
+              source: 'gerrit',
+              repository: 'dart-sdk',
+              branch: 'cl-99',
+              worktreePath: gerritFixture.wtHold,
+              prOrClNumber: 99,
+              description: 'CL 99 (merged)',
+            ),
+            PrunableItem(
+              source: 'gerrit',
+              repository: 'dart-sdk',
+              branch: 'cl-100',
+              worktreePath: gerritFixture.wtPrune,
+              prOrClNumber: 100,
+              description: 'CL 100 (merged)',
             ),
           ],
-        ),
+          localRepos: scannedRepos,
+          excludedWorktrees: [
+            '${holdSymlink.path}/',
+            Uri.directory(gerritFixture.wtHold).toString(),
+          ],
+          dartSdkPath: gerritFixture.containerPath,
+          syncProcessRunner: (exe, args, {workingDirectory}) {
+            if (exe == 'gh') {
+              ghCommands.add('$exe ${args.join(' ')}');
+              return ProcessResult(0, 0, '', '');
+            }
+            return defaultSyncProcessRunner(
+              exe,
+              args,
+              workingDirectory: workingDirectory,
+            );
+          },
+        );
+
+        check(applyResult.errors).isEmpty();
+        check(applyResult.skippedWorktrees)
+            .deepEquals([ghFixture.wtHold, gerritFixture.wtHold]);
+        check(applyResult.prunedWorktrees).equals(2);
+        check(applyResult.deletedBranches).equals(2);
+        check(applyResult.deletedRemoteBranches).equals(1);
+
+        check(Directory(ghFixture.wtHold).existsSync()).isTrue();
+        check(Directory(ghFixture.wtPrune).existsSync()).isFalse();
+        check(_gitBranches(ghFixture.repoPath))
+          ..contains('feat-hold')
+          ..not((it) => it.contains('feat-prune'));
+        check(ghCommands)
+          ..any(
+            (it) => it.contains(
+              'DELETE repos/kevmoo/demo/git/refs/heads/feat-prune',
+            ),
+          )
+          ..every((it) => it.not((s) => s.contains('feat-hold')));
+
+        check(Directory(gerritFixture.wtHold).existsSync()).isTrue();
+        check(Directory(gerritFixture.wtPrune).existsSync()).isFalse();
+        check(_gitBranches(gerritFixture.mainSdkPath))
+          ..contains('cl-99')
+          ..not((it) => it.contains('cl-100'));
+        check(_gitConfig(gerritFixture.mainSdkPath, 'branch.cl-99.gerritissue'))
+            .equals('99');
+        check(
+          _gitConfig(gerritFixture.mainSdkPath, 'branch.cl-100.gerritissue'),
+        ).isNull();
+      },
+    );
+
+    test('protects excluded primary repository checkouts from branch switch '
+        'and skips git pull when pruning sibling worktrees', () async {
+      final ghFixture = _createRealGithubFixture(tempRoot);
+      final rootCheckout = _createPrimaryRootBranchFixture(tempRoot);
+
+      // Advance origin/main ahead of ghFixture.repoPath so an unskipped
+      // `git pull --ff-only` would advance HEAD in ghFixture.repoPath.
+      final headBefore = _gitRevParse(ghFixture.repoPath, 'HEAD');
+      _advanceOriginMainAhead(tempRoot, ghFixture.originBarePath);
+
+      final scannedRepos = [
+        ...scanLocalGitRepositories(Directory('${tempRoot.path}/repos')),
+        ...scanLocalGitRepositories(Directory('${tempRoot.path}/root_repos')),
       ];
 
-      final commands = <String>[];
       final applyResult = await executeReadyToPrune(
         items: [
           PrunableItem(
             source: 'github',
-            repository: 'kevmoo/demo',
-            branch: 'feat-hold',
-            worktreePath: wtHold,
-            remoteBranch: 'kevmoo/demo:feat-hold',
-            prOrClNumber: 10,
-            description: 'Landed PR #10',
-            landedPr: _buildTestLandedPr(
-              number: 10,
-              branch: 'feat-hold',
-              sha: '1111',
+            repository: 'kevmoo/root-demo',
+            branch: 'feat-root',
+            prOrClNumber: 20,
+            description: 'Landed PR #20 checked out in primary root',
+            landedPr: LandedPr(
+              number: 20,
+              title: 'PR 20',
+              url: 'https://github.com/kevmoo/root-demo/pull/20',
+              repository: 'kevmoo/root-demo',
+              repoUrl: 'https://github.com/kevmoo/root-demo',
+              headRefName: 'feat-root',
+              headRefOid: rootCheckout.shaRootBranch,
+              baseRefName: 'main',
+              headRefExists: true,
+              headRepository: 'kevmoo/root-demo',
+              headRepoPermission: 'ADMIN',
             ),
           ),
           PrunableItem(
             source: 'github',
             repository: 'kevmoo/demo',
             branch: 'feat-prune',
-            worktreePath: wtPrune,
-            remoteBranch: 'kevmoo/demo:feat-prune',
+            worktreePath: ghFixture.wtPrune,
             prOrClNumber: 11,
-            description: 'Landed PR #11',
+            description: 'Landed sibling PR #11',
             landedPr: _buildTestLandedPr(
               number: 11,
               branch: 'feat-prune',
-              sha: '2222',
+              sha: ghFixture.shaPrune,
             ),
           ),
-          PrunableItem(
-            source: 'gerrit',
-            repository: 'dart-sdk',
-            branch: 'cl-99',
-            worktreePath: wtGerritHold,
-            prOrClNumber: 99,
-            description: 'CL 99 (merged)',
-          ),
-          PrunableItem(
-            source: 'gerrit',
-            repository: 'dart-sdk',
-            branch: 'cl-100',
-            worktreePath: wtGerritPrune,
-            prOrClNumber: 100,
-            description: 'CL 100 (merged)',
-          ),
         ],
-        localRepos: localRepo,
-        excludedWorktrees: ['$wtHold/', wtGerritHold],
-        dartSdkPath: gerritSdk.path,
+        localRepos: scannedRepos,
+        excludedWorktrees: [rootCheckout.repoPath, ghFixture.repoPath],
         syncProcessRunner: (exe, args, {workingDirectory}) {
-          commands.add('$exe ${args.join(' ')}');
-          return ProcessResult(0, 0, '', '');
+          if (exe == 'gh') return ProcessResult(0, 0, '', '');
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
         },
       );
 
-      check(applyResult.skippedWorktrees).deepEquals([wtHold, wtGerritHold]);
-      check(applyResult.prunedWorktrees).equals(2);
-      check(applyResult.deletedBranches).equals(2);
-      check(applyResult.deletedRemoteBranches).equals(1);
       check(applyResult.errors).isEmpty();
+      check(applyResult.skippedWorktrees).deepEquals([rootCheckout.repoPath]);
+      check(applyResult.prunedWorktrees).equals(1);
+      check(applyResult.deletedBranches).equals(1);
 
-      check(commands).any((it) => it.contains('worktree remove $wtPrune'));
-      check(commands).any((it) => it.contains('branch -D feat-prune'));
-      check(commands).any(
-        (it) =>
-            it.contains('DELETE repos/kevmoo/demo/git/refs/heads/feat-prune'),
-      );
-      check(commands)
-          .any((it) => it.contains('worktree remove $wtGerritPrune'));
-      check(commands).any((it) => it.contains('branch -D cl-100'));
-
-      for (final cmd in commands) {
-        check(cmd)
-          ..not((it) => it.contains(wtHold))
-          ..not((it) => it.contains('feat-hold'))
-          ..not((it) => it.contains(wtGerritHold))
-          ..not((it) => it.contains('cl-99'));
-      }
+      check(_gitCurrentBranch(rootCheckout.repoPath)).equals('feat-root');
+      check(_gitBranches(rootCheckout.repoPath)).contains('feat-root');
+      check(Directory(ghFixture.wtPrune).existsSync()).isFalse();
+      check(_gitRevParse(ghFixture.repoPath, 'HEAD')).equals(headBefore);
     });
 
-    test('runPrCleanup writes applyResult in JSON cache when apply is true and '
-        'omits it when apply is false', () async {
+    test('records error when Gerrit repository cannot be found', () async {
+      final res = await executeReadyToPrune(
+        items: const [
+          PrunableItem(
+            source: 'gerrit',
+            repository: 'dart-sdk',
+            branch: 'cl-404',
+            prOrClNumber: 404,
+            description: 'CL 404',
+          ),
+        ],
+        localRepos: const [],
+        localRoot: tempRoot.path,
+        dartSdkPath: '${tempRoot.path}/missing-dart-sdk',
+      );
+      check(res.prunedWorktrees).equals(0);
+      check(res.errors).any((it) => it.contains('cl-404'));
+    });
+
+    test('runPrCleanup writes applyResult in JSON cache and Markdown summary '
+        'when apply is true', () async {
       final cacheFile = File('${tempRoot.path}/sweep_cache.json');
       ProcessResult emptyGhSync(
         String exe,
@@ -779,8 +880,237 @@ void main() {
       check(applyResult['deletedRemoteBranches']).equals(0);
       check(applyResult['skippedWorktrees'] as List).isEmpty();
       check(applyResult['errors'] as List).isEmpty();
+
+      final mdWithApply = formatMarkdownReport(
+        PrSweepResult(
+          active: const [],
+          readyToPrune: const [],
+          lockedWorktrees: const [],
+          needsTriage: const [],
+          candidateLandedIds: const [],
+          timestamp: DateTime(2026, 10, 29),
+        ),
+        applied: true,
+        applyResult: const PrCleanupApplyResult(
+          prunedWorktrees: 1,
+          deletedBranches: 1,
+          skippedWorktrees: ['/tmp/_demo-busy'],
+          errors: ['branch delete failed'],
+        ),
+      );
+      check(mdWithApply)
+        ..contains('Pruning summary: 1 worktree(s) pruned')
+        ..contains('Skipped excluded worktree(s): `/tmp/_demo-busy`')
+        ..contains('- branch delete failed');
     });
   });
+}
+
+typedef _RealGithubFixture = ({
+  String originBarePath,
+  String repoPath,
+  String wtHold,
+  String wtPrune,
+  String shaHold,
+  String shaPrune,
+});
+
+typedef _RealBareGerritFixture = ({
+  String containerPath,
+  String mainSdkPath,
+  String wtHold,
+  String wtPrune,
+});
+
+void _runGit(List<String> args, {String? cwd}) {
+  final res = Process.runSync('git', [
+    '-c',
+    'user.name=Test User',
+    '-c',
+    'user.email=test@example.com',
+    '-c',
+    'commit.gpgsign=false',
+    '-c',
+    'core.hooksPath=/dev/null',
+    ...args,
+  ], workingDirectory: cwd);
+  if (res.exitCode != 0) {
+    throw StateError(
+      'git ${args.join(' ')} failed (${res.exitCode}): ${res.stderr}',
+    );
+  }
+}
+
+String _gitRevParse(String repoPath, String rev) =>
+    (Process.runSync('git', ['-C', repoPath, 'rev-parse', rev]).stdout
+            as String)
+        .trim();
+
+String _gitCurrentBranch(String repoPath) =>
+    (Process.runSync('git', ['-C', repoPath, 'branch', '--show-current']).stdout
+            as String)
+        .trim();
+
+List<String> _gitBranches(String repoPath) =>
+    (Process.runSync('git', [
+              '-C',
+              repoPath,
+              'for-each-ref',
+              '--format=%(refname:short)',
+              'refs/heads/',
+            ]).stdout
+            as String)
+        .trim()
+        .split('\n')
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+String? _gitConfig(String repoPath, String key) {
+  final res = Process.runSync('git', ['-C', repoPath, 'config', '--get', key]);
+  if (res.exitCode != 0) return null;
+  return (res.stdout as String).trim();
+}
+
+_RealGithubFixture _createRealGithubFixture(Directory tempRoot) {
+  final originBare = Directory('${tempRoot.path}/remotes/demo.git')
+    ..createSync(recursive: true);
+  _runGit(['init', '--bare', '-b', 'main', originBare.path]);
+
+  final reposDir = Directory('${tempRoot.path}/repos')
+    ..createSync(recursive: true);
+  final repoDir = Directory('${reposDir.path}/demo')..createSync();
+  _runGit(['init', '-b', 'main'], cwd: repoDir.path);
+  _runGit(['remote', 'add', 'origin', originBare.path], cwd: repoDir.path);
+  _runGit([
+    'remote',
+    'add',
+    'upstream',
+    'https://github.com/kevmoo/demo.git',
+  ], cwd: repoDir.path);
+
+  File('${repoDir.path}/README.md').writeAsStringSync('init\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'init'], cwd: repoDir.path);
+  _runGit(['push', '-u', 'origin', 'main'], cwd: repoDir.path);
+
+  _runGit(['checkout', '-b', 'feat-hold'], cwd: repoDir.path);
+  File('${repoDir.path}/hold.txt').writeAsStringSync('hold\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'hold'], cwd: repoDir.path);
+  final shaHold = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit(['push', '-u', 'origin', 'feat-hold'], cwd: repoDir.path);
+
+  _runGit(['checkout', 'main'], cwd: repoDir.path);
+  _runGit(['merge', '--ff-only', 'feat-hold'], cwd: repoDir.path);
+
+  _runGit(['checkout', '-b', 'feat-prune'], cwd: repoDir.path);
+  File('${repoDir.path}/prune.txt').writeAsStringSync('prune\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'prune'], cwd: repoDir.path);
+  final shaPrune = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit(['push', '-u', 'origin', 'feat-prune'], cwd: repoDir.path);
+
+  _runGit(['checkout', 'main'], cwd: repoDir.path);
+  _runGit(['merge', '--ff-only', 'feat-prune'], cwd: repoDir.path);
+  _runGit(['push', 'origin', 'main'], cwd: repoDir.path);
+
+  final wtHold = '${reposDir.path}/_demo-feat-hold';
+  final wtPrune = '${reposDir.path}/_demo-feat-prune';
+  _runGit(['worktree', 'add', wtHold, 'feat-hold'], cwd: repoDir.path);
+  _runGit(['worktree', 'add', wtPrune, 'feat-prune'], cwd: repoDir.path);
+
+  return (
+    originBarePath: canonicalizeWorktreePath(originBare.path),
+    repoPath: canonicalizeWorktreePath(repoDir.path),
+    wtHold: canonicalizeWorktreePath(wtHold),
+    wtPrune: canonicalizeWorktreePath(wtPrune),
+    shaHold: shaHold,
+    shaPrune: shaPrune,
+  );
+}
+
+({String repoPath, String shaRootBranch}) _createPrimaryRootBranchFixture(
+  Directory tempRoot,
+) {
+  final originBare = Directory('${tempRoot.path}/remotes/root_demo.git')
+    ..createSync(recursive: true);
+  _runGit(['init', '--bare', '-b', 'main', originBare.path]);
+
+  final repoDir = Directory('${tempRoot.path}/root_repos/root-demo')
+    ..createSync(recursive: true);
+  _runGit(['init', '-b', 'main'], cwd: repoDir.path);
+  _runGit(['remote', 'add', 'origin', originBare.path], cwd: repoDir.path);
+  _runGit([
+    'remote',
+    'add',
+    'upstream',
+    'https://github.com/kevmoo/root-demo.git',
+  ], cwd: repoDir.path);
+
+  File('${repoDir.path}/README.md').writeAsStringSync('root\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'init'], cwd: repoDir.path);
+  _runGit(['push', '-u', 'origin', 'main'], cwd: repoDir.path);
+
+  _runGit(['checkout', '-b', 'feat-root'], cwd: repoDir.path);
+  File('${repoDir.path}/feat.txt').writeAsStringSync('feat\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'feat'], cwd: repoDir.path);
+  final shaRoot = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit(['push', 'origin', 'HEAD:main'], cwd: repoDir.path);
+
+  return (
+    repoPath: canonicalizeWorktreePath(repoDir.path),
+    shaRootBranch: shaRoot,
+  );
+}
+
+void _advanceOriginMainAhead(Directory tempRoot, String originBarePath) {
+  final cloneDir = Directory('${tempRoot.path}/pusher')..createSync();
+  _runGit(['clone', originBarePath, cloneDir.path]);
+  File('${cloneDir.path}/ahead.txt').writeAsStringSync('ahead\n');
+  _runGit(['add', '.'], cwd: cloneDir.path);
+  _runGit(['commit', '-m', 'ahead on origin'], cwd: cloneDir.path);
+  _runGit(['push', 'origin', 'main'], cwd: cloneDir.path);
+}
+
+_RealBareGerritFixture _createRealBareGerritFixture(Directory tempRoot) {
+  final container = Directory('${tempRoot.path}/dart-sdk')..createSync();
+  final bareDir = Directory('${container.path}/.bare')..createSync();
+  _runGit(['init', '--bare', '-b', 'main', bareDir.path]);
+
+  final seed = Directory('${tempRoot.path}/gerrit_seed')..createSync();
+  _runGit(['init', '-b', 'main'], cwd: seed.path);
+  File('${seed.path}/README.md').writeAsStringSync('sdk\n');
+  _runGit(['add', '.'], cwd: seed.path);
+  _runGit(['commit', '-m', 'sdk init'], cwd: seed.path);
+  _runGit(['push', bareDir.path, 'main:main'], cwd: seed.path);
+
+  final mainSdk = '${container.path}/core/main/sdk';
+  Directory(p.dirname(mainSdk)).createSync(recursive: true);
+  _runGit(['--git-dir=${bareDir.path}', 'worktree', 'add', mainSdk, 'main']);
+  final mainSha = _gitRevParse(mainSdk, 'HEAD');
+  _runGit([
+    'update-ref',
+    'refs/remotes/upstream-sdk/main',
+    mainSha,
+  ], cwd: mainSdk);
+
+  final wtHold = '${container.path}/core/cl-99/sdk';
+  final wtPrune = '${container.path}/core/cl-100/sdk';
+  Directory(p.dirname(wtHold)).createSync(recursive: true);
+  Directory(p.dirname(wtPrune)).createSync(recursive: true);
+  _runGit(['worktree', 'add', '-b', 'cl-99', wtHold, 'main'], cwd: mainSdk);
+  _runGit(['config', 'branch.cl-99.gerritissue', '99'], cwd: mainSdk);
+  _runGit(['worktree', 'add', '-b', 'cl-100', wtPrune, 'main'], cwd: mainSdk);
+  _runGit(['config', 'branch.cl-100.gerritissue', '100'], cwd: mainSdk);
+
+  return (
+    containerPath: canonicalizeWorktreePath(container.path),
+    mainSdkPath: canonicalizeWorktreePath(mainSdk),
+    wtHold: canonicalizeWorktreePath(wtHold),
+    wtPrune: canonicalizeWorktreePath(wtPrune),
+  );
 }
 
 LandedPr _buildTestLandedPr({

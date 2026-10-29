@@ -52,6 +52,7 @@ Future<void> runPrCleanup({
         items: sweepResult.readyToPrune,
         localRepos: localRepos,
         excludedWorktrees: options.excludeWorktrees,
+        localRoot: rootPath,
         dartSdkPath: options.dartSdkPath,
         syncProcessRunner: syncProcessRunner,
         onProgress: onProgress,
@@ -75,6 +76,12 @@ Future<void> runPrCleanup({
   if (options.json) {
     print(jsonReport);
   } else {
-    print(formatMarkdownReport(sweepResult, applied: options.apply));
+    print(
+      formatMarkdownReport(
+        sweepResult,
+        applied: options.apply,
+        applyResult: applyResult,
+      ),
+    );
   }
 }
