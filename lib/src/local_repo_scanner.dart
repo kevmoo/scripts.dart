@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 
 import 'process_utils.dart';
 import 'shared/gh_pr_ref.dart';
+import 'shared/git_cli.dart';
 
 /// Information about a discovered local Git repository.
 typedef LocalRepoInfo = ({
@@ -62,17 +63,13 @@ Future<bool> isRepoDirty(
   ProcessRunner? processRunner,
   bool includeUntracked = false,
   bool failClosedOnProcessError = false,
-}) async {
-  final runner = processRunner ?? defaultProcessRunner;
-  final args = ['status', '--porcelain', if (!includeUntracked) '-uno'];
-  try {
-    final res = await runner('git', args, workingDirectory: dirPath);
-    if (res.exitCode != 0) return failClosedOnProcessError;
-    return (res.stdout as String).trim().isNotEmpty;
-  } catch (_) {
-    return failClosedOnProcessError;
-  }
-}
+}) =>
+    (processRunner == null ? defaultGitCli : GitCli(asyncRunner: processRunner))
+        .isDirty(
+          dirPath,
+          includeUntracked: includeUntracked,
+          failClosedOnProcessError: failClosedOnProcessError,
+        );
 
 /// Synchronously checks whether a local git repository or worktree directory
 /// has uncommitted changes.
@@ -86,17 +83,13 @@ bool isRepoDirtySync(
   SyncProcessRunner? processRunner,
   bool includeUntracked = false,
   bool failClosedOnProcessError = false,
-}) {
-  final runner = processRunner ?? defaultSyncProcessRunner;
-  final args = ['status', '--porcelain', if (!includeUntracked) '-uno'];
-  try {
-    final res = runner('git', args, workingDirectory: dirPath);
-    if (res.exitCode != 0) return failClosedOnProcessError;
-    return (res.stdout as String).trim().isNotEmpty;
-  } catch (_) {
-    return failClosedOnProcessError;
-  }
-}
+}) =>
+    (processRunner == null ? defaultGitCli : GitCli(syncRunner: processRunner))
+        .isDirtySync(
+          dirPath,
+          includeUntracked: includeUntracked,
+          failClosedOnProcessError: failClosedOnProcessError,
+        );
 
 /// Normalizes a remote Git URL (SSH, HTTPS, HTTP, SCP-style) to `owner/repo`.
 String? normalizeRepoName(String raw) {
@@ -147,7 +140,9 @@ List<LocalRepoInfo> scanLocalGitRepositories(
   int maxDepth = 5,
   SyncProcessRunner? processRunner,
 }) {
-  final runner = processRunner ?? defaultSyncProcessRunner;
+  final git = processRunner == null
+      ? defaultGitCli
+      : GitCli(syncRunner: processRunner);
   final repos = <LocalRepoInfo>[];
 
   void walk(Directory dir, int depth) {
@@ -156,7 +151,7 @@ List<LocalRepoInfo> scanLocalGitRepositories(
 
     if (FileSystemEntity.typeSync('${dir.path}/.git') !=
         FileSystemEntityType.notFound) {
-      final info = _indexRepository(dir, runner);
+      final info = _indexRepository(dir, git);
       if (info != null) repos.add(info);
       return;
     }
@@ -206,25 +201,26 @@ bool isDartSdkRepositoryName(String repoName) {
       lower == 'kevmoo/dart-sdk-bazel';
 }
 
-LocalRepoInfo? _indexRepository(Directory dir, SyncProcessRunner runner) {
-  final remoteResult = runner('git', [
-    'remote',
-    '-v',
-  ], workingDirectory: dir.path);
+LocalRepoInfo? _indexRepository(Directory dir, GitCli git) {
+  final remoteResult = git.runSync(
+    const ['remote', '-v'],
+    workingDirectory: dir.path,
+    readOnly: true,
+  );
 
   if (remoteResult.exitCode != 0) return null;
 
   final repoNames = _extractRepoNames(remoteResult.stdout as String);
   if (repoNames == null) return null;
 
-  final branches = _parseBranchRefs(dir.path, runner);
-  final worktrees = _parseWorktrees(dir.path, runner);
+  final branches = _parseBranchRefs(dir.path, git);
+  final worktrees = _parseWorktrees(dir.path, git);
 
   return (
     repoName: repoNames.first,
     repoNames: repoNames.toList(),
     repoPath: dir.path,
-    currentBranch: _getCurrentBranch(dir.path, runner),
+    currentBranch: git.currentBranchSync(dir.path),
     branches: branches,
     worktrees: worktrees,
   );
@@ -257,28 +253,15 @@ Set<String> _prioritizeRepoNames(
   return {for (final e in sorted) e.repoName};
 }
 
-String? _getCurrentBranch(String repoPath, SyncProcessRunner runner) {
-  final branchResult = runner('git', [
-    'branch',
-    '--show-current',
-  ], workingDirectory: repoPath);
-  if (branchResult.exitCode != 0) return null;
-  final out = (branchResult.stdout as String).trim();
-  return out.isNotEmpty ? out : null;
-}
-
-List<LocalBranchEntry> _parseBranchRefs(
-  String repoPath,
-  SyncProcessRunner runner,
-) {
+List<LocalBranchEntry> _parseBranchRefs(String repoPath, GitCli git) {
   const formatArg =
       '--format=%(refname:short)\t%(objectname)\t'
       '%(upstream:short)\t%(upstream:track)';
-  final branchResult = runner('git', [
-    'for-each-ref',
-    formatArg,
-    'refs/heads/',
-  ], workingDirectory: repoPath);
+  final branchResult = git.runSync(
+    const ['for-each-ref', formatArg, 'refs/heads/'],
+    workingDirectory: repoPath,
+    readOnly: true,
+  );
   if (branchResult.exitCode != 0) return const [];
 
   final branches = <LocalBranchEntry>[];
@@ -297,68 +280,16 @@ List<LocalBranchEntry> _parseBranchRefs(
   return branches;
 }
 
-List<LocalWorktreeEntry> _parseWorktrees(
-  String repoPath,
-  SyncProcessRunner runner,
-) {
-  final wtResult = runner('git', [
-    'worktree',
-    'list',
-    '--porcelain',
-  ], workingDirectory: repoPath);
-  if (wtResult.exitCode != 0) return const [];
-
-  final worktrees = <LocalWorktreeEntry>[];
-  String? currentWtPath;
-  String? currentBranch;
-  String? currentSha;
-  var currentIsLocked = false;
-  String? currentLockReason;
-
-  void flush() {
-    if (currentWtPath != null) {
-      worktrees.add((
-        path: currentWtPath!,
-        branch: currentBranch ?? '',
-        sha: currentSha ?? '',
-        isLocked: currentIsLocked,
-        lockReason: currentLockReason,
-      ));
-    }
-    currentWtPath = null;
-    currentBranch = null;
-    currentSha = null;
-    currentIsLocked = false;
-    currentLockReason = null;
-  }
-
-  for (final line in (wtResult.stdout as String).trim().split('\n')) {
-    if (line.startsWith('worktree ')) {
-      currentWtPath = line.substring('worktree '.length).trim();
-    } else if (line.startsWith('HEAD ')) {
-      currentSha = line.substring('HEAD '.length).trim();
-    } else if (line.startsWith('branch refs/heads/')) {
-      currentBranch = line.substring('branch refs/heads/'.length).trim();
-    } else if (line == 'detached') {
-      currentBranch = 'DETACHED';
-    } else if (line == 'locked') {
-      currentIsLocked = true;
-      currentLockReason = null;
-    } else if (line.startsWith('locked ')) {
-      currentIsLocked = true;
-      currentLockReason = _parseLockReason(line);
-    } else if (line.isEmpty) {
-      flush();
-    }
-  }
-  flush();
-  return worktrees;
-}
-
-String? _parseLockReason(String line) {
-  final r = line.substring('locked '.length).trim();
-  return r.isEmpty ? null : r;
-}
+List<LocalWorktreeEntry> _parseWorktrees(String repoPath, GitCli git) => [
+  for (final wt in git.listWorktreesSync(repoPath))
+    (
+      path: wt.path,
+      branch: wt.isDetached ? 'DETACHED' : wt.branch,
+      sha: wt.sha,
+      isLocked: wt.isLocked,
+      lockReason: wt.lockReason,
+    ),
+];
 
 bool _folderBranchMatches(String folderBranch, String branchName) {
   if (folderBranch == branchName) return true;

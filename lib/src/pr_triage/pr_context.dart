@@ -35,6 +35,7 @@ Future<String> runCommand(
     command,
     args,
     workingDirectory: workingDirectory,
+    environment: command == 'git' ? const {'GIT_TERMINAL_PROMPT': '0'} : null,
     stdoutEncoding: utf8,
     stderrEncoding: utf8,
   );

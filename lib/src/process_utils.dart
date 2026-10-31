@@ -25,15 +25,24 @@ ProcessResult defaultSyncProcessRunner(
   String executable,
   List<String> arguments, {
   String? workingDirectory,
-}) =>
-    Process.runSync(executable, arguments, workingDirectory: workingDirectory);
+}) => Process.runSync(
+  executable,
+  arguments,
+  workingDirectory: workingDirectory,
+  environment: executable == 'git' ? const {'GIT_TERMINAL_PROMPT': '0'} : null,
+);
 
 /// Default asynchronous process runner.
 Future<ProcessResult> defaultProcessRunner(
   String executable,
   List<String> arguments, {
   String? workingDirectory,
-}) => Process.run(executable, arguments, workingDirectory: workingDirectory);
+}) => Process.run(
+  executable,
+  arguments,
+  workingDirectory: workingDirectory,
+  environment: executable == 'git' ? const {'GIT_TERMINAL_PROMPT': '0'} : null,
+);
 
 Future<bool> isProcessRunning(int pid, {String procPath = '/proc'}) async {
   if (Platform.isLinux) {
