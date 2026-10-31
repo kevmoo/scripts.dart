@@ -146,6 +146,7 @@ class TriageItem {
   final String repository;
   final String branch;
   final String? worktreePath;
+  final String? remoteBranch;
   final int? prOrClNumber;
   final String reason;
   final DateTime? createdAt;
@@ -156,6 +157,7 @@ class TriageItem {
     required this.repository,
     required this.branch,
     this.worktreePath,
+    this.remoteBranch,
     this.prOrClNumber,
     required this.reason,
     this.createdAt,
@@ -167,6 +169,7 @@ class TriageItem {
     'repository': repository,
     'branch': branch,
     'worktreePath': worktreePath,
+    'remoteBranch': remoteBranch,
     'prOrClNumber': prOrClNumber,
     'reason': reason,
     'createdAt': createdAt?.toIso8601String(),

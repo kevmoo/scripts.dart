@@ -12,6 +12,7 @@ import '../gh_view.dart';
 import '../gh_view/models.dart';
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
+import 'fork_branch_scanner.dart';
 import 'models.dart';
 import 'pr_cleanup_options.dart';
 
@@ -102,7 +103,10 @@ Future<PrSweepResult> _assembleSweepResult({
     gerrit: initialData.gerrit,
     closedUnmergedPrs: landedResolution.closedUnmergedPrs,
     unlinkedWorktrees: unlinkedWorktrees,
+    localRepos: localRepos,
+    options: options,
     syncRunner: syncRunner,
+    onProgress: onProgress,
   );
 }
 
@@ -112,7 +116,10 @@ PrSweepResult _buildSweepResult({
   required GerritAnalysisResult? gerrit,
   required List<ClosedUnmergedPr> closedUnmergedPrs,
   required List<UnlinkedWorktree> unlinkedWorktrees,
+  required List<LocalRepoInfo> localRepos,
+  required PrCleanupOptions options,
   required SyncProcessRunner syncRunner,
+  void Function(String message)? onProgress,
 }) {
   final readyToPrune = <PrunableItem>[];
   final lockedWorktrees = <LockedWorktreeItem>[];
@@ -133,12 +140,28 @@ PrSweepResult _buildSweepResult({
     needsTriage: needsTriage,
     candidateLandedIds: candidateLandedIds,
   );
+  final forkScan = _runForkBranchScan(
+    localRepos: localRepos,
+    options: options,
+    active: active,
+    readyToPrune: readyToPrune,
+    needsTriage: needsTriage,
+    closedUnmergedPrs: closedUnmergedPrs,
+    unlinkedWorktrees: unlinkedWorktrees,
+    syncRunner: syncRunner,
+    onProgress: onProgress,
+  );
+  readyToPrune.addAll(forkScan.readyToPrune);
+  candidateLandedIds.addAll(forkScan.candidateLandedIds);
+
   _processClosedUnmergedAndUnlinked(
     closedUnmergedPrs: closedUnmergedPrs,
     unlinkedWorktrees: unlinkedWorktrees,
+    remoteBranchByKey: forkScan.remoteBranchByKey,
     lockedWorktrees: lockedWorktrees,
     needsTriage: needsTriage,
   );
+  needsTriage.addAll(forkScan.additionalTriage);
   _sortTriageItems(needsTriage);
   _sortLockedWorktrees(lockedWorktrees);
 
@@ -151,6 +174,65 @@ PrSweepResult _buildSweepResult({
     timestamp: DateTime.now(),
   );
 }
+
+ForkBranchScanResult _runForkBranchScan({
+  required List<LocalRepoInfo> localRepos,
+  required PrCleanupOptions options,
+  required List<ActiveItem> active,
+  required List<PrunableItem> readyToPrune,
+  required List<TriageItem> needsTriage,
+  required List<ClosedUnmergedPr> closedUnmergedPrs,
+  required List<UnlinkedWorktree> unlinkedWorktrees,
+  required SyncProcessRunner syncRunner,
+  void Function(String message)? onProgress,
+}) {
+  final handledKeys = _collectHandledForkKeys(
+    active: active,
+    readyToPrune: readyToPrune,
+    needsTriage: needsTriage,
+    unlinkedWorktrees: unlinkedWorktrees,
+  );
+  final existingTriageKeys = _collectExistingTriageForkKeys(
+    closedUnmergedPrs: closedUnmergedPrs,
+    unlinkedWorktrees: unlinkedWorktrees,
+  );
+  return scanForkRemoteBranches(
+    localRepos: localRepos,
+    user: options.user,
+    repoFilter: options.repo,
+    handledBranchKeys: handledKeys,
+    existingTriageBranchKeys: existingTriageKeys,
+    syncRunner: syncRunner,
+    onProgress: onProgress,
+  );
+}
+
+Set<String> _collectHandledForkKeys({
+  required List<ActiveItem> active,
+  required List<PrunableItem> readyToPrune,
+  required List<TriageItem> needsTriage,
+  required List<UnlinkedWorktree> unlinkedWorktrees,
+}) => <String>{
+  for (final a in active)
+    if (a.source == 'github') '${a.repository}#${a.branch}'.toLowerCase(),
+  for (final r in readyToPrune)
+    if (r.source == 'github') '${r.repository}#${r.branch}'.toLowerCase(),
+  for (final t in needsTriage)
+    if (t.source == 'github') '${t.repository}#${t.branch}'.toLowerCase(),
+  for (final u in unlinkedWorktrees)
+    if (u.isLocked) '${u.repository}#${u.branch}'.toLowerCase(),
+};
+
+Set<String> _collectExistingTriageForkKeys({
+  required List<ClosedUnmergedPr> closedUnmergedPrs,
+  required List<UnlinkedWorktree> unlinkedWorktrees,
+}) => <String>{
+  for (final c in closedUnmergedPrs)
+    if ((c.commitsAhead ?? 0) > 0) '${c.repository}#${c.branch}'.toLowerCase(),
+  for (final u in unlinkedWorktrees)
+    if (!u.isLocked && (u.commitsAhead ?? 0) > 0)
+      '${u.repository}#${u.branch}'.toLowerCase(),
+};
 
 String _resolveRootPath(String? localRoot) =>
     localRoot ??
@@ -188,7 +270,7 @@ _fetchInitialData({
   final activePrsFuture = fetchOpenPullRequests(
     user: options.user,
     repo: options.repo,
-    lastNDays: options.lastNDays,
+    lastNDays: options.openPrLastNDays,
     limit: options.limit,
     processRunner: asyncRunner,
   );
@@ -643,17 +725,20 @@ String? _findGerritClWorktree(int clNumber, GerritAnalysisResult analysis) {
 void _processClosedUnmergedAndUnlinked({
   required List<ClosedUnmergedPr> closedUnmergedPrs,
   required List<UnlinkedWorktree> unlinkedWorktrees,
+  required Map<String, String> remoteBranchByKey,
   required List<LockedWorktreeItem> lockedWorktrees,
   required List<TriageItem> needsTriage,
 }) {
   for (final c in closedUnmergedPrs) {
     if (c.commitsAhead != null && c.commitsAhead! > 0) {
+      final key = '${c.repository}#${c.branch}'.toLowerCase();
       needsTriage.add(
         TriageItem(
           source: 'github',
           repository: c.repository,
           branch: c.branch,
           worktreePath: c.worktreePath,
+          remoteBranch: remoteBranchByKey[key],
           prOrClNumber: c.number,
           reason:
               'Closed (unmerged) PR #${c.number}, has ${c.commitsAhead} '
@@ -669,7 +754,10 @@ void _processClosedUnmergedAndUnlinked({
     if (u.isLocked) {
       lockedWorktrees.add(_toLockedWorktreeItem(u));
     } else if (u.commitsAhead != null && u.commitsAhead! > 0) {
-      needsTriage.add(_toUnlinkedTriageItem(u));
+      final key = '${u.repository}#${u.branch}'.toLowerCase();
+      needsTriage.add(
+        _toUnlinkedTriageItem(u, remoteBranch: remoteBranchByKey[key]),
+      );
     }
   }
 }
@@ -688,7 +776,7 @@ LockedWorktreeItem _toLockedWorktreeItem(UnlinkedWorktree u) =>
           _readWorktreeModifiedAt(u.worktreePath),
     );
 
-TriageItem _toUnlinkedTriageItem(UnlinkedWorktree u) {
+TriageItem _toUnlinkedTriageItem(UnlinkedWorktree u, {String? remoteBranch}) {
   final dateSuffix = u.lastCommitDate != null
       ? ' (last commit: ${u.lastCommitDate})'
       : '';
@@ -697,6 +785,7 @@ TriageItem _toUnlinkedTriageItem(UnlinkedWorktree u) {
     repository: u.repository,
     branch: u.branch,
     worktreePath: u.worktreePath,
+    remoteBranch: remoteBranch,
     reason:
         'Unlinked worktree `${p.basename(u.worktreePath)}` has '
         '${u.commitsAhead} unpushed commit(s)$dateSuffix',

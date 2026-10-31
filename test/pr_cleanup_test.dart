@@ -103,6 +103,23 @@ void main() {
       final results = parser.parse(['--last-n-days', '0']);
       final options = PrCleanupOptions.parse(results);
       check(options.lastNDays).isNull();
+      check(options.wasLastNDaysExplicit).isTrue();
+      check(options.openPrLastNDays).isNull();
+    });
+
+    test('openPrLastNDays is null by default and bounded only when -d is '
+        'explicitly passed', () {
+      final parser = PrCleanupOptions.createArgParser();
+
+      final defaults = PrCleanupOptions.parse(parser.parse([]));
+      check(defaults.lastNDays).equals(14);
+      check(defaults.wasLastNDaysExplicit).isFalse();
+      check(defaults.openPrLastNDays).isNull();
+
+      final explicit = PrCleanupOptions.parse(parser.parse(['-d', '21']));
+      check(explicit.lastNDays).equals(21);
+      check(explicit.wasLastNDaysExplicit).isTrue();
+      check(explicit.openPrLastNDays).equals(21);
     });
   });
 
@@ -903,6 +920,146 @@ void main() {
         ..contains('Skipped excluded worktree(s): `/tmp/_demo-busy`')
         ..contains('- branch delete failed');
     });
+
+    test('scans fork remote branches, filters non-user and DO-NOT-DELETE refs, '
+        'and prunes branch-only fork items safely', () async {
+      final forkFixture = _createForkRepositoryFixture(tempRoot);
+      String? openPrSearchQuery;
+      String? landedPrSearchQuery;
+
+      final sweep = await collectPrSweep(
+        options: PrCleanupOptions(
+          localRoot: forkFixture.reposDirPath,
+          skipGerrit: true,
+        ),
+        asyncProcessRunner: (exe, args, {workingDirectory}) async {
+          for (var i = 0; i < args.length; i++) {
+            if (args[i].startsWith('q=')) {
+              openPrSearchQuery = args[i].substring(2);
+            }
+          }
+          return ProcessResult(
+            0,
+            0,
+            jsonEncode({
+              'data': {
+                'search': {'nodes': <Object?>[]},
+              },
+            }),
+            '',
+          );
+        },
+        syncProcessRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            for (var i = 0; i < args.length; i++) {
+              if (args[i].startsWith('q=')) {
+                landedPrSearchQuery ??= args[i].substring(2);
+              }
+            }
+            return _mockForkGraphQLSync(args, forkFixture);
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      // Default PrCleanupOptions queries all open PRs (no updated:>= filter)
+      // while keeping merged:>= on landed PRs.
+      check(openPrSearchQuery).isNotNull();
+      check(openPrSearchQuery!).not((it) => it.contains('updated:>='));
+      check(landedPrSearchQuery).isNotNull();
+      check(landedPrSearchQuery!).contains('merged:>=');
+
+      final prunableByBranch = {
+        for (final p in sweep.readyToPrune) p.branch: p,
+      };
+      check(prunableByBranch.keys.toList()..sort())
+          .deepEquals(['merged-old-fork', 'wimp-dup-sprint']);
+      check(prunableByBranch['merged-old-fork']!.remoteBranch)
+          .equals('kevmoo/flutter:merged-old-fork');
+      check(prunableByBranch['merged-old-fork']!.prOrClNumber).equals(180001);
+      check(prunableByBranch['wimp-dup-sprint']!.remoteBranch)
+          .equals('kevmoo/flutter:wimp-dup-sprint');
+      check(sweep.candidateLandedIds).contains(180001);
+
+      final triageByBranch = {for (final t in sweep.needsTriage) t.branch: t};
+      check(triageByBranch.keys.toList()..sort())
+          .deepEquals(['closed-remote-only', 'unlinked-spike', 'wt-with-fork']);
+      check(triageByBranch['closed-remote-only']!.remoteBranch)
+          .equals('kevmoo/flutter:closed-remote-only');
+      check(triageByBranch['closed-remote-only']!.prOrClNumber).equals(180002);
+      check(triageByBranch['unlinked-spike']!.remoteBranch)
+          .equals('kevmoo/flutter:unlinked-spike');
+      // Unlocked worktree + matching fork branch deduplicate into one row!
+      check(triageByBranch['wt-with-fork']!.worktreePath)
+          .equals(forkFixture.wtWithForkPath);
+      check(triageByBranch['wt-with-fork']!.remoteBranch)
+          .equals('kevmoo/flutter:wt-with-fork');
+
+      final md = formatMarkdownReport(sweep);
+      check(md)
+        ..contains(
+          'branch `wimp-dup-sprint` (remote `kevmoo/flutter:wimp-dup-sprint`)',
+        )
+        ..contains('`kevmoo/flutter:closed-remote-only`')
+        ..not((it) => it.contains('dependabot'))
+        ..not((it) => it.contains('DO-NOT-DELETE-sprint\n'));
+
+      // Execute branch-only pruning (including a synthetic unsafe local branch
+      // and a protected DO-NOT-DELETE guard check).
+      final deletedRemoteApis = <String>[];
+      final scannedRepos = scanLocalGitRepositories(
+        Directory(forkFixture.reposDirPath),
+      );
+      final applyRes = await executeReadyToPrune(
+        items: [
+          prunableByBranch['wimp-dup-sprint']!,
+          const PrunableItem(
+            source: 'github',
+            repository: 'flutter/flutter',
+            branch: 'unlinked-spike',
+            remoteBranch: 'kevmoo/flutter:unlinked-spike',
+            description: 'Synthetic test with unmerged local branch',
+          ),
+          const PrunableItem(
+            source: 'github',
+            repository: 'flutter/flutter',
+            branch: 'archive/DO-NOT-DELETE-sprint',
+            remoteBranch: 'kevmoo/flutter:archive/DO-NOT-DELETE-sprint',
+            description: 'Protected archive ref',
+          ),
+        ],
+        localRepos: scannedRepos,
+        syncProcessRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            deletedRemoteApis.add(args.join(' '));
+            return ProcessResult(0, 0, '', '');
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      check(applyRes.deletedRemoteBranches).equals(2);
+      // wimp-dup-sprint local branch (matching DO-NOT-DELETE tag SHA) deleted;
+      // unlinked-spike local branch (unmerged) preserved!
+      check(applyRes.deletedBranches).equals(1);
+      check(applyRes.errors)
+        ..any((e) => e.contains('Skipped local branch `unlinked-spike`'))
+        ..any((e) => e.contains('Refusing to delete protected remote branch'));
+      check(_gitBranches(forkFixture.repoPath))
+        ..not((it) => it.contains('wimp-dup-sprint'))
+        ..contains('unlinked-spike')
+        ..contains('archive/DO-NOT-DELETE-sprint');
+      check(deletedRemoteApis)
+          .not((it) => it.any((s) => s.contains('DO-NOT-DELETE')));
+    });
   });
 }
 
@@ -930,6 +1087,8 @@ void _runGit(List<String> args, {String? cwd}) {
     'user.email=test@example.com',
     '-c',
     'commit.gpgsign=false',
+    '-c',
+    'tag.gpgSign=false',
     '-c',
     'core.hooksPath=/dev/null',
     ...args,
@@ -1483,4 +1642,244 @@ GerritAnalysisResult _mockGerritAnalysisResult(String rootPath) {
     remoteOnlyCLs: cls,
     worktreeBranches: const {},
   );
+}
+
+typedef _ForkFixture = ({
+  String reposDirPath,
+  String repoPath,
+  String wtWithForkPath,
+  String wtLockedPath,
+  String trunkSha,
+  String archiveSha,
+  String mergedOldSha,
+  String closedSha,
+  String unlinkedSha,
+});
+
+_ForkFixture _createForkRepositoryFixture(Directory tempRoot) {
+  final reposDir = Directory('${tempRoot.path}/fork_repos')
+    ..createSync(recursive: true);
+  final repoDir = Directory('${reposDir.path}/flutter')..createSync();
+  _runGit(['init', '-b', 'master'], cwd: repoDir.path);
+  _runGit([
+    'remote',
+    'add',
+    'origin',
+    'https://github.com/flutter/flutter.git',
+  ], cwd: repoDir.path);
+  _runGit([
+    'remote',
+    'add',
+    'kevmoo',
+    'https://github.com/kevmoo/flutter.git',
+  ], cwd: repoDir.path);
+
+  File('${repoDir.path}/README.md').writeAsStringSync('base\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'base'], cwd: repoDir.path);
+  final trunkSha = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit([
+    'update-ref',
+    'refs/remotes/origin/master',
+    trunkSha,
+  ], cwd: repoDir.path);
+
+  _runGit([
+    'checkout',
+    '-b',
+    'archive/DO-NOT-DELETE-sprint',
+  ], cwd: repoDir.path);
+  File('${repoDir.path}/sprint.txt').writeAsStringSync('sprint\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'sprint'], cwd: repoDir.path);
+  final archiveSha = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit([
+    'tag',
+    'archive/tag-DO-NOT-DELETE-sprint',
+    archiveSha,
+  ], cwd: repoDir.path);
+  _runGit(['branch', 'wimp-dup-sprint', archiveSha], cwd: repoDir.path);
+
+  _runGit(['checkout', '-b', 'unlinked-spike', 'master'], cwd: repoDir.path);
+  File('${repoDir.path}/spike.txt').writeAsStringSync('spike\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'spike'], cwd: repoDir.path);
+  final unlinkedSha = _gitRevParse(repoDir.path, 'HEAD');
+
+  _runGit(['checkout', 'master'], cwd: repoDir.path);
+
+  final wtWithFork = '${reposDir.path}/_flutter-wt-with-fork';
+  _runGit([
+    'worktree',
+    'add',
+    '-b',
+    'wt-with-fork',
+    wtWithFork,
+    'master',
+  ], cwd: repoDir.path);
+  File('$wtWithFork/wt.txt').writeAsStringSync('wt\n');
+  _runGit(['add', '.'], cwd: wtWithFork);
+  _runGit(['commit', '-m', 'wt commit'], cwd: wtWithFork);
+
+  final wtLocked = '${reposDir.path}/_flutter-locked-fork';
+  _runGit([
+    'worktree',
+    'add',
+    '-b',
+    'locked-fork',
+    wtLocked,
+    'master',
+  ], cwd: repoDir.path);
+  _runGit([
+    'worktree',
+    'lock',
+    '--reason',
+    'Keep locked spike',
+    wtLocked,
+  ], cwd: repoDir.path);
+
+  return (
+    reposDirPath: canonicalizeWorktreePath(reposDir.path),
+    repoPath: canonicalizeWorktreePath(repoDir.path),
+    wtWithForkPath: canonicalizeWorktreePath(wtWithFork),
+    wtLockedPath: canonicalizeWorktreePath(wtLocked),
+    trunkSha: trunkSha,
+    archiveSha: archiveSha,
+    mergedOldSha: '1111111111111111111111111111111111111111',
+    closedSha: '2222222222222222222222222222222222222222',
+    unlinkedSha: unlinkedSha,
+  );
+}
+
+ProcessResult _mockForkGraphQLSync(List<String> args, _ForkFixture f) {
+  final queryArg = args.firstWhere(
+    (a) => a.startsWith('query='),
+    orElse: () => '',
+  );
+  if (queryArg.contains('search(')) {
+    return ProcessResult(
+      0,
+      0,
+      jsonEncode({
+        'data': {
+          'search': {'nodes': <Object?>[]},
+        },
+      }),
+      '',
+    );
+  }
+  if (queryArg.contains('refs(refPrefix: "refs/heads/"')) {
+    Map<String, dynamic> ref(String name, String oid, String login) => {
+      'name': name,
+      'target': {
+        'oid': oid,
+        'committedDate': '2026-09-01T12:00:00Z',
+        'author': {
+          'user': {'login': login},
+        },
+        'committer': {
+          'user': {'login': login},
+        },
+      },
+    };
+    return ProcessResult(
+      0,
+      0,
+      jsonEncode({
+        'data': {
+          'viewer': {'login': 'kevmoo'},
+          'r0': {
+            'nameWithOwner': 'kevmoo/flutter',
+            'isFork': true,
+            'viewerPermission': 'ADMIN',
+            'defaultBranchRef': {'name': 'master'},
+            'parent': {'nameWithOwner': 'flutter/flutter'},
+            'refs': {
+              'pageInfo': {'hasNextPage': false, 'endCursor': null},
+              'nodes': [
+                ref('master', f.trunkSha, 'kevmoo'),
+                ref('dependabot/cargo/foo', '3333333333', 'dependabot[bot]'),
+                ref('other-author-branch', '4444444444', 'someone-else'),
+                ref('archive/DO-NOT-DELETE-sprint', f.archiveSha, 'kevmoo'),
+                ref('locked-fork', f.trunkSha, 'kevmoo'),
+                ref('open-on-upstream', '5555555555', 'kevmoo'),
+                ref('merged-old-fork', f.mergedOldSha, 'kevmoo'),
+                ref('wimp-dup-sprint', f.archiveSha, 'kevmoo'),
+                ref('closed-remote-only', f.closedSha, 'kevmoo'),
+                ref('unlinked-spike', f.unlinkedSha, 'kevmoo'),
+                ref('wt-with-fork', f.unlinkedSha, 'kevmoo'),
+              ],
+            },
+          },
+        },
+      }),
+      '',
+    );
+  }
+
+  final data = <String, dynamic>{};
+  final aliasRe = RegExp(
+    r'(q\d+):\s*repository\([^)]*\)\s*\{[\s\S]*?headRefName:\s*"([^"]+)"',
+  );
+  for (final m in aliasRe.allMatches(queryArg)) {
+    final alias = m.group(1)!;
+    final branch = m.group(2)!;
+    data[alias] = _mockUpstreamBranchLookup(branch, f);
+  }
+  return ProcessResult(0, 0, jsonEncode({'data': data}), '');
+}
+
+Map<String, dynamic> _mockUpstreamBranchLookup(String branch, _ForkFixture f) {
+  final empty = <Object?>[];
+  return {
+    'nameWithOwner': 'flutter/flutter',
+    'url': 'https://github.com/flutter/flutter',
+    'pullRequests': {'nodes': empty},
+    'openPrs': {
+      'nodes': branch == 'open-on-upstream'
+          ? [
+              {
+                'number': 195000,
+                'author': {'login': 'kevmoo'},
+                'headRepository': {'nameWithOwner': 'kevmoo/flutter'},
+              },
+            ]
+          : empty,
+    },
+    'mergedPrs': {
+      'nodes': branch == 'merged-old-fork'
+          ? [
+              {
+                'number': 180001,
+                'title': 'Old merged fork PR',
+                'url': 'https://github.com/flutter/flutter/pull/180001',
+                'baseRefName': 'master',
+                'headRefOid': f.mergedOldSha,
+                'createdAt': '2026-08-01T00:00:00Z',
+                'mergedAt': '2026-08-02T00:00:00Z',
+                'closedAt': '2026-08-02T00:00:00Z',
+                'author': {'login': 'kevmoo'},
+                'headRepository': {'nameWithOwner': 'kevmoo/flutter'},
+                'mergeCommit': {'oid': 'abcdef1234'},
+              },
+            ]
+          : empty,
+    },
+    'closedPrs': {
+      'nodes': branch == 'closed-remote-only'
+          ? [
+              {
+                'number': 180002,
+                'title': 'Closed remote-only fork PR',
+                'url': 'https://github.com/flutter/flutter/pull/180002',
+                'headRefOid': f.closedSha,
+                'createdAt': '2026-08-10T00:00:00Z',
+                'closedAt': '2026-08-12T00:00:00Z',
+                'author': {'login': 'kevmoo'},
+                'headRepository': {'nameWithOwner': 'kevmoo/flutter'},
+              },
+            ]
+          : empty,
+    },
+  };
 }

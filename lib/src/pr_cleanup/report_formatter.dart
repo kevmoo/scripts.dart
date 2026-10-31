@@ -130,9 +130,12 @@ String _formatPrunableItemLine(PrunableItem item) {
       ? ' [`${p.basename(item.worktreePath!)}`](file://${item.worktreePath})'
       : '';
   final branchPart = ' branch `${item.branch}`';
+  final remotePart = item.remoteBranch != null
+      ? ' (remote `${item.remoteBranch}`)'
+      : '';
   final prPart = _formatItemPrOrCl(item.source, item.prOrClNumber);
   final idPrefix = prPart.isNotEmpty ? '**$prPart**: ' : '';
-  return '  - $idPrefix$wtPart$branchPart';
+  return '  - $idPrefix$wtPart$branchPart$remotePart';
 }
 
 String _formatItemPrOrCl(String source, int? number) {
@@ -272,13 +275,21 @@ void _formatNeedsTriageSection(
     final idLabel = item.prOrClNumber != null
         ? _formatItemPrOrCl(item.source, item.prOrClNumber)
         : '⚪';
-    final loc = item.worktreePath != null
-        ? '[`${p.basename(item.worktreePath!)}`](file://${item.worktreePath})'
-        : '`${item.branch}`';
+    final loc = _formatTriageLocation(item);
     buffer.writeln(
       '| $idLabel | `${item.repository}` | $loc | ${item.reason} |',
     );
   }
+}
+
+String _formatTriageLocation(TriageItem item) {
+  if (item.worktreePath != null) {
+    final wt =
+        '[`${p.basename(item.worktreePath!)}`](file://${item.worktreePath})';
+    return item.remoteBranch != null ? '$wt (`${item.remoteBranch}`)' : wt;
+  }
+  if (item.remoteBranch != null) return '`${item.remoteBranch}`';
+  return '`${item.branch}`';
 }
 
 void _formatLandedIdsSection(

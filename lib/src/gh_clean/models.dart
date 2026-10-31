@@ -45,6 +45,7 @@ class LandedPr extends GhPrRef {
       headRefName.isNotEmpty &&
       headRefName != baseRefName &&
       !isTrunkBranchName(headRefName) &&
+      !isDoNotDeleteRef(headRefName) &&
       (headRepository!.toLowerCase() != repository.toLowerCase() ||
           !isProtectedBranch(headRefName)) &&
       (headRepoPermission == 'ADMIN' || headRepoPermission == 'WRITE');
