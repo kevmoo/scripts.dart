@@ -3,9 +3,11 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../gh_clean.dart' show buildLocalRepoMap;
+import '../gh_clean/branch_policy.dart';
 import '../gh_clean/cleanup_actions.dart';
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
+import 'fork_branch_scanner.dart';
 import 'models.dart';
 
 class _PruneCounts {
@@ -209,8 +211,18 @@ void _pruneGithubItem(
   List<String> errors,
   void Function(String message)? onProgress,
 ) {
-  if (item.landedPr == null) return;
   final repo = repoMap[item.repository.toLowerCase()];
+  if (item.landedPr == null) {
+    _pruneBranchOnlyGithubItem(
+      item: item,
+      localRepo: repo,
+      runner: runner,
+      counts: counts,
+      errors: errors,
+      onProgress: onProgress,
+    );
+    return;
+  }
   final skipRepoSync =
       repo != null &&
       normalizedExcluded.contains(canonicalizeWorktreePath(repo.repoPath));
@@ -227,6 +239,131 @@ void _pruneGithubItem(
     } else {
       _tallyAction(action.description, counts);
     }
+  }
+}
+
+void _pruneBranchOnlyGithubItem({
+  required PrunableItem item,
+  required LocalRepoInfo? localRepo,
+  required SyncProcessRunner runner,
+  required _PruneCounts counts,
+  required List<String> errors,
+  required void Function(String message)? onProgress,
+}) {
+  if (item.remoteBranch != null && item.remoteBranch!.isNotEmpty) {
+    _deleteBranchOnlyRemoteRef(
+      remoteSpec: item.remoteBranch!,
+      localRepo: localRepo,
+      runner: runner,
+      counts: counts,
+      errors: errors,
+      onProgress: onProgress,
+    );
+  }
+  if (localRepo != null && item.branch.isNotEmpty) {
+    _deleteBranchOnlyLocalRef(
+      branch: item.branch,
+      localRepo: localRepo,
+      runner: runner,
+      counts: counts,
+      errors: errors,
+      onProgress: onProgress,
+    );
+  }
+}
+
+void _deleteBranchOnlyRemoteRef({
+  required String remoteSpec,
+  required LocalRepoInfo? localRepo,
+  required SyncProcessRunner runner,
+  required _PruneCounts counts,
+  required List<String> errors,
+  required void Function(String message)? onProgress,
+}) {
+  final colon = remoteSpec.indexOf(':');
+  if (colon <= 0 || colon >= remoteSpec.length - 1) {
+    errors.add('Invalid remoteBranch spec: $remoteSpec');
+    return;
+  }
+  final forkRepo = remoteSpec.substring(0, colon);
+  final branch = remoteSpec.substring(colon + 1);
+  if (isProtectedBranch(branch) || isDoNotDeleteRef(branch)) {
+    errors.add('Refusing to delete protected remote branch `$remoteSpec`.');
+    return;
+  }
+
+  final res = runner('gh', [
+    'api',
+    '-X',
+    'DELETE',
+    'repos/$forkRepo/git/refs/heads/$branch',
+  ]);
+  if (res.exitCode != 0) {
+    errors.add(
+      'Failed to delete remote branch `$remoteSpec`: '
+      '${res.stderr.toString().trim()}',
+    );
+    return;
+  }
+
+  counts.remoteBranches++;
+  onProgress?.call('  ✓ Deleted remote branch `$remoteSpec`');
+  if (localRepo != null) {
+    for (final remote in {'origin', forkRepo.split('/').first}) {
+      runner('git', [
+        'branch',
+        '-dr',
+        '$remote/$branch',
+      ], workingDirectory: localRepo.repoPath);
+    }
+  }
+}
+
+void _deleteBranchOnlyLocalRef({
+  required String branch,
+  required LocalRepoInfo localRepo,
+  required SyncProcessRunner runner,
+  required _PruneCounts counts,
+  required List<String> errors,
+  required void Function(String message)? onProgress,
+}) {
+  if (isProtectedBranch(branch) || isDoNotDeleteRef(branch)) return;
+  final localBranch = localRepo.branches
+      .where((b) => b.name == branch)
+      .toList();
+  if (localBranch.isEmpty) return;
+
+  final isCheckedOut =
+      localRepo.currentBranch == branch ||
+      localRepo.worktrees.any(
+        (wt) =>
+            wt.path != localRepo.repoPath &&
+            (wt.branch == branch || wt.branch == 'refs/heads/$branch'),
+      );
+  if (isCheckedOut) {
+    errors.add('Skipped local branch `$branch`: checked out in worktree.');
+    return;
+  }
+
+  final sha = localBranch.first.sha;
+  final trunk = resolveTrunkBranch(localRepo);
+  final isSafe =
+      isCommitZeroAheadOfTrunk(localRepo.repoPath, trunk, sha, runner) ||
+      collectDoNotDeleteOids(localRepo, runner).contains(sha);
+  if (!isSafe) {
+    errors.add('Skipped local branch `$branch`: has unmerged commits.');
+    return;
+  }
+
+  final res = runner('git', ['-C', localRepo.repoPath, 'branch', '-D', branch]);
+  if (res.exitCode == 0) {
+    counts.branches++;
+    onProgress?.call('  ✓ Deleted local branch `$branch`');
+  } else {
+    errors.add(
+      'Failed to delete local branch `$branch`: '
+      '${res.stderr.toString().trim()}',
+    );
   }
 }
 

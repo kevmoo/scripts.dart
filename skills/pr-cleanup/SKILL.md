@@ -53,12 +53,12 @@ view of `~/github` and `~/github/dart-sdk`:
    ```bash
    kscripts pr-cleanup --markdown
    ```
-   _(Concurrently queries landed GitHub PRs, open GitHub PRs, cross-author and
-   closed-unmerged branches, unlinked local worktrees, and Dart SDK Gerrit CLs,
-   rendering `✅ Ready to Prune`, `🚫 Active / Hands-Off` with
-   `Opened / Touched` dates sorted by last `Touched` descending,
-   `⚠️ Needs Triage`, and `📌 Locked Worktrees (FYI — Safe-Kept Local Work)`
-   last)._
+   _(Concurrently queries landed GitHub PRs, all open GitHub PRs, user-authored
+   remote branches on forked repositories, cross-author and closed-unmerged
+   branches, unlinked local worktrees, and Dart SDK Gerrit CLs, rendering
+   `✅ Ready to Prune`, `🚫 Active / Hands-Off` with `Opened / Touched` dates
+   sorted by last `Touched` descending, `⚠️ Needs Triage`, and
+   `📌 Locked Worktrees (FYI — Safe-Kept Local Work)` last)._
 2. **Targeted Individual Collectors** _(optional when scoping to a single
    view)_:
    - **Merged/Closed PRs, Stale Worktrees & Dangling Remote Branches**:
@@ -123,11 +123,13 @@ Before proposing to delete any worktree, local branch, or unpushed commit:
 Present the findings in a structured Markdown report (or artifact for large
 sweeps) organized into four descriptive categories:
 
-- **`✅ Ready to Prune` (JSON field: `readyToPrune` — Merged PRs/CLs & Clean
-  Worktrees)**:
+- **`✅ Ready to Prune` (JSON field: `readyToPrune` — Merged PRs/CLs, Stale
+  Merged Fork Branches & Clean Worktrees)**:
   - Clean unlocked worktrees (`git worktree remove`), merged local feature
-    branches (`git branch -D`), dangling remote head branches on writable repos,
-    and trunk fast-forwards (`--ff-only`).
+    branches (`git branch -D`), dangling remote head branches on writable repos
+    and forks (`<fork_owner>/<fork_repo>:<branch>`, including older merged PRs
+    and branches duplicating a preserved `DO-NOT-DELETE` archive ref), and trunk
+    fast-forwards (`--ff-only`).
   - List any linked tasks or waiting sessions whose PRs have landed so they can
     be reconciled after VCS cleanup.
 - **`🚫 Active / Hands-Off` (JSON field: `active` — Open PRs, Active Gerrit CLs,
@@ -159,14 +161,20 @@ sweeps) organized into four descriptive categories:
        `CHANGES_REQUESTED` review is a stale veto on an older commit, surface
        the option (gated via `ask_question`) to dismiss the stale review.
 - **`⚠️ Needs Triage` (JSON field: `needsTriage` — Unlocked Unlinked Worktrees,
-  Closed-Unmerged PRs, Dirty Worktrees)**:
+  Closed-Unmerged PRs, Unlinked Fork Branches, Dirty Worktrees)**:
   - Detail the exact modified/untracked files (`git status -s`) or unmerged
     commits so the user can decide how to handle each item.
-  - Dangling unlinked worktrees must always be triaged carefully—never bulk
-    force-removed. Recommend triaging each dangling worktree to **either
-    delete** (`git -C <parent_repo> worktree remove --force <worktree_path>` and
+  - Dangling unlinked worktrees and unmerged fork remote branches
+    (`<fork_owner>/<fork_repo>:<branch>`, filtered to branches authored or
+    committed by the user while preserving `DO-NOT-DELETE` archive refs) must
+    always be triaged carefully—never bulk force-removed. Recommend triaging
+    each dangling worktree to **either delete**
+    (`git -C <parent_repo> worktree remove --force <worktree_path>` and
     `git -C <parent_repo> branch -D <branch>`) **OR lock for safekeeping**
-    (`git -C <parent_repo> worktree lock --reason "<descriptive reason with project, context, and why kept>" <worktree_path>`).
+    (`git -C <parent_repo> worktree lock --reason "<descriptive reason with project, context, and why kept>" <worktree_path>`),
+    and triaging confirmed stale fork remote branches via
+    `gh api -X DELETE repos/<fork_owner>/<fork_repo>/git/refs/heads/<branch>`
+    followed by `git -C <parent_repo> fetch <fork_remote> --prune`.
   - Explicitly encourage the human to provide a descriptive `--reason` that
     includes project context, ticket/goal, and why the worktree is being kept.
 - **`📌 Locked Worktrees (FYI — Safe-Kept Local Work)` (JSON field:
