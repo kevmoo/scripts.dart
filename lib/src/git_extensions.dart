@@ -4,6 +4,8 @@ import 'dart:io';
 import 'package:git/git.dart';
 import 'package:path/path.dart' as p;
 
+import 'shared/git_cli.dart';
+
 /// PR metadata retrieved from GitHub API.
 typedef PrInfo = ({
   String state,
@@ -449,30 +451,10 @@ extension GitDirExtensions on GitDir {
     ], throwOnError: false);
     if (result.exitCode != 0) return const {};
 
-    final worktrees = <String, String>{}; // branchName -> path
-    final lines = LineSplitter.split(result.stdout as String);
-
-    String? currentPath;
-    String? currentBranch;
-
-    for (final line in lines) {
-      if (line.startsWith('worktree ')) {
-        currentPath = line.substring('worktree '.length).trim();
-      } else if (line.startsWith('branch refs/heads/')) {
-        currentBranch = line.substring('branch refs/heads/'.length).trim();
-      } else if (line.isEmpty) {
-        if (currentPath != null && currentBranch != null) {
-          worktrees[currentBranch] = currentPath;
-        }
-        currentPath = null;
-        currentBranch = null;
-      }
-    }
-    if (currentPath != null && currentBranch != null) {
-      worktrees[currentBranch] = currentPath;
-    }
-
-    return worktrees;
+    return {
+      for (final wt in parseWorktreeListPorcelain(result.stdout as String))
+        if (wt.branch.isNotEmpty) wt.branch: wt.path,
+    };
   }
 
   /// Removes a worktree given its path.
@@ -505,23 +487,8 @@ extension GitDirExtensions on GitDir {
     ], throwOnError: false);
     if (result.exitCode != 0) return null;
 
-    final lines = LineSplitter.split(result.stdout as String);
-    String? currentPath;
-    var isBare = false;
-
-    for (final line in lines) {
-      if (line.startsWith('worktree ')) {
-        if (currentPath != null && !isBare) {
-          return currentPath;
-        }
-        currentPath = line.substring('worktree '.length).trim();
-        isBare = false;
-      } else if (line == 'bare') {
-        isBare = true;
-      }
-    }
-    if (currentPath != null && !isBare) {
-      return currentPath;
+    for (final wt in parseWorktreeListPorcelain(result.stdout as String)) {
+      if (!wt.isBare) return wt.path;
     }
     return null;
   }
@@ -529,20 +496,17 @@ extension GitDirExtensions on GitDir {
   /// Checks whether this [GitDir] represents a secondary (linked) worktree
   /// rather than the primary/main repository root.
   Future<bool> isSecondaryWorktree() async {
-    final gitDirResult = await Process.run('git', [
+    final out = await defaultGitCli.stdoutOrNull(const [
       'rev-parse',
       '--git-dir',
-    ], workingDirectory: path);
-    final gitCommonDirResult = await Process.run('git', [
-      'rev-parse',
       '--git-common-dir',
     ], workingDirectory: path);
-    if (gitDirResult.exitCode != 0 || gitCommonDirResult.exitCode != 0) {
-      return false;
-    }
+    if (out == null) return false;
+    final lines = LineSplitter.split(out).toList();
+    if (lines.length < 2) return false;
 
-    final gitDir = (gitDirResult.stdout as String).trim();
-    final gitCommonDir = (gitCommonDirResult.stdout as String).trim();
+    final gitDir = lines[0].trim();
+    final gitCommonDir = lines[1].trim();
 
     final canonicalGitDir = p.canonicalize(
       p.isAbsolute(gitDir) ? gitDir : p.join(path, gitDir),
@@ -558,44 +522,4 @@ extension GitDirExtensions on GitDir {
     final expectedWorktreePrefix = p.join(canonicalGitCommonDir, 'worktrees');
     return p.isWithin(expectedWorktreePrefix, canonicalGitDir);
   }
-}
-
-/// Normalizes stdout from `git rev-parse --abbrev-ref origin/HEAD` by stripping
-/// a leading `origin/` prefix.
-String? parseOriginHeadBranchOutput(String rawStdout) {
-  final output = rawStdout.trim();
-  if (output.isEmpty) return null;
-  if (output.startsWith('origin/')) {
-    return output.substring('origin/'.length);
-  }
-  return output;
-}
-
-/// Synchronously determines the default branch of [repoPath] by inspecting
-/// `origin/HEAD` or sniffing `origin/main` and `origin/master`.
-String sniffDefaultBranchSync(String repoPath, {String fallback = 'main'}) {
-  final result = Process.runSync('git', [
-    'rev-parse',
-    '--abbrev-ref',
-    'origin/HEAD',
-  ], workingDirectory: repoPath);
-
-  if (result.exitCode == 0) {
-    final parsed = parseOriginHeadBranchOutput(result.stdout as String);
-    if (parsed != null) return parsed;
-  }
-
-  for (final branch in ['main', 'master']) {
-    final check = Process.runSync('git', [
-      'show-ref',
-      '--verify',
-      '--quiet',
-      'refs/remotes/origin/$branch',
-    ], workingDirectory: repoPath);
-    if (check.exitCode == 0) {
-      return branch;
-    }
-  }
-
-  return fallback;
 }

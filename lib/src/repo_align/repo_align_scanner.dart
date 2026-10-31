@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import '../shared/analysis_options_resolver.dart';
+import '../shared/git_cli.dart';
 import '../shared/spot_sync.dart';
 import 'models.dart';
 
@@ -106,15 +107,12 @@ class RepoAlignScanner {
     final rawName = p.basename(dir.path);
     if (!rawName.startsWith('_')) return rawName;
 
-    final remoteRes = Process.runSync('git', [
-      '-C',
-      dir.path,
+    final remoteUrl = defaultGitCli.stdoutOrNullSync(const [
       'remote',
       'get-url',
       'origin',
-    ]);
-    if (remoteRes.exitCode == 0) {
-      final remoteUrl = (remoteRes.stdout as String).trim();
+    ], workingDirectory: dir.path);
+    if (remoteUrl != null) {
       final match = RegExp(r'[:/]([^/:]+?)(?:\.git)?$').firstMatch(remoteUrl);
       if (match != null) return match.group(1)!;
     }

@@ -6,6 +6,7 @@ import 'package:io/io.dart';
 
 import 'git_extensions.dart';
 import 'repos_config.dart';
+import 'shared/git_cli.dart';
 import 'testable_print.dart';
 
 /// Safely switches to and updates the default branch of a Git repository.
@@ -159,14 +160,15 @@ Future<void> _runGit(
 /// repository.
 Future<GitDir> getGitDir(String workingDirectory) async {
   try {
-    final result = await Process.run('git', [
-      'rev-parse',
-      '--show-toplevel',
-    ], workingDirectory: workingDirectory);
+    final result = await defaultGitCli.run(
+      const ['rev-parse', '--show-toplevel'],
+      workingDirectory: workingDirectory,
+      readOnly: true,
+    );
     if (result.exitCode != 0) {
       throw ProcessException(
         'git',
-        ['rev-parse', '--show-toplevel'],
+        const ['rev-parse', '--show-toplevel'],
         result.stderr as String,
         result.exitCode,
       );
@@ -200,11 +202,10 @@ Future<String> getDefaultBranch(GitDir gitDir) async {
   ], throwOnError: false);
 
   if (revParseResult.exitCode == 0) {
-    final output = (revParseResult.stdout as String).trim();
-    if (output.startsWith('origin/')) {
-      return output.substring('origin/'.length);
+    if (parseOriginHeadBranchOutput(revParseResult.stdout as String)
+        case final parsed?) {
+      return parsed;
     }
-    return output;
   }
 
   // If origin/HEAD is missing, we can use the extension to see if it CAN sniff a branch,

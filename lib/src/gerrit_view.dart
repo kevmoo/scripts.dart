@@ -6,7 +6,7 @@ import 'package:io/io.dart';
 import 'gerrit_view/gerrit_queries.dart';
 import 'gerrit_view/models.dart';
 import 'gerrit_view/report_printer.dart';
-import 'git_extensions.dart';
+import 'shared/git_cli.dart';
 
 export 'gerrit_view/report_printer.dart';
 
@@ -33,14 +33,14 @@ AlignmentResult calculateAlignment(
     );
   }
 
-  final remoteTreeResult = Process.runSync('git', [
+  final remoteTree = defaultGitCli.stdoutOrNullSync([
     'rev-parse',
     '--verify',
     '--quiet',
     '${remote.currentRevision}^{tree}',
   ], workingDirectory: repoPath);
 
-  if (remoteTreeResult.exitCode != 0) {
+  if (remoteTree == null) {
     return (
       state: AlignmentState.diverged,
       display: yellow.wrap(
@@ -49,24 +49,19 @@ AlignmentResult calculateAlignment(
     );
   }
 
-  final localTreeResult = Process.runSync('git', [
+  final localTree = defaultGitCli.stdoutOrNullSync([
     'rev-parse',
     '$branchName^{tree}',
   ], workingDirectory: repoPath);
 
-  if (localTreeResult.exitCode == 0) {
-    final remoteTree = (remoteTreeResult.stdout as String).trim();
-    final localTree = (localTreeResult.stdout as String).trim();
-
-    if (remoteTree == localTree) {
-      return (
-        state: AlignmentState.contentIdentical,
-        display: green.wrap(
-          '✅ CONTENT IDENTICAL (Commits differ, but file content matches '
-          'Gerrit)',
-        )!,
-      );
-    }
+  if (localTree != null && remoteTree == localTree) {
+    return (
+      state: AlignmentState.contentIdentical,
+      display: green.wrap(
+        '✅ CONTENT IDENTICAL (Commits differ, but file content matches '
+        'Gerrit)',
+      )!,
+    );
   }
 
   return (
@@ -83,11 +78,11 @@ CleanupSafety checkCleanupSafety(
   String defaultBranch,
 ) {
   final gerritRemote = resolveGerritRemoteName(repoPath);
-  final result = Process.runSync('git', [
-    'cherry',
-    '$gerritRemote/$defaultBranch',
-    branchName,
-  ], workingDirectory: repoPath);
+  final result = defaultGitCli.runSync(
+    ['cherry', '$gerritRemote/$defaultBranch', branchName],
+    workingDirectory: repoPath,
+    readOnly: true,
+  );
 
   if (result.exitCode != 0) {
     return (isSafe: false, unmergedShas: <String>[]);
@@ -106,49 +101,10 @@ CleanupSafety checkCleanupSafety(
   return (isSafe: unmerged.isEmpty, unmergedShas: unmerged);
 }
 
-String? _getCurrentBranch(String repoPath) {
-  final result = Process.runSync('git', [
-    'rev-parse',
-    '--abbrev-ref',
-    'HEAD',
-  ], workingDirectory: repoPath);
-
-  if (result.exitCode == 0) {
-    final output = (result.stdout as String).trim();
-    if (output.isNotEmpty && output != 'HEAD') {
-      return output;
-    }
-  }
-  return null;
-}
-
-Map<String, String> getWorktreeBranches(String repoPath) {
-  final result = Process.runSync('git', [
-    'worktree',
-    'list',
-    '--porcelain',
-  ], workingDirectory: repoPath);
-
-  if (result.exitCode != 0) return {};
-
-  final worktrees = <String, String>{};
-  String? currentWorktree;
-
-  for (final line in (result.stdout as String).split('\n')) {
-    if (line.startsWith('worktree ')) {
-      currentWorktree = line.substring('worktree '.length).trim();
-    } else if (line.startsWith('branch refs/heads/')) {
-      final branch = line.substring('branch refs/heads/'.length).trim();
-      if (currentWorktree != null) {
-        worktrees[branch] = currentWorktree;
-      }
-    } else if (line.isEmpty) {
-      currentWorktree = null;
-    }
-  }
-
-  return worktrees;
-}
+Map<String, String> getWorktreeBranches(String repoPath) => {
+  for (final wt in defaultGitCli.listWorktreesSync(repoPath))
+    if (wt.branch.isNotEmpty) wt.branch: wt.path,
+};
 
 String _resolveRepoInfo(String? gerritRepo) {
   final repoPath = gerritRepo == null
@@ -157,13 +113,11 @@ String _resolveRepoInfo(String? gerritRepo) {
   final candidates = <String>[repoPath, '$repoPath/core/main/sdk'];
   for (final candidate in candidates) {
     if (!Directory(candidate).existsSync()) continue;
-    final checkResult = Process.runSync('git', [
+    final topLevel = defaultGitCli.stdoutOrNullSync(const [
       'rev-parse',
       '--show-toplevel',
     ], workingDirectory: candidate);
-    if (checkResult.exitCode == 0) {
-      return (checkResult.stdout as String).trim();
-    }
+    if (topLevel != null) return topLevel;
   }
   throw GerritViewException(
     'Directory "$repoPath" is not a Git repository (or git is missing).',
@@ -171,21 +125,12 @@ String _resolveRepoInfo(String? gerritRepo) {
   );
 }
 
-String? _getGitConfig(String key, String repoPath) {
-  final result = Process.runSync('git', [
-    'config',
-    '--get',
-    key,
-  ], workingDirectory: repoPath);
-  if (result.exitCode == 0 && (result.stdout as String).trim().isNotEmpty) {
-    return (result.stdout as String).trim();
-  }
-  return null;
-}
-
 String resolveGerritRemoteName(String actualRepoRoot) {
   for (final remote in const ['upstream', 'dart-googlesource', 'origin']) {
-    final url = _getGitConfig('remote.$remote.url', actualRepoRoot);
+    final url = defaultGitCli.configGetSync(
+      'remote.$remote.url',
+      workingDirectory: actualRepoRoot,
+    );
     if (url != null &&
         (url.contains('googlesource.com') ||
             url.startsWith('sso://') ||
@@ -197,14 +142,14 @@ String resolveGerritRemoteName(String actualRepoRoot) {
 }
 
 String? _parseGerritHostFromConfig(String actualRepoRoot) {
-  final serverResult = Process.runSync('git', [
+  final serverOut = defaultGitCli.stdoutOrNullSync(const [
     'config',
     '--get-regexp',
     r'branch\..*\.gerritserver',
   ], workingDirectory: actualRepoRoot);
-  if (serverResult.exitCode != 0) return null;
+  if (serverOut == null) return null;
 
-  for (final line in (serverResult.stdout as String).trim().split('\n')) {
+  for (final line in serverOut.split('\n')) {
     final lastSpace = line.lastIndexOf(' ');
     if (lastSpace == -1) continue;
     final uri = Uri.tryParse(line.substring(lastSpace + 1).trim());
@@ -215,7 +160,10 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
 
 (String, String?)? _parseRemoteOrigin(String actualRepoRoot) {
   final remoteName = resolveGerritRemoteName(actualRepoRoot);
-  final remoteUrl = _getGitConfig('remote.$remoteName.url', actualRepoRoot);
+  final remoteUrl = defaultGitCli.configGetSync(
+    'remote.$remoteName.url',
+    workingDirectory: actualRepoRoot,
+  );
   if (remoteUrl == null) return null;
   if (remoteUrl.startsWith('sso://')) {
     final parts = remoteUrl.substring('sso://'.length).split('/');
@@ -246,12 +194,18 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
 }
 
 (String, String, bool) _resolveGerritDetails(String actualRepoRoot) {
-  var isGerrit = _getGitConfig('gerrit.host', actualRepoRoot) != null;
-  var gerritHost = _getGitConfig('gerrit.host', actualRepoRoot);
-  if (gerritHost != null && gerritHost.toLowerCase() == 'true') {
-    gerritHost = null;
-  }
-  var gerritProject = _getGitConfig('gerrit.project', actualRepoRoot);
+  final rawHost = defaultGitCli.configGetSync(
+    'gerrit.host',
+    workingDirectory: actualRepoRoot,
+  );
+  var isGerrit = rawHost != null;
+  var gerritHost = rawHost != null && rawHost.toLowerCase() == 'true'
+      ? null
+      : rawHost;
+  var gerritProject = defaultGitCli.configGetSync(
+    'gerrit.project',
+    workingDirectory: actualRepoRoot,
+  );
 
   gerritHost ??= _parseGerritHostFromConfig(actualRepoRoot);
   if (gerritHost == null || gerritProject == null) {
@@ -285,13 +239,13 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
 }
 
 List<String> _listAllLocalBranches(String actualRepoRoot) {
-  final res = Process.runSync('git', [
+  final out = defaultGitCli.stdoutOrNullSync(const [
     'for-each-ref',
     '--format=%(refname:short)',
     'refs/heads/',
   ], workingDirectory: actualRepoRoot);
-  if (res.exitCode != 0) return const [];
-  return (res.stdout as String)
+  if (out == null) return const [];
+  return out
       .split('\n')
       .map((s) => s.trim())
       .where((s) => s.isNotEmpty)
@@ -300,15 +254,14 @@ List<String> _listAllLocalBranches(String actualRepoRoot) {
 
 Map<String, int> _readConfiguredBranchIssues(String actualRepoRoot) {
   final localBranchIssues = <String, int>{};
-  final configResult = Process.runSync('git', [
+  final out = defaultGitCli.stdoutOrNullSync(const [
     'config',
     '--get-regexp',
     r'branch\..*\.gerritissue',
   ], workingDirectory: actualRepoRoot);
-  if (configResult.exitCode != 0) return localBranchIssues;
+  if (out == null) return localBranchIssues;
 
-  final lines = (configResult.stdout as String).trim().split('\n');
-  for (final line in lines) {
+  for (final line in out.split('\n')) {
     final entry = _parseBranchIssueLine(line);
     if (entry != null) {
       localBranchIssues[entry.$1] = entry.$2;
@@ -459,13 +412,17 @@ final _changeIdRegex = RegExp(
 );
 
 CommitDetails? _fetchCommitDetails(String repoPath, String branchName) {
-  final result = Process.runSync('git', [
-    'log',
-    '-n',
-    '1',
-    '--format=COMMIT_METADATA_START%n%H%n%ar%n%B',
-    branchName,
-  ], workingDirectory: repoPath);
+  final result = defaultGitCli.runSync(
+    [
+      'log',
+      '-n',
+      '1',
+      '--format=COMMIT_METADATA_START%n%H%n%ar%n%B',
+      branchName,
+    ],
+    workingDirectory: repoPath,
+    readOnly: true,
+  );
   if (result.exitCode != 0) return null;
 
   final output = result.stdout as String;
@@ -537,17 +494,20 @@ Future<void> _fetchRemoteChanges(
   onProgress?.call(
     styleDim.wrap('Fetching remote changes from Gerrit ($gerritRemote)...')!,
   );
-  final fetchResult = await Process.run('git', [
-    'fetch',
-    '--quiet',
-    gerritRemote,
-    ...fetchRefs,
-  ], workingDirectory: actualRepoRoot);
-  if (fetchResult.exitCode == 0) return;
+  final fetchOk = await defaultGitCli.check(
+    ['fetch', '--quiet', gerritRemote, ...fetchRefs],
+    workingDirectory: actualRepoRoot,
+    readOnly: false,
+  );
+  if (fetchOk) return;
 
   if (hasClosedBranches &&
-      _getGitConfig('remote.upstream-sdk.url', actualRepoRoot) != null) {
-    Process.runSync('git', [
+      defaultGitCli.configGetSync(
+            'remote.upstream-sdk.url',
+            workingDirectory: actualRepoRoot,
+          ) !=
+          null) {
+    defaultGitCli.runSync([
       'fetch',
       'upstream-sdk',
       'refs/heads/$defaultBranch:refs/remotes/$gerritRemote/$defaultBranch',
@@ -604,8 +564,8 @@ Future<GerritAnalysisResult?> analyzeGerritWork({
     rethrow;
   }
 
-  final defaultBranch = sniffDefaultBranchSync(actualRepoRoot);
-  final currentBranch = _getCurrentBranch(actualRepoRoot);
+  final defaultBranch = defaultGitCli.defaultBranchSync(actualRepoRoot);
+  final currentBranch = defaultGitCli.currentBranchSync(actualRepoRoot);
 
   onProgress?.call('Querying active CLs from Gerrit ($gerritHost)...');
   final remoteCLs = fetchRemoteCLs(actualRepoRoot, gerritHost);
