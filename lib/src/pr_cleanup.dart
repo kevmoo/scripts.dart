@@ -17,7 +17,7 @@ const prCleanupDescription =
 
 /// Default local file path where `kscripts pr-cleanup` caches the latest JSON
 /// sweep result for ad-hoc DuckDB / jq querying.
-const defaultPrCleanupJsonCachePath = '/tmp/pr_cleanup_latest.json';
+const _defaultPrCleanupJsonCachePath = '/tmp/pr_cleanup_latest.json';
 
 /// Main entrypoint for `kscripts pr-cleanup`.
 Future<void> runPrCleanup({
@@ -25,7 +25,7 @@ Future<void> runPrCleanup({
   SyncProcessRunner? syncProcessRunner,
   ProcessRunner? asyncProcessRunner,
   void Function(String message)? onProgress,
-  String? jsonCachePath = defaultPrCleanupJsonCachePath,
+  String? jsonCachePath = _defaultPrCleanupJsonCachePath,
 }) async {
   final sweepResult = await collectPrSweep(
     options: options,

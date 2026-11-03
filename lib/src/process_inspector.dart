@@ -37,7 +37,7 @@ abstract interface class ProcessInspector {
     if (Platform.isLinux) {
       return ProcFsProcessInspector();
     } else if (Platform.isMacOS) {
-      return WitrProcessInspector();
+      return _WitrProcessInspector();
     } else {
       throw const DartCleanException(
         'dart-clean is currently only supported on macOS and Linux.',
@@ -199,15 +199,18 @@ class ProcFsProcessInspector({final String procPath = '/proc'})
 }
 
 /// macOS process inspector utilizing the `witr` command-line utility.
-class WitrProcessInspector({final ProcessRunner runner = defaultProcessRunner})
-    implements ProcessInspector {
+class _WitrProcessInspector implements ProcessInspector {
   @override
   String get reaperName => 'launchd';
 
   @override
   Future<ProcessInfo?> inspect(int pid) async {
     try {
-      final result = await runner('witr', ['--pid', '$pid', '--json']);
+      final result = await defaultProcessRunner('witr', [
+        '--pid',
+        '$pid',
+        '--json',
+      ]);
       final stdout = result.stdout as String;
 
       if (stdout.trim().isEmpty && result.exitCode != 0) {
@@ -245,7 +248,7 @@ class WitrProcessInspector({final ProcessRunner runner = defaultProcessRunner})
   @override
   Future<List<({int pid, String command})>> ancestry(int pid) async {
     try {
-      final treeResult = await runner('witr', [
+      final treeResult = await defaultProcessRunner('witr', [
         '--pid',
         '$pid',
         '--tree',

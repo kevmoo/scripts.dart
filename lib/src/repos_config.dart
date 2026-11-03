@@ -71,7 +71,7 @@ GitUpRepoConfig? loadGitUpRepoConfig(
   final rootMap = _readRootYamlMap(file);
   if (rootMap == null) return null;
 
-  final canonicalTarget = canonicalizeRepoPath(repoPath, homeDirectory: home);
+  final canonicalTarget = _canonicalizeRepoPath(repoPath, homeDirectory: home);
 
   final seenPaths = <String, String>{};
   GitUpRepoConfig? matched;
@@ -84,7 +84,7 @@ GitUpRepoConfig? loadGitUpRepoConfig(
       );
     }
 
-    final canonicalKey = canonicalizeRepoPath(
+    final canonicalKey = _canonicalizeRepoPath(
       key,
       homeDirectory: home,
       sourceConfigPath: effectivePath,
@@ -114,7 +114,7 @@ GitUpRepoConfig? loadGitUpRepoConfig(
 /// Expands a leading `~` against [homeDirectory] (or `HOME` outside test zones)
 /// and canonicalizes [rawPath], resolving symlinks when the directory exists on
 /// disk.
-String canonicalizeRepoPath(
+String _canonicalizeRepoPath(
   String rawPath, {
   String? homeDirectory,
   String? sourceConfigPath,

@@ -31,7 +31,7 @@ Future<void> runRelayWhoamiCli(List<String> args) async {
     return;
   }
 
-  final env = await detectRelayEnvironment();
+  final env = await _detectRelayEnvironment();
   final resolvedChannel = _resolveChannel(options.channel, env);
 
   if (options.mode == 'header') {
@@ -99,7 +99,7 @@ Future<void> runRelayWhoamiCli(List<String> args) async {
 
 /// Detects the current machine persona, available CLIs (`ggh`, `gh`), and
 /// repository paths without any hardcoded corporate strings.
-Future<RelayEnvironment> detectRelayEnvironment() async {
+Future<RelayEnvironment> _detectRelayEnvironment() async {
   final sysEnv = Platform.environment;
   final home = sysEnv['HOME'] ?? '';
   final unameM = await _runCapture('uname', const ['-m']) ?? 'x86_64';

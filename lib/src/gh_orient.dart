@@ -19,7 +19,7 @@ typedef OrientCommandRunner = Future<String> Function(
   String? workingDirectory,
 });
 
-Future<String> defaultOrientCommandRunner(
+Future<String> _defaultOrientCommandRunner(
   String command,
   List<String> args, {
   String? workingDirectory,
@@ -259,7 +259,7 @@ class RepositoryOrientation {
 class OrientationGatherer {
   final OrientCommandRunner runCmd;
 
-  new({this.runCmd = defaultOrientCommandRunner});
+  new({this.runCmd = _defaultOrientCommandRunner});
 
   Future<RepositoryOrientation> gather({
     String? workingDirectory,
@@ -682,7 +682,7 @@ class OrientationGatherer {
   }
 }
 
-ArgParser buildGhOrientArgParser() => ArgParser()
+ArgParser _buildGhOrientArgParser() => ArgParser()
   ..addOption(
     'dir',
     abbr: 'C',
@@ -719,7 +719,7 @@ ArgParser buildGhOrientArgParser() => ArgParser()
   );
 
 Future<void> runGhOrientCli(List<String> args) async {
-  final parser = buildGhOrientArgParser();
+  final parser = _buildGhOrientArgParser();
   final ArgResults results;
   try {
     results = parser.parse(args);
