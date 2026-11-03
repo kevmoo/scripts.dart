@@ -1,13 +1,27 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:git/git.dart';
 import 'package:io/ansi.dart';
 import 'package:io/io.dart';
 
-import 'git_extensions.dart';
 import 'repos_config.dart';
 import 'shared/git_cli.dart';
 import 'testable_print.dart';
+
+/// PR metadata retrieved from GitHub API.
+typedef PrInfo = ({
+  String state,
+  String baseBranch,
+  String? headRefOid,
+  String? url,
+  int? number,
+  String? mergeable,
+});
+
+bool mockGhAvailableForTesting = false;
+bool mockGhUnavailableForTesting = false;
+Map<String, PrInfo>? mockRecentPrsForTesting;
 
 /// Safely switches to and updates the default branch of a Git repository.
 ///
@@ -50,7 +64,7 @@ Future<void> gitUp({
     throw GitUpException('Cannot run git-up from inside a secondary worktree.');
   }
 
-  if (await gitDir.isDirty()) {
+  if (!await gitDir.isWorkingTreeClean(includeUntracked: false)) {
     printError('Please commit or stash your changes and try again.');
     throw GitUpException('Working tree is dirty.');
   }
@@ -210,7 +224,7 @@ Future<String> getDefaultBranch(GitDir gitDir) async {
 
   // If origin/HEAD is missing, we can use the extension to see if it CAN sniff a branch,
   // so we can give a better error message (matching original behavior).
-  final sniffedBranch = await gitDir.getDefaultBranch();
+  final sniffedBranch = await gitDir.remoteDefaultBranch();
 
   printError('Error: origin/HEAD is not set for this repository.');
   if (sniffedBranch != null) {
@@ -247,7 +261,7 @@ Future<void> verifyAlignment(
   String? expectedUpstream,
 }) async {
   final targetUpstream = expectedUpstream ?? 'origin/$defaultBranch';
-  if (!await gitDir.hasBranch(defaultBranch)) {
+  if (await gitDir.branchReference(defaultBranch) == null) {
     printError('Warning: Local branch "$defaultBranch" does not exist.');
     throw GitUpException(
       'Local branch does not exist.',
@@ -255,7 +269,7 @@ Future<void> verifyAlignment(
     );
   }
 
-  final upstream = await gitDir.getUpstream(defaultBranch);
+  final upstream = await gitDir.upstreamBranch(defaultBranch);
 
   if (upstream == null) {
     printError(
@@ -444,21 +458,18 @@ Future<_CategorizedBranches> _categorizeBranches(
   final activeRemoteBranches = <String>[];
   final noUpstreamBranches = <String>[];
 
-  final branchesStatus = await gitDir.getBranchesStatus();
-  for (final MapEntry(
-        key: branchName,
-        value: (:sha, :upstream, :isUpstreamGone),
-      )
-      in branchesStatus.entries) {
+  final branches = await gitDir.branchTracking();
+  for (final b in branches) {
+    final branchName = b.branchName;
     if (branchName == 'master' ||
         branchName == 'main' ||
         branchName == defaultBranch) {
       continue;
     }
-    branchShas[branchName] = sha;
-    if (isUpstreamGone) {
-      goneBranches[branchName] = sha;
-    } else if (upstream.isNotEmpty) {
+    branchShas[branchName] = b.sha;
+    if (b.isUpstreamGone) {
+      goneBranches[branchName] = b.sha;
+    } else if (b.upstream.isNotEmpty) {
       activeRemoteBranches.add(branchName);
     } else {
       noUpstreamBranches.add(branchName);
@@ -491,7 +502,7 @@ Future<_ResolvedGitHubStatus> _resolveGitHubStatus(
       goneBranches.isNotEmpty ||
       activeRemoteBranches.isNotEmpty ||
       branches.noUpstreamBranches.isNotEmpty;
-  final ghAvailable = needGh && await gitDir.isGitHubCliAvailable();
+  final ghAvailable = needGh && await _isGitHubCliAvailable();
   if (!ghAvailable) {
     return (
       goneBranches: goneBranches,
@@ -501,7 +512,7 @@ Future<_ResolvedGitHubStatus> _resolveGitHubStatus(
     );
   }
 
-  final recentPrs = await gitDir.getRecentPrsInfo();
+  final recentPrs = await _getRecentPrsInfo();
   final toMove = <String>[];
   for (final branch in activeRemoteBranches) {
     final prInfo = recentPrs[branch];
@@ -541,7 +552,8 @@ Future<bool> _shouldDeleteBranch(
 }) async {
   PrInfo? prInfo;
   if (ghAvailable) {
-    prInfo = await gitDir.getPrInfoForBranch(
+    prInfo = await _getPrInfoForBranch(
+      gitDir,
       branch,
       cachedRecentPrs: recentPrs,
     );
@@ -560,7 +572,7 @@ Future<bool> _shouldDeleteBranch(
   }
 
   for (final ref in targetRefs) {
-    if (await gitDir.isMergedInto(branch, ref)) {
+    if (await _isMergedInto(gitDir, branch, ref)) {
       return true;
     }
   }
@@ -582,7 +594,8 @@ Future<bool> _evaluateMergedPrWithLocalCommits(
   String? headRefOid,
 ) async {
   final hasNewCommits =
-      headRefOid != null && await gitDir.hasCommitsPastHead(headRefOid, branch);
+      headRefOid != null &&
+      await _hasCommitsPastHead(gitDir, headRefOid, branch);
   if (!hasNewCommits) {
     return true;
   }
@@ -620,7 +633,10 @@ Future<void> _executeBranchDeletion(
     print('  $branch (${goneBranches[branch]})');
   }
 
-  final worktrees = await gitDir.getWorktrees();
+  final worktrees = {
+    for (final wt in await gitDir.worktrees())
+      if (wt.branch.isNotEmpty) wt.branch: wt.path,
+  };
   for (final branch in toDelete) {
     final worktreePath = worktrees[branch];
     if (worktreePath != null &&
@@ -645,7 +661,7 @@ Future<bool> _removeCleanWorktree(
 ) async {
   try {
     final wtGitDir = await GitDir.fromExisting(worktreePath);
-    if (await wtGitDir.isDirty()) {
+    if (!await wtGitDir.isWorkingTreeClean(includeUntracked: false)) {
       printError(
         'Warning: Branch "$branch" is checked out in worktree at '
         '"$worktreePath", which has uncommitted changes. '
@@ -711,7 +727,7 @@ _inspectSingleRemoteBranch(
 
   if (prInfo == null ||
       (prInfo.state != 'MERGED' && prInfo.state != 'CLOSED') ||
-      !await gitDir.hasRemoteBranch(branch)) {
+      !await _hasRemoteBranch(gitDir, branch)) {
     return (
       closedHeadingPrinted: closedHeadingPrinted,
       conflictHeadingPrinted: conflictHeadingPrinted,
@@ -763,4 +779,294 @@ class GitUpException(final String message, {final int exitCode = 1})
     implements Exception {
   @override
   String toString() => message;
+}
+
+/// Checks if [branchName] is merged into [targetBranch].
+///
+/// A branch is merged if:
+/// 1. It is an ancestor of [targetBranch] (standard merge or rebase).
+/// 2. Or, a three-way merge of [branchName] into [targetBranch] results in a
+///    tree identical to [targetBranch] (squash merge).
+Future<bool> _isMergedInto(
+  GitDir gitDir,
+  String branchName,
+  String targetBranch,
+) async {
+  if (await gitDir.isAncestor(branchName, targetBranch)) return true;
+
+  if (await _matchesTargetCommitTree(gitDir, branchName, targetBranch)) {
+    return true;
+  }
+
+  return _matchesTrialMergeTree(gitDir, branchName, targetBranch);
+}
+
+Future<bool> _matchesTargetCommitTree(
+  GitDir gitDir,
+  String branchName,
+  String targetBranch,
+) async {
+  try {
+    final branchTreeResult = await gitDir.runCommand([
+      'rev-parse',
+      '$branchName^{tree}',
+    ], throwOnError: false);
+    if (branchTreeResult.exitCode != 0) return false;
+    final branchTree = (branchTreeResult.stdout as String).trim();
+
+    final targetTreesResult = await gitDir.runCommand([
+      'log',
+      targetBranch,
+      '--format=%T',
+      '-n',
+      '1000',
+    ], throwOnError: false);
+    if (targetTreesResult.exitCode != 0) return false;
+
+    return (targetTreesResult.stdout as String)
+        .split('\n')
+        .contains(branchTree);
+  } catch (_) {
+    return false;
+  }
+}
+
+Future<bool> _matchesTrialMergeTree(
+  GitDir gitDir,
+  String branchName,
+  String targetBranch,
+) async {
+  try {
+    final targetTreeResult = await gitDir.runCommand([
+      'rev-parse',
+      '$targetBranch^{tree}',
+    ], throwOnError: false);
+    if (targetTreeResult.exitCode != 0) return false;
+    final targetTree = (targetTreeResult.stdout as String).trim();
+
+    final mergeTreeResult = await gitDir.runCommand([
+      'merge-tree',
+      '--write-tree',
+      targetBranch,
+      branchName,
+    ], throwOnError: false);
+    if (mergeTreeResult.exitCode != 0) return false;
+
+    return (mergeTreeResult.stdout as String).trim() == targetTree;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Checks if the `gh` CLI is available and authenticated.
+Future<bool> _isGitHubCliAvailable() async {
+  if (mockGhAvailableForTesting) return true;
+  if (mockGhUnavailableForTesting) return false;
+  try {
+    final result = await Process.run('gh', ['auth', 'status']);
+    return result.exitCode == 0;
+  } catch (_) {
+    return false;
+  }
+}
+
+/// Checks if a remote-tracking branch named [branchName] exists for `origin`.
+Future<bool> _hasRemoteBranch(GitDir gitDir, String branchName) async {
+  final result = await gitDir.runCommand([
+    'show-ref',
+    '--verify',
+    'refs/remotes/origin/$branchName',
+  ], throwOnError: false);
+  return result.exitCode == 0;
+}
+
+/// Gets the PR number stored in the local git config for [branchName], if any.
+Future<int?> _getLocalPrNumber(GitDir gitDir, String branchName) async {
+  final result = await gitDir.runCommand([
+    'config',
+    '--get',
+    'branch.$branchName.gh-pr-number',
+  ], throwOnError: false);
+  if (result.exitCode != 0) return null;
+  final output = (result.stdout as String).trim();
+  if (output.isEmpty) return null;
+  return int.tryParse(output);
+}
+
+Future<PrInfo?> _getPrInfo(String target) async {
+  try {
+    final result = await Process.run('gh', [
+      'pr',
+      'view',
+      target,
+      '--json',
+      'state,baseRefName,headRefOid,url,number,mergeable',
+    ]);
+    if (result.exitCode == 0) {
+      final data = jsonDecode(result.stdout as String) as Map<String, dynamic>;
+      return (
+        state: data['state'] as String? ?? '',
+        baseBranch: data['baseRefName'] as String? ?? '',
+        headRefOid: data['headRefOid'] as String?,
+        url: data['url'] as String?,
+        number: data['number'] as int?,
+        mergeable: data['mergeable'] as String?,
+      );
+    }
+  } catch (_) {
+    // Ignore and return null
+  }
+  return null;
+}
+
+/// Resolves PR info for [branchName] by checking local git config PR number,
+/// falling back to [cachedRecentPrs], or querying GitHub directly.
+Future<PrInfo?> _getPrInfoForBranch(
+  GitDir gitDir,
+  String branchName, {
+  Map<String, PrInfo>? cachedRecentPrs,
+}) async {
+  final prNumber = await _getLocalPrNumber(gitDir, branchName);
+  if (prNumber != null) {
+    final prInfo = await _getPrInfo(prNumber.toString());
+    if (prInfo != null) return prInfo;
+  }
+
+  final cachedPr = cachedRecentPrs?[branchName];
+  if (cachedPr != null) return cachedPr;
+
+  return _getPrInfo(branchName);
+}
+
+/// Retrieves the details of recent PRs in the repository.
+Future<Map<String, PrInfo>> _getRecentPrsInfo({int limit = 100}) async {
+  if (mockRecentPrsForTesting != null) {
+    return mockRecentPrsForTesting!;
+  }
+  final prs = <String, PrInfo>{};
+  try {
+    final result = await Process.run('gh', [
+      'pr',
+      'list',
+      '--state',
+      'all',
+      '--author',
+      '@me',
+      '--limit',
+      limit.toString(),
+      '--json',
+      'headRefName,state,url,number,baseRefName,headRefOid,mergeable',
+    ]);
+    if (result.exitCode != 0) return prs;
+
+    final list = jsonDecode(result.stdout as String) as List<dynamic>;
+    for (final item in list) {
+      final parsed = _parsePrInfoEntry(item);
+      if (parsed != null) {
+        prs[parsed.$1] = parsed.$2;
+      }
+    }
+  } catch (_) {
+    // Ignore and return empty map
+  }
+  return prs;
+}
+
+(String, PrInfo)? _parsePrInfoEntry(Object? item) => switch (item) {
+  {
+    'headRefName': final String head,
+    'state': final String state,
+    'url': final String url,
+    'number': final int number,
+    'baseRefName': final String baseBranch,
+    'headRefOid': final Object? headRefOid,
+    'mergeable': final Object? mergeable,
+  } =>
+    (
+      head,
+      (
+        state: state,
+        url: url,
+        number: number,
+        baseBranch: baseBranch,
+        headRefOid: headRefOid is String ? headRefOid : null,
+        mergeable: mergeable is String ? mergeable : null,
+      ),
+    ),
+  _ => null,
+};
+
+/// Checks if [branchName] has commits that are not present in [headRefOid].
+Future<bool> _hasCommitsPastHead(
+  GitDir gitDir,
+  String headRefOid,
+  String branchName,
+) async {
+  final result = await gitDir.runCommand([
+    'log',
+    '$headRefOid..$branchName',
+    '--oneline',
+  ], throwOnError: false);
+  if (result.exitCode != 0) return true;
+  return (result.stdout as String).trim().isNotEmpty;
+}
+
+/// Resolves the given [branchName] to its local ref and/or its upstream ref if
+/// they exist.
+Future<Set<String>> _resolveLookups(GitDir gitDir, String branchName) async {
+  if (branchName.isEmpty) return const <String>{};
+  final refs = <String>{};
+
+  final upstreamResult = await gitDir.runCommand([
+    'rev-parse',
+    '--symbolic-full-name',
+    '$branchName@{u}',
+  ], throwOnError: false);
+  if (upstreamResult.exitCode == 0) {
+    refs.add((upstreamResult.stdout as String).trim());
+  }
+
+  final localResult = await gitDir.runCommand([
+    'rev-parse',
+    '--symbolic-full-name',
+    branchName,
+  ], throwOnError: false);
+  if (localResult.exitCode == 0) {
+    refs.add((localResult.stdout as String).trim());
+  }
+
+  final remotesResult = await gitDir.runCommand([
+    'for-each-ref',
+    '--format=%(refname)',
+    'refs/remotes/*/$branchName',
+  ], throwOnError: false);
+  if (remotesResult.exitCode == 0) {
+    final lines = LineSplitter.split(remotesResult.stdout as String);
+    for (final line in lines) {
+      final ref = line.trim();
+      if (ref.isNotEmpty) {
+        refs.add(ref);
+      }
+    }
+  }
+
+  return refs;
+}
+
+Future<String?> _getMainWorktreePath(GitDir gitDir) async {
+  final wts = await gitDir.worktrees();
+  for (final wt in wts) {
+    if (!wt.isBare) return wt.path;
+  }
+  return null;
+}
+
+extension GitDirUpExtensions on GitDir {
+  /// Resolves the given [branchName] to its local ref and/or its upstream ref if
+  /// they exist.
+  Future<Set<String>> resolveLookups(String branchName) =>
+      _resolveLookups(this, branchName);
+
+  /// Returns the path of the primary (main) worktree in the repository.
+  Future<String?> getMainWorktreePath() => _getMainWorktreePath(this);
 }

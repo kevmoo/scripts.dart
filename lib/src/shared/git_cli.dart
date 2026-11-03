@@ -1,5 +1,6 @@
-import 'dart:convert';
 import 'dart:io';
+
+import 'package:git/git.dart';
 
 import '../process_utils.dart';
 
@@ -62,79 +63,6 @@ Future<ProcessResult> _readOnlyGitAsyncRunner(
   workingDirectory: workingDirectory,
   environment: _gitReadOnlyEnv,
 );
-
-/// Parsed stanza from `git worktree list --porcelain`.
-typedef GitWorktreeRecord = ({
-  String path,
-  String branch,
-  String sha,
-  bool isBare,
-  bool isDetached,
-  bool isLocked,
-  String? lockReason,
-});
-
-/// Parses `git worktree list --porcelain` output into [GitWorktreeRecord]s.
-List<GitWorktreeRecord> parseWorktreeListPorcelain(String rawStdout) {
-  final records = <GitWorktreeRecord>[];
-  var current = <String>[];
-  for (final rawLine in LineSplitter.split(rawStdout)) {
-    final line = rawLine.trimRight();
-    if (line.isEmpty) continue;
-    if (line.startsWith('worktree ') && current.isNotEmpty) {
-      if (_parseWorktreeBlock(current) case final record?) {
-        records.add(record);
-      }
-      current = <String>[];
-    }
-    current.add(line);
-  }
-  if (_parseWorktreeBlock(current) case final record?) {
-    records.add(record);
-  }
-  return records;
-}
-
-GitWorktreeRecord? _parseWorktreeBlock(List<String> lines) {
-  String? path;
-  var branch = '';
-  var sha = '';
-  var isBare = false;
-  var isDetached = false;
-  var isLocked = false;
-  String? lockReason;
-
-  for (final line in lines) {
-    if (line.startsWith('worktree ')) {
-      path = line.substring('worktree '.length).trim();
-    } else if (line.startsWith('HEAD ')) {
-      sha = line.substring('HEAD '.length).trim();
-    } else if (line.startsWith('branch refs/heads/')) {
-      branch = line.substring('branch refs/heads/'.length).trim();
-    } else if (line == 'bare') {
-      isBare = true;
-    } else if (line == 'detached') {
-      isDetached = true;
-    } else if (line == 'locked') {
-      isLocked = true;
-      lockReason = null;
-    } else if (line.startsWith('locked ')) {
-      isLocked = true;
-      final reason = line.substring('locked '.length).trim();
-      lockReason = reason.isEmpty ? null : reason;
-    }
-  }
-  if (path == null || path.isEmpty) return null;
-  return (
-    path: path,
-    branch: branch,
-    sha: sha,
-    isBare: isBare,
-    isDetached: isDetached,
-    isLocked: isLocked,
-    lockReason: lockReason,
-  );
-}
 
 /// Normalizes stdout from `git rev-parse --abbrev-ref origin/HEAD` by stripping
 /// a leading `origin/` prefix.
@@ -365,13 +293,13 @@ final class GitCli {
   }
 
   /// Synchronously lists worktrees registered in [repoPath].
-  List<GitWorktreeRecord> listWorktreesSync(String repoPath) {
+  List<WorktreeEntry> listWorktreesSync(String repoPath) {
     final res = runSync(
       const ['worktree', 'list', '--porcelain'],
       workingDirectory: repoPath,
       readOnly: true,
     );
     if (res.exitCode != 0) return const [];
-    return parseWorktreeListPorcelain(res.stdout.toString());
+    return WorktreeEntry.fromPorcelain(res.stdout.toString());
   }
 }
