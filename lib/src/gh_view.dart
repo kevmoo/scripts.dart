@@ -114,9 +114,9 @@ extension GhPrStatus on GhPr {
 
   bool get isApproved => effectiveReviewDecision == ReviewDecision.approved;
 
-  bool get isCiPassing => ciStatus.isPassing;
+  bool get _isCiPassing => ciStatus.isPassing;
 
-  bool get isMergeableOrQueued =>
+  bool get _isMergeableOrQueued =>
       mergeable == MergeableState.mergeable || isInMergeQueue;
 
   /// True when branch protection/rulesets block merging despite being mergeable and not queued.
@@ -131,7 +131,7 @@ extension GhPrStatus on GhPr {
       isBlockedMergeState &&
       isApproved &&
       unresolvedReviewerThreads == 0 &&
-      isCiPassing;
+      _isCiPassing;
 
   /// Returns human reviewers (from `activeReviewers` or human
   /// `requestedReviewers`) who have not already approved the PR (unless
@@ -323,8 +323,8 @@ bool isReadyToMerge(GhPr pr) {
       pr.mergeStateStatus != MergeStateStatus.blocked || pr.isInMergeQueue;
   return pr.isApproved &&
       pr.unresolvedReviewerThreads == 0 &&
-      pr.isCiPassing &&
-      pr.isMergeableOrQueued &&
+      pr._isCiPassing &&
+      pr._isMergeableOrQueued &&
       isMergeStateValid;
 }
 
@@ -418,7 +418,7 @@ typedef EnricherRunner = Future<String?> Function(
 );
 
 /// Default enricher runner invoking `/bin/sh -c <command>` and piping [stdinPayload].
-Future<String?> defaultEnricherRunner(
+Future<String?> _defaultEnricherRunner(
   String command,
   String stdinPayload,
 ) async {
@@ -455,7 +455,7 @@ Future<Map<String, String>> fetchEnrichedContext({
   EnricherRunner? enricherRunner,
 }) async {
   if (prs.isEmpty) return const {};
-  final runner = enricherRunner ?? defaultEnricherRunner;
+  final runner = enricherRunner ?? _defaultEnricherRunner;
   final payload = jsonEncode({
     'prs': prs
         .map(

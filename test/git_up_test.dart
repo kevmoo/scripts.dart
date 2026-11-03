@@ -272,7 +272,10 @@ void main() {
     File(filePath).writeAsStringSync('unmerged content');
     await localGitDir.runCommand(['add', 'unmerged.txt']);
     await localGitDir.runCommand(['commit', '-m', 'Unmerged commit']);
-    final sha = await localGitDir.getShortSha();
+    final sha =
+        ((await localGitDir.runCommand(['rev-parse', '--short', 'HEAD'])).stdout
+                as String)
+            .trim();
 
     // 2. Push to remote
     await localGitDir.runCommand(['push', '-u', 'origin', 'feature-unmerged']);

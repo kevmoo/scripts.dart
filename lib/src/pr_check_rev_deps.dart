@@ -7,7 +7,10 @@ typedef ReverseDepNamesLookup = List<String> Function(String packageName);
 /// Returns the target stable release [Version] if [currentVer] is within the
 /// caret compatibility range of [baseVerStr] (`^baseVer`), or `null` if
 /// [currentVer] is a major (or `0.y.z`-breaking) version bump.
-Version? nonMajorTargetReleaseVersion(Version? currentVer, String? baseVerStr) {
+Version? _nonMajorTargetReleaseVersion(
+  Version? currentVer,
+  String? baseVerStr,
+) {
   if (currentVer == null || baseVerStr == null) return null;
   try {
     final baseVer = Version.parse(baseVerStr);
@@ -29,7 +32,7 @@ Version? nonMajorTargetReleaseVersion(Version? currentVer, String? baseVerStr) {
 /// Returns `true` if `pubspec.yaml` content [pubspecYaml] declares a direct
 /// `dependencies:` entry on [dependencyName] whose constraint allows
 /// [targetReleaseVersion].
-bool pubspecContentAllowsDependencyVersion(
+bool _pubspecContentAllowsDependencyVersion(
   String pubspecYaml,
   String dependencyName,
   Version targetReleaseVersion,
@@ -102,7 +105,7 @@ void prepareUnpackedConsumerForAnalysis({
 /// Unpacks each candidate consumer in [candidateConsumerNames] via
 /// `dart pub unpack --no-resolve`, overrides [pkg] to its local path, and runs
 /// `dart pub get` + `dart analyze lib`.
-List<PrCheckViolation> checkPackageReverseDepsWithPubUnpack({
+List<PrCheckViolation> _checkPackageReverseDepsWithPubUnpack({
   required firehose.Package pkg,
   required Version targetRelease,
   required List<String> candidateConsumerNames,
@@ -155,7 +158,7 @@ PrCheckViolation? _unpackAndAnalyzeSingleConsumer({
 
   final pubspecFile = File(p.join(unpackedDir.path, 'pubspec.yaml'));
   if (!pubspecFile.existsSync()) return null;
-  if (!pubspecContentAllowsDependencyVersion(
+  if (!_pubspecContentAllowsDependencyVersion(
     pubspecFile.readAsStringSync(),
     pkg.name,
     targetRelease,
@@ -217,7 +220,7 @@ Directory? _findUnpackedConsumerDir(Directory tempDir, String consumerName) {
 
 /// Discovers candidate reverse-dependency package names for [packageName] by
 /// querying `pub.dev` search and scanning `~/.pub-cache/hosted/pub.dev`.
-Future<List<String>> fetchCandidateReverseDepNames(
+Future<List<String>> _fetchCandidateReverseDepNames(
   String packageName, {
   Version? targetReleaseVersion,
   Directory? pubCacheHostedDir,
@@ -325,7 +328,7 @@ bool _pubspecMatchesDependency(
   String dependencyName,
   Version? targetReleaseVersion,
 ) => targetReleaseVersion != null
-    ? pubspecContentAllowsDependencyVersion(
+    ? _pubspecContentAllowsDependencyVersion(
         pubspecYaml,
         dependencyName,
         targetReleaseVersion,
@@ -401,9 +404,9 @@ Future<ReverseDepNamesLookup?> _buildCliReverseDepNamesLookup({
       '${prefix}pubspec.yaml',
       processRunner,
     );
-    final targetRelease = nonMajorTargetReleaseVersion(pkg.version, baseVer);
+    final targetRelease = _nonMajorTargetReleaseVersion(pkg.version, baseVer);
     if (targetRelease == null) continue;
-    namesByPkg[pkg.name] = await fetchCandidateReverseDepNames(
+    namesByPkg[pkg.name] = await _fetchCandidateReverseDepNames(
       pkg.name,
       targetReleaseVersion: targetRelease,
     );
@@ -421,7 +424,7 @@ void _runPackageRevDepChecks({
   required bool runRevDeps,
 }) {
   if (!pkgChanged.any((f) => f.startsWith('lib/'))) return;
-  final targetRelease = nonMajorTargetReleaseVersion(pkg.version, baseVerStr);
+  final targetRelease = _nonMajorTargetReleaseVersion(pkg.version, baseVerStr);
   if (targetRelease == null) return;
 
   final label = 'rev-deps:${pkg.name}';
@@ -436,7 +439,7 @@ void _runPackageRevDepChecks({
         pkg.name,
         targetReleaseVersion: targetRelease,
       );
-  final found = checkPackageReverseDepsWithPubUnpack(
+  final found = _checkPackageReverseDepsWithPubUnpack(
     pkg: pkg,
     targetRelease: targetRelease,
     candidateConsumerNames: candidateNames,

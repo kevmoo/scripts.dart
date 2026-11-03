@@ -48,12 +48,6 @@ extension GitDirExtensions on GitDir {
     return (result.stdout as String).trim();
   }
 
-  /// Gets the short SHA of a given ref (defaults to 'HEAD').
-  Future<String> getShortSha([String ref = 'HEAD']) async {
-    final result = await runCommand(['rev-parse', '--short', ref]);
-    return (result.stdout as String).trim();
-  }
-
   /// Checks if a local branch exists.
   Future<bool> hasBranch(String branchName) async {
     final result = await runCommand([
@@ -109,10 +103,6 @@ extension GitDirExtensions on GitDir {
     if (prune) args.add('--prune');
     await _runGit(args);
   }
-
-  /// Attempts to fast-forward merge the current branch with its upstream.
-  Future<ProcessResult> fastForwardMerge([String ref = '@{u}']) =>
-      runCommand(['merge', '--ff-only', ref], throwOnError: false);
 
   /// Deletes a local branch.
   Future<void> deleteBranch(String branchName, {bool force = false}) async {
@@ -259,7 +249,7 @@ extension GitDirExtensions on GitDir {
 
   /// Gets the PR number stored in the local git config for [branchName], if
   /// any.
-  Future<int?> getLocalPrNumber(String branchName) async {
+  Future<int?> _getLocalPrNumber(String branchName) async {
     final output = await _runAndGetStdout([
       'config',
       '--get',
@@ -302,7 +292,7 @@ extension GitDirExtensions on GitDir {
     String branchName, {
     Map<String, PrInfo>? cachedRecentPrs,
   }) async {
-    final prNumber = await getLocalPrNumber(branchName);
+    final prNumber = await _getLocalPrNumber(branchName);
     if (prNumber != null) {
       final prInfo = await _getPrInfo(prNumber.toString());
       if (prInfo != null) return prInfo;
@@ -381,15 +371,6 @@ extension GitDirExtensions on GitDir {
   Future<bool> isDirty() async {
     final result = await runCommand(['status', '--porcelain', '-uno']);
     return (result.stdout as String).trim().isNotEmpty;
-  }
-
-  /// Configures a standard test identity for the repository.
-  ///
-  /// This is useful in tests to prevent dirty working trees on Windows/CI.
-  Future<void> configureTestIdentity() async {
-    await runCommand(['config', 'user.email', 'test@test.com']);
-    await runCommand(['config', 'user.name', 'Tester']);
-    await runCommand(['config', 'core.autocrlf', 'false']);
   }
 
   /// Resolves the given [branchName] to its local ref and/or its upstream ref if

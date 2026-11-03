@@ -8,12 +8,13 @@ import 'package:kevmoo_scripts/src/gh_clean/cleanup_actions.dart';
 import 'package:kevmoo_scripts/src/gh_clean/fetch_landed_prs.dart';
 import 'package:kevmoo_scripts/src/gh_clean/gh_clean_options.dart';
 import 'package:kevmoo_scripts/src/gh_clean/models.dart';
-import 'package:kevmoo_scripts/src/git_extensions.dart';
 import 'package:kevmoo_scripts/src/local_repo_scanner.dart';
 import 'package:kevmoo_scripts/src/process_utils.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
+
+import 'test_helpers.dart';
 
 void main() {
   group('buildLandedSearchQuery', () {

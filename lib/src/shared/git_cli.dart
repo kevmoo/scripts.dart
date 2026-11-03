@@ -5,18 +5,18 @@ import '../process_utils.dart';
 
 /// Environment variables that prevent `git` from blocking on credential or
 /// SSH terminal prompts in automated CLI runs.
-const gitNonInteractiveEnv = <String, String>{'GIT_TERMINAL_PROMPT': '0'};
+const _gitNonInteractiveEnv = <String, String>{'GIT_TERMINAL_PROMPT': '0'};
 
 /// Environment variables for read-only `git` queries (`status`, `rev-parse`,
 /// `for-each-ref`, `worktree list`), skipping optional `.git/index.lock`
 /// writes alongside terminal prompt suppression.
-const gitReadOnlyEnv = <String, String>{
+const _gitReadOnlyEnv = <String, String>{
   'GIT_TERMINAL_PROMPT': '0',
   'GIT_OPTIONAL_LOCKS': '0',
 };
 
-/// Default synchronous `git` runner with [gitNonInteractiveEnv].
-ProcessResult defaultGitSyncRunner(
+/// Default synchronous `git` runner with [_gitNonInteractiveEnv].
+ProcessResult _defaultGitSyncRunner(
   String executable,
   List<String> arguments, {
   String? workingDirectory,
@@ -24,11 +24,11 @@ ProcessResult defaultGitSyncRunner(
   executable,
   arguments,
   workingDirectory: workingDirectory,
-  environment: gitNonInteractiveEnv,
+  environment: _gitNonInteractiveEnv,
 );
 
-/// Read-only synchronous `git` runner with [gitReadOnlyEnv].
-ProcessResult readOnlyGitSyncRunner(
+/// Read-only synchronous `git` runner with [_gitReadOnlyEnv].
+ProcessResult _readOnlyGitSyncRunner(
   String executable,
   List<String> arguments, {
   String? workingDirectory,
@@ -36,11 +36,11 @@ ProcessResult readOnlyGitSyncRunner(
   executable,
   arguments,
   workingDirectory: workingDirectory,
-  environment: gitReadOnlyEnv,
+  environment: _gitReadOnlyEnv,
 );
 
-/// Default asynchronous `git` runner with [gitNonInteractiveEnv].
-Future<ProcessResult> defaultGitAsyncRunner(
+/// Default asynchronous `git` runner with [_gitNonInteractiveEnv].
+Future<ProcessResult> _defaultGitAsyncRunner(
   String executable,
   List<String> arguments, {
   String? workingDirectory,
@@ -48,11 +48,11 @@ Future<ProcessResult> defaultGitAsyncRunner(
   executable,
   arguments,
   workingDirectory: workingDirectory,
-  environment: gitNonInteractiveEnv,
+  environment: _gitNonInteractiveEnv,
 );
 
-/// Read-only asynchronous `git` runner with [gitReadOnlyEnv].
-Future<ProcessResult> readOnlyGitAsyncRunner(
+/// Read-only asynchronous `git` runner with [_gitReadOnlyEnv].
+Future<ProcessResult> _readOnlyGitAsyncRunner(
   String executable,
   List<String> arguments, {
   String? workingDirectory,
@@ -60,7 +60,7 @@ Future<ProcessResult> readOnlyGitAsyncRunner(
   executable,
   arguments,
   workingDirectory: workingDirectory,
-  environment: gitReadOnlyEnv,
+  environment: _gitReadOnlyEnv,
 );
 
 /// Parsed stanza from `git worktree list --porcelain`.
@@ -163,16 +163,16 @@ final class GitCli {
   final ProcessRunner asyncRunner;
 
   const new({
-    this.syncRunner = defaultGitSyncRunner,
-    this.asyncRunner = defaultGitAsyncRunner,
+    this.syncRunner = _defaultGitSyncRunner,
+    this.asyncRunner = _defaultGitAsyncRunner,
   });
 
   bool get _usesDefaultSyncRunner =>
-      syncRunner == defaultGitSyncRunner ||
+      syncRunner == _defaultGitSyncRunner ||
       syncRunner == defaultSyncProcessRunner;
 
   bool get _usesDefaultAsyncRunner =>
-      asyncRunner == defaultGitAsyncRunner ||
+      asyncRunner == _defaultGitAsyncRunner ||
       asyncRunner == defaultProcessRunner;
 
   /// Runs `git` synchronously with [args].
@@ -185,7 +185,7 @@ final class GitCli {
     bool readOnly = false,
   }) {
     final runner = readOnly && _usesDefaultSyncRunner
-        ? readOnlyGitSyncRunner
+        ? _readOnlyGitSyncRunner
         : syncRunner;
     return runner('git', args, workingDirectory: workingDirectory);
   }
@@ -200,7 +200,7 @@ final class GitCli {
     bool readOnly = false,
   }) {
     final runner = readOnly && _usesDefaultAsyncRunner
-        ? readOnlyGitAsyncRunner
+        ? _readOnlyGitAsyncRunner
         : asyncRunner;
     return runner('git', args, workingDirectory: workingDirectory);
   }

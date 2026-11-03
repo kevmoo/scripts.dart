@@ -159,7 +159,7 @@ const commonKScriptMistakes = <String, String>{
 };
 
 /// Prints `kscripts` usage and available subcommands.
-void printKScriptsUsage() {
+void _printKScriptsUsage() {
   print(kscriptsDescription);
   print('');
   print('Usage: kscripts <subcommand> [arguments]');
@@ -184,7 +184,7 @@ KScriptSubcommand? findKScriptSubcommand(String name) {
 }
 
 /// Suggests a canonical subcommand name for [input] if one matches.
-String? suggestKScriptSubcommand(String input) {
+String? _suggestKScriptSubcommand(String input) {
   final normalized = input.trim().toLowerCase();
   final fromMap = commonKScriptMistakes[normalized];
   if (fromMap != null) return fromMap;
@@ -268,7 +268,7 @@ Future<void> runKScriptsCli(
       args.first == '--help' ||
       args.first == '-h' ||
       (args.first == 'help' && args.length == 1)) {
-    printKScriptsUsage();
+    _printKScriptsUsage();
     return;
   }
 
@@ -306,7 +306,7 @@ void _reportStaleShim(String name) {
 }
 
 void _reportUnknownSubcommand(String commandName) {
-  final suggestion = suggestKScriptSubcommand(commandName);
+  final suggestion = _suggestKScriptSubcommand(commandName);
   final hint = suggestion != null
       ? ' Did you mean "kscripts $suggestion"?'
       : '';

@@ -36,7 +36,7 @@ Future<void> gitUp({
 }) async {
   workingDirectory ??= Directory.current.path;
 
-  final gitDir = await getGitDir(workingDirectory);
+  final gitDir = await _getGitDir(workingDirectory);
   final repoConfig = loadGitUpRepoConfig(
     gitDir.path,
     homeDirectory: homeDirectory,
@@ -158,7 +158,7 @@ Future<void> _runGit(
 ///
 /// Throws a [GitUpException] if the command fails or if it's not a Git
 /// repository.
-Future<GitDir> getGitDir(String workingDirectory) async {
+Future<GitDir> _getGitDir(String workingDirectory) async {
   try {
     final result = await defaultGitCli.run(
       const ['rev-parse', '--show-toplevel'],

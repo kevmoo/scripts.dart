@@ -592,7 +592,7 @@ final class _PrCheckRunner {
         'no touched SKILL.md, AGENTS.md, or references/ files',
       );
     } else {
-      _recordMulti('agent-docs', checkAgentDocFiles(repoRoot, agentDocFiles));
+      _recordMulti('agent-docs', _checkAgentDocFiles(repoRoot, agentDocFiles));
     }
 
     final hasPrettier =

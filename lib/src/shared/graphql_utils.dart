@@ -5,7 +5,7 @@ import 'dart:math' as math;
 import '../process_utils.dart';
 
 /// Known automated bot logins on GitHub.
-const knownBotLogins = <String>{
+const _knownBotLogins = <String>{
   'cla-bot',
   'codecov',
   'codecov-commenter',
@@ -23,7 +23,7 @@ bool isBotLogin(String login) {
   final lower = login.toLowerCase();
   return lower.endsWith('[bot]') ||
       lower.endsWith('-bot') ||
-      knownBotLogins.contains(lower);
+      _knownBotLogins.contains(lower);
 }
 
 final _transientGhErrorPattern = RegExp(
@@ -47,16 +47,16 @@ bool isTransientGhError(ProcessResult result) {
 
 /// Default exponential backoff delay matching `package:http/retry.dart`
 /// (`500ms * 1.5^retryCount`).
-Duration defaultGhRetryDelay(int retryCount) =>
+Duration _defaultGhRetryDelay(int retryCount) =>
     const Duration(milliseconds: 500) * math.pow(1.5, retryCount);
 
 /// Executes `gh` with [args] via [runner], retrying transient 502/503/504
 /// gateway failures up to [retries] times.
-Future<ProcessResult> runGhWithRetry(
+Future<ProcessResult> _runGhWithRetry(
   ProcessRunner runner,
   List<String> args, {
   int retries = 3,
-  Duration Function(int retryCount) delay = defaultGhRetryDelay,
+  Duration Function(int retryCount) delay = _defaultGhRetryDelay,
 }) async {
   var result = await runner('gh', args);
   for (
@@ -73,12 +73,13 @@ Future<ProcessResult> runGhWithRetry(
   return result;
 }
 
-/// Synchronous counterpart to [runGhWithRetry] for [SyncProcessRunner] callers.
+/// Synchronous counterpart to [_runGhWithRetry] for [SyncProcessRunner]
+/// callers.
 ProcessResult runGhWithRetrySync(
   SyncProcessRunner runner,
   List<String> args, {
   int retries = 3,
-  Duration Function(int retryCount) delay = defaultGhRetryDelay,
+  Duration Function(int retryCount) delay = _defaultGhRetryDelay,
 }) {
   var result = runner('gh', args);
   for (
@@ -97,7 +98,7 @@ ProcessResult runGhWithRetrySync(
 
 /// Extracts pagination info (`hasNextPage` and `endCursor`) from a decoded
 /// GitHub GraphQL `search` response.
-({bool hasNextPage, String? endCursor}) extractGraphQLSearchPageInfo(
+({bool hasNextPage, String? endCursor}) _extractGraphQLSearchPageInfo(
   Map<String, dynamic> decoded,
 ) {
   final data = decoded['data'] as Map<String, dynamic>?;
@@ -122,7 +123,7 @@ Future<List<Map<String, dynamic>>> paginateGraphQLSearch({
   required Exception Function(String message, {int exitCode}) exceptionBuilder,
   int maxPageSize = 25,
   int retries = 3,
-  Duration Function(int retryCount) retryDelay = defaultGhRetryDelay,
+  Duration Function(int retryCount) retryDelay = _defaultGhRetryDelay,
 }) async {
   final nodes = <Map<String, dynamic>>[];
   String? cursor;
@@ -136,7 +137,7 @@ Future<List<Map<String, dynamic>>> paginateGraphQLSearch({
       maxPageSize: maxPageSize,
       cursor: cursor,
     );
-    final result = await runGhWithRetry(
+    final result = await _runGhWithRetry(
       runner,
       args,
       retries: retries,
@@ -159,7 +160,7 @@ List<Map<String, dynamic>> paginateGraphQLSearchSync({
   required Exception Function(String message, {int exitCode}) exceptionBuilder,
   int maxPageSize = 50,
   int retries = 3,
-  Duration Function(int retryCount) retryDelay = defaultGhRetryDelay,
+  Duration Function(int retryCount) retryDelay = _defaultGhRetryDelay,
 }) {
   final nodes = <Map<String, dynamic>>[];
   String? cursor;
@@ -220,7 +221,7 @@ String? _processGraphQLPage(
   final pageNodes = rawNodes.whereType<Map<String, dynamic>>().toList();
   nodes.addAll(pageNodes);
 
-  final pageInfo = extractGraphQLSearchPageInfo(decoded);
+  final pageInfo = _extractGraphQLSearchPageInfo(decoded);
   if (!pageInfo.hasNextPage ||
       pageInfo.endCursor == null ||
       pageNodes.isEmpty) {

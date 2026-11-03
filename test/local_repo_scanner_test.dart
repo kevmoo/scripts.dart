@@ -2,11 +2,12 @@ import 'dart:io';
 
 import 'package:checks/checks.dart';
 import 'package:git/git.dart';
-import 'package:kevmoo_scripts/src/git_extensions.dart';
 import 'package:kevmoo_scripts/src/local_repo_scanner.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
+
+import 'test_helpers.dart';
 
 void main() {
   group('normalizeRepoName', () {

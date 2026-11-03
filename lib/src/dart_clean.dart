@@ -39,7 +39,7 @@ Future<void> runDartClean(
   final results = await pool
       .forEach(pids, (p) => _checkProcess(p, protectedPids, activeInspector))
       .where((r) => r != null)
-      .cast<DartProcess>()
+      .cast<_DartProcess>()
       .toList();
 
   if (results.isNotEmpty) {
@@ -146,19 +146,18 @@ class _ProcessNode({
   }
 }
 
-class DartProcess({
+class _DartProcess({
   required final int pid,
   required final String cmdline,
   final int? ppid,
   final String? parentName,
   final String? cwd,
   required final String reason,
-  final bool isDart = true,
   required final List<({int pid, String command})> ancestry,
   final int? ownerPid,
 });
 
-Future<DartProcess?> _checkProcess(
+Future<_DartProcess?> _checkProcess(
   int p,
   Set<int> protectedPids,
   ProcessInspector inspector,
@@ -170,7 +169,7 @@ Future<DartProcess?> _checkProcess(
   try {
     final info = await inspector.inspect(p);
     if (info == null) {
-      return DartProcess(
+      return _DartProcess(
         pid: p,
         cmdline: '<exited>',
         reason: 'since process likely exited.',
@@ -194,7 +193,7 @@ Future<DartProcess?> _checkProcess(
         .firstOrNull;
     final cwd = cwdEnv != null ? cwdEnv.substring(4) : info.cwd;
 
-    return DartProcess(
+    return _DartProcess(
       pid: p,
       cmdline: formatCmdline(info.cmdline),
       ppid: ppid,
@@ -210,7 +209,7 @@ Future<DartProcess?> _checkProcess(
   }
 }
 
-Future<DartProcess> _checkProtectedProcess(
+Future<_DartProcess> _checkProtectedProcess(
   int p,
   ProcessInspector inspector,
 ) async {
@@ -219,7 +218,7 @@ Future<DartProcess> _checkProtectedProcess(
   final cwd = info?.cwd;
   final ancestry = await inspector.ancestry(p);
 
-  return DartProcess(
+  return _DartProcess(
     pid: p,
     cmdline: cmdline,
     cwd: cwd,
@@ -262,7 +261,7 @@ Future<({String reason, int? ownerPid})> _resolveOwnerReason(
 }
 
 Future<List<_ProcessNode>> _buildTree(
-  List<DartProcess> processes,
+  List<_DartProcess> processes,
   ProcessInspector inspector,
 ) async {
   final nodes = <int, _ProcessNode>{};
@@ -312,7 +311,7 @@ Future<List<_ProcessNode>> _buildTree(
 }
 
 Future<List<_ProcessNode>> _linkProcessNodes(
-  List<DartProcess> processes,
+  List<_DartProcess> processes,
   Map<int, _ProcessNode> nodes,
   Map<int, int> parentToPid,
   Map<int, List<({int pid, String command})>> ancestries,

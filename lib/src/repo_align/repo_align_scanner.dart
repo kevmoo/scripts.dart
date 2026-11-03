@@ -10,7 +10,7 @@ import '../shared/spot_sync.dart';
 import 'models.dart';
 
 /// Known legacy or non-code repositories to ignore/mark legacy.
-const Set<String> legacyOrIgnoredRepos = {
+const Set<String> _legacyOrIgnoredRepos = {
   'wynette',
   'kevmoo_legacy',
   'lint_cleanup',
@@ -28,7 +28,7 @@ const Set<String> legacyOrIgnoredRepos = {
 };
 
 /// Known published packages on pub.dev.
-const Set<String> publishedPackages = {
+const Set<String> _publishedPackages = {
   'bench_press',
   'build_cli',
   'build_verify',
@@ -257,14 +257,14 @@ class RepoAlignScanner {
   }
 
   RepoKind _determineKind(String name, _PubspecInfo pub) {
-    if (legacyOrIgnoredRepos.contains(name)) {
+    if (_legacyOrIgnoredRepos.contains(name)) {
       return RepoKind.legacyOrIgnored;
     }
     if (name == 'dash_skills' || name == 'kevmoo_skills') {
       return RepoKind.agentSkills;
     }
-    if (publishedPackages.contains(name) ||
-        (pub.hasPubspec && pub.packageNames.any(publishedPackages.contains))) {
+    if (_publishedPackages.contains(name) ||
+        (pub.hasPubspec && pub.packageNames.any(_publishedPackages.contains))) {
       return RepoKind.publishedPackage;
     }
     if (pub.isWorkspace || name == 'analytica.dart' || name == 'dtt') {
