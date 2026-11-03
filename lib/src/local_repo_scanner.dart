@@ -285,7 +285,7 @@ List<LocalWorktreeEntry> _parseWorktrees(String repoPath, GitCli git) => [
     (
       path: wt.path,
       branch: wt.isDetached ? 'DETACHED' : wt.branch,
-      sha: wt.sha,
+      sha: wt.sha ?? '',
       isLocked: wt.isLocked,
       lockReason: wt.lockReason,
     ),

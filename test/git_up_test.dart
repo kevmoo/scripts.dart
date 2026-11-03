@@ -3,7 +3,6 @@ import 'dart:io';
 import 'package:checks/checks.dart';
 import 'package:git/git.dart';
 import 'package:io/io.dart';
-import 'package:kevmoo_scripts/src/git_extensions.dart';
 import 'package:kevmoo_scripts/src/git_up.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
@@ -451,7 +450,8 @@ void main() {
       await remoteGitDir.runCommand(['branch', '-D', 'branch-gone-upstream']);
       await localGitDir.runCommand(['fetch', '--prune']);
 
-      final status = await localGitDir.getBranchesStatus();
+      final branches = await localGitDir.branchTracking();
+      final status = {for (final b in branches) b.branchName: b};
 
       final noUpstream = status['branch-no-upstream'];
       check(noUpstream).isNotNull()
@@ -481,7 +481,8 @@ void main() {
       await localGitDir.runCommand(['checkout', '-b', branchName]);
       await localGitDir.runCommand(['push', '-u', 'origin', branchName]);
 
-      final status = await localGitDir.getBranchesStatus();
+      final branches = await localGitDir.branchTracking();
+      final status = {for (final b in branches) b.branchName: b};
       final branchStatus = status[branchName];
       check(branchStatus).isNotNull()
         ..has(
@@ -919,7 +920,7 @@ void main() {
         .not((it) => it.contains('feature-no-upstream-merged'));
   });
 
-  test('getWorktrees returns active worktrees', () async {
+  test('worktrees returns active worktrees', () async {
     final worktreeDir = p.join(d.sandbox, 'worktree_test');
     await localGitDir.runCommand([
       'worktree',
@@ -929,12 +930,12 @@ void main() {
       worktreeDir,
     ]);
 
-    final worktrees = await localGitDir.getWorktrees();
-    check(worktrees['wt-branch']).isNotNull();
+    final worktrees = await localGitDir.worktrees();
+    check(worktrees.any((wt) => wt.branch == 'wt-branch')).isTrue();
 
     await localGitDir.removeWorktree(worktreeDir, force: true);
-    final updatedWorktrees = await localGitDir.getWorktrees();
-    check(updatedWorktrees['wt-branch']).isNull();
+    final updatedWorktrees = await localGitDir.worktrees();
+    check(updatedWorktrees.any((wt) => wt.branch == 'wt-branch')).isFalse();
   });
 
   test('gitUp removes clean worktree when deleting merged branch', () async {

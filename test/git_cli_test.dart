@@ -4,6 +4,7 @@ library;
 import 'dart:io';
 
 import 'package:checks/checks.dart';
+import 'package:git/git.dart';
 import 'package:kevmoo_scripts/src/process_utils.dart';
 import 'package:kevmoo_scripts/src/shared/git_cli.dart';
 import 'package:path/path.dart' as p;
@@ -11,7 +12,7 @@ import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 
 void main() {
-  group('parseWorktreeListPorcelain', () {
+  group('WorktreeEntry.fromPorcelain', () {
     test('parses bare, branch, detached, and locked worktree stanzas', () {
       const porcelain = '''
 worktree /repos/sdk/.bare
@@ -36,72 +37,73 @@ HEAD 4444dddd
 detached
 ''';
 
-      final records = parseWorktreeListPorcelain(porcelain);
+      final records = WorktreeEntry.fromPorcelain(porcelain);
       check(records).length.equals(5);
 
-      check(records[0]).equals((
-        path: '/repos/sdk/.bare',
-        branch: '',
-        sha: '',
-        isBare: true,
-        isDetached: false,
-        isLocked: false,
-        lockReason: null,
-      ));
-      check(records[1]).equals((
-        path: '/repos/sdk/core/main/sdk',
-        branch: 'main',
-        sha: '1111aaaa',
-        isBare: false,
-        isDetached: false,
-        isLocked: false,
-        lockReason: null,
-      ));
-      check(records[2]).equals((
-        path: '/repos/sdk/core/feat/sdk',
-        branch: 'agent/feat-x',
-        sha: '2222bbbb',
-        isBare: false,
-        isDetached: false,
-        isLocked: true,
-        lockReason: 'Active local benchmark',
-      ));
-      check(records[3]).equals((
-        path: '/repos/_repo-plain-lock',
-        branch: 'plain-lock',
-        sha: '3333cccc',
-        isBare: false,
-        isDetached: false,
-        isLocked: true,
-        lockReason: null,
-      ));
-      check(records[4]).equals((
-        path: '/repos/_repo-detached',
-        branch: '',
-        sha: '4444dddd',
-        isBare: false,
-        isDetached: true,
-        isLocked: false,
-        lockReason: null,
-      ));
+      check(records[0])
+        ..has((w) => w.path, 'path').equals('/repos/sdk/.bare')
+        ..has((w) => w.branch, 'branch').isEmpty()
+        ..has((w) => w.sha, 'sha').isNull()
+        ..has((w) => w.isBare, 'isBare').isTrue()
+        ..has((w) => w.isDetached, 'isDetached').isFalse()
+        ..has((w) => w.isLocked, 'isLocked').isFalse()
+        ..has((w) => w.lockReason, 'lockReason').isNull();
+
+      check(records[1])
+        ..has((w) => w.path, 'path').equals('/repos/sdk/core/main/sdk')
+        ..has((w) => w.branch, 'branch').equals('main')
+        ..has((w) => w.sha, 'sha').equals('1111aaaa')
+        ..has((w) => w.isBare, 'isBare').isFalse()
+        ..has((w) => w.isDetached, 'isDetached').isFalse()
+        ..has((w) => w.isLocked, 'isLocked').isFalse()
+        ..has((w) => w.lockReason, 'lockReason').isNull();
+
+      check(records[2])
+        ..has((w) => w.path, 'path').equals('/repos/sdk/core/feat/sdk')
+        ..has((w) => w.branch, 'branch').equals('agent/feat-x')
+        ..has((w) => w.sha, 'sha').equals('2222bbbb')
+        ..has((w) => w.isBare, 'isBare').isFalse()
+        ..has((w) => w.isDetached, 'isDetached').isFalse()
+        ..has((w) => w.isLocked, 'isLocked').isTrue()
+        ..has(
+          (w) => w.lockReason,
+          'lockReason',
+        ).equals('Active local benchmark');
+
+      check(records[3])
+        ..has((w) => w.path, 'path').equals('/repos/_repo-plain-lock')
+        ..has((w) => w.branch, 'branch').equals('plain-lock')
+        ..has((w) => w.sha, 'sha').equals('3333cccc')
+        ..has((w) => w.isBare, 'isBare').isFalse()
+        ..has((w) => w.isDetached, 'isDetached').isFalse()
+        ..has((w) => w.isLocked, 'isLocked').isTrue()
+        ..has((w) => w.lockReason, 'lockReason').isNull();
+
+      check(records[4])
+        ..has((w) => w.path, 'path').equals('/repos/_repo-detached')
+        ..has((w) => w.branch, 'branch').isEmpty()
+        ..has((w) => w.sha, 'sha').equals('4444dddd')
+        ..has((w) => w.isBare, 'isBare').isFalse()
+        ..has((w) => w.isDetached, 'isDetached').isTrue()
+        ..has((w) => w.isLocked, 'isLocked').isFalse()
+        ..has((w) => w.lockReason, 'lockReason').isNull();
     });
 
     test('handles empty output and stanzas without trailing newline', () {
-      check(parseWorktreeListPorcelain('')).isEmpty();
-      check(parseWorktreeListPorcelain('   \n\n  ')).isEmpty();
+      check(WorktreeEntry.fromPorcelain('')).isEmpty();
+      check(WorktreeEntry.fromPorcelain('   \n\n  ')).isEmpty();
 
-      final single = parseWorktreeListPorcelain(
+      final single = WorktreeEntry.fromPorcelain(
         'worktree /tmp/single\nHEAD abcd1234\nbranch refs/heads/dev',
       );
-      check(single).single.equals((
-        path: '/tmp/single',
-        branch: 'dev',
-        sha: 'abcd1234',
-        isBare: false,
-        isDetached: false,
-        isLocked: false,
-        lockReason: null,
-      ));
+      check(single).single
+        ..has((w) => w.path, 'path').equals('/tmp/single')
+        ..has((w) => w.branch, 'branch').equals('dev')
+        ..has((w) => w.sha, 'sha').equals('abcd1234')
+        ..has((w) => w.isBare, 'isBare').isFalse()
+        ..has((w) => w.isDetached, 'isDetached').isFalse()
+        ..has((w) => w.isLocked, 'isLocked').isFalse()
+        ..has((w) => w.lockReason, 'lockReason').isNull();
     });
   });
 
