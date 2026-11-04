@@ -291,12 +291,12 @@ Future<(TriageData, PrConflictAnalysis, List<PrReviewThread>)> _fetchTriageData(
 ) async {
   print(
     'Fetching details for PR #${context.prNumber} from '
-    '${context.owner}/${context.repo}...',
+    '${context.repoSlug}...',
   );
   print('Target directory: ${context.workingDir}');
-  final viewOutput = await runCommand('gh', [
+  final viewOutput = await runCommand(context.ghExecutable(), [
     '-R',
-    '${context.owner}/${context.repo}',
+    context.repoSlug,
     'pr',
     'view',
     context.prNumber,

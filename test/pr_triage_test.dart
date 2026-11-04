@@ -85,6 +85,7 @@ void main() {
   _registerSyncStatusTests();
   _registerResolveCliTests();
   _registerReRequestCliTests();
+  _registerEnterpriseHostTests();
 }
 
 void _registerGraphQlTests() {
@@ -1191,6 +1192,7 @@ void _registerReRequestCliTests() {
       expect(resolved.owner, equals('flutter'));
       expect(resolved.repo, equals('flutter'));
       expect(resolved.prNumber, equals('193271'));
+      expect(resolved.isEnterpriseHost, isFalse);
       expect(calls, isEmpty);
     });
 
@@ -1326,6 +1328,367 @@ void _registerReRequestCliTests() {
         expect(hintRes.exitCode, equals(ExitCode.usage.code));
         expect(hintRes.lines.join('\n'), contains(expectedHint));
       }
+    });
+  });
+}
+
+void _registerEnterpriseHostTests() {
+  group('GitHub Enterprise host support', () {
+    const enterpriseEnv = {'GH_ENTERPRISE_BIN': 'custom-gh-enterprise'};
+    final enterpriseContext = PrContext(
+      workingDir: '/tmp/enterprise-repo',
+      prNumber: '95',
+      owner: 'team-org',
+      repo: 'knowledge-base',
+      host: 'git.example.com',
+    );
+
+    test(
+      'parsePrUrl and parseGitRemoteUrl parse GitHub and enterprise URLs',
+      () {
+        expect(
+          parsePrUrl(
+            'https://git.example.com/team-org/knowledge-base/pull/95/files',
+          ),
+          equals((
+            host: 'git.example.com',
+            owner: 'team-org',
+            repo: 'knowledge-base',
+            prNumber: '95',
+          )),
+        );
+        expect(
+          parsePrUrl('github.com/flutter/flutter/pull/193271'),
+          equals((
+            host: 'github.com',
+            owner: 'flutter',
+            repo: 'flutter',
+            prNumber: '193271',
+          )),
+        );
+        expect(parsePrUrl('not-a-url'), isNull);
+        expect(
+          parsePrUrl(
+            'https://git.example.com/team-org/knowledge-base/issues/95',
+          ),
+          isNull,
+        );
+
+        expect(
+          parseGitRemoteUrl('git@git.example.com:team-org/knowledge-base.git'),
+          equals((
+            host: 'git.example.com',
+            owner: 'team-org',
+            repo: 'knowledge-base',
+          )),
+        );
+        expect(
+          parseGitRemoteUrl(
+            'ssh://git@git.example.com/team-org/knowledge-base.git',
+          ),
+          equals((
+            host: 'git.example.com',
+            owner: 'team-org',
+            repo: 'knowledge-base',
+          )),
+        );
+        expect(
+          parseGitRemoteUrl('https://git.example.com/team-org/knowledge-base'),
+          equals((
+            host: 'git.example.com',
+            owner: 'team-org',
+            repo: 'knowledge-base',
+          )),
+        );
+        expect(parseGitRemoteUrl('local-only-remote'), isNull);
+      },
+    );
+
+    test('PrContext formats repoSlug, apiHostArgs, and GH_ENTERPRISE_BIN', () {
+      expect(enterpriseContext.isEnterpriseHost, isTrue);
+      expect(
+        enterpriseContext.repoSlug,
+        equals('git.example.com/team-org/knowledge-base'),
+      );
+      expect(
+        enterpriseContext.apiHostArgs,
+        equals(['--hostname', 'git.example.com']),
+      );
+      expect(
+        enterpriseContext.ghExecutable(environment: enterpriseEnv),
+        equals('custom-gh-enterprise'),
+      );
+      expect(
+        enterpriseContext.ghExecutable(environment: const {}),
+        equals('gh'),
+      );
+
+      final publicContext = PrContext(
+        workingDir: '/tmp/public-repo',
+        prNumber: '1',
+        owner: 'owner',
+        repo: 'repo',
+        host: 'github.com',
+      );
+      expect(publicContext.isEnterpriseHost, isFalse);
+      expect(publicContext.repoSlug, equals('owner/repo'));
+      expect(publicContext.apiHostArgs, isEmpty);
+      expect(
+        publicContext.ghExecutable(environment: enterpriseEnv),
+        equals('gh'),
+      );
+    });
+
+    test('resolvePrContextFromArgs handles URL, PR number, and branch modes '
+        'on enterprise hosts', () async {
+      final urlResolved = await resolvePrContextFromArgs(
+        prInput: 'https://git.example.com/team-org/knowledge-base/pull/95',
+        requireLocalRepo: false,
+        onFail: (msg) => throw StateError(msg),
+        runCommand: (exe, args, {workingDirectory}) async =>
+            throw StateError('unexpected command: $exe $args'),
+      );
+      expect(urlResolved.host, equals('git.example.com'));
+      expect(urlResolved.owner, equals('team-org'));
+      expect(urlResolved.repo, equals('knowledge-base'));
+      expect(urlResolved.prNumber, equals('95'));
+
+      final tempDir = Directory.systemTemp.createTempSync('enterprise_pr_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final remoteResolved = await resolvePrContextFromArgs(
+        prInput: '95',
+        targetDir: tempDir.path,
+        environment: enterpriseEnv,
+        onFail: (msg) => throw StateError(msg),
+        runCommand: (exe, args, {workingDirectory}) async {
+          if (exe == 'git' && args.join(' ') == 'remote -v') {
+            return 'origin\tgit@git.example.com:team-org/knowledge-base.git (fetch)\n'
+                'origin\tgit@git.example.com:team-org/knowledge-base.git (push)\n';
+          }
+          throw ProcessException(exe, args, 'unknown host', 1);
+        },
+      );
+      expect(remoteResolved.host, equals('git.example.com'));
+      expect(remoteResolved.owner, equals('team-org'));
+      expect(remoteResolved.repo, equals('knowledge-base'));
+      expect(remoteResolved.prNumber, equals('95'));
+
+      final branchCalls = <String>[];
+      final branchResolved = await resolvePrContextFromArgs(
+        targetDir: tempDir.path,
+        environment: enterpriseEnv,
+        onFail: (msg) => throw StateError(msg),
+        runCommand: (exe, args, {workingDirectory}) async {
+          final cmd = '$exe ${args.join(' ')}';
+          branchCalls.add(cmd);
+          if (cmd == 'git remote -v') {
+            return 'origin\tgit@git.example.com:team-org/knowledge-base.git (fetch)\n';
+          }
+          if (cmd == 'custom-gh-enterprise repo view --json owner,name') {
+            return jsonEncode({
+              'owner': {'login': 'team-org'},
+              'name': 'knowledge-base',
+            });
+          }
+          if (cmd == 'git symbolic-ref --short HEAD') {
+            return 'feat/a11y\n';
+          }
+          if (cmd ==
+              'custom-gh-enterprise pr list -R '
+                  'git.example.com/team-org/knowledge-base --head feat/a11y '
+                  '--json number,url') {
+            return jsonEncode([
+              {
+                'number': 95,
+                'url':
+                    'https://git.example.com/team-org/knowledge-base/pull/95',
+              },
+            ]);
+          }
+          throw StateError('Unexpected command: $cmd');
+        },
+      );
+      expect(branchResolved.host, equals('git.example.com'));
+      expect(branchResolved.prNumber, equals('95'));
+      expect(
+        branchCalls,
+        contains(
+          'custom-gh-enterprise pr list -R '
+          'git.example.com/team-org/knowledge-base --head feat/a11y '
+          '--json number,url',
+        ),
+      );
+    });
+
+    test('GraphQL, checks, resolve, and re-request pass enterprise binary '
+        'and host flags', () async {
+      final calls = <String>[];
+      Future<String> fakeRunner(
+        String exe,
+        List<String> args, {
+        String? workingDirectory,
+      }) async {
+        final cmd = '$exe ${args.join(' ')}';
+        calls.add(cmd);
+        if (args.contains('checks')) {
+          return jsonEncode([
+            {
+              'name': 'validate',
+              'state': 'SUCCESS',
+              'bucket': 'pass',
+              'link': 'https://git.example.com/team-org/knowledge-base/runs/1',
+              'workflow': 'CI',
+            },
+          ]);
+        }
+        if (args.contains('graphql')) {
+          if (args.any((a) => a.contains('resolveReviewThread'))) {
+            return jsonEncode({
+              'data': {
+                'resolveReviewThread': {
+                  'thread': {'isResolved': true},
+                },
+              },
+            });
+          }
+          return jsonEncode({
+            'data': {
+              'repository': {
+                'pullRequest': {
+                  'comments': {'nodes': <Object>[]},
+                  'reviews': {'nodes': <Object>[]},
+                  'reviewThreads': {'nodes': <Object>[]},
+                },
+              },
+            },
+          });
+        }
+        return '';
+      }
+
+      final checks = await fetchPrChecks(
+        enterpriseContext,
+        runCommand: fakeRunner,
+        environment: enterpriseEnv,
+      );
+      expect(checks, hasLength(1));
+
+      await fetchPrGraphQLData(
+        enterpriseContext,
+        runCommand: fakeRunner,
+        environment: enterpriseEnv,
+      );
+
+      await replyAndResolveThread(
+        enterpriseContext,
+        threadId: 'PRRT_enterprise_1',
+        commentId: '44156',
+        body: 'Quote-reply feedback',
+        runCommand: fakeRunner,
+        environment: enterpriseEnv,
+      );
+
+      await reRequestPrReview(
+        enterpriseContext,
+        reviewerLogins: '@alice',
+        comment: 'Ready for another look',
+        dismissReviewId: '777',
+        dismissMessage: 'Updated tests',
+        runCommand: fakeRunner,
+        environment: enterpriseEnv,
+      );
+
+      expect(
+        calls[0],
+        equals(
+          'custom-gh-enterprise -R git.example.com/team-org/knowledge-base '
+          'pr checks 95 --json name,state,bucket,link,workflow',
+        ),
+      );
+      expect(
+        calls[1],
+        startsWith(
+          'custom-gh-enterprise api --hostname git.example.com graphql ',
+        ),
+      );
+      expect(
+        calls[2],
+        equals(
+          'custom-gh-enterprise api --hostname git.example.com '
+          'repos/team-org/knowledge-base/pulls/95/comments/44156/replies '
+          '-f body=Quote-reply feedback',
+        ),
+      );
+      expect(
+        calls[3],
+        startsWith(
+          'custom-gh-enterprise api --hostname git.example.com graphql ',
+        ),
+      );
+      expect(
+        calls[4],
+        equals(
+          'custom-gh-enterprise pr comment 95 -R '
+          'git.example.com/team-org/knowledge-base --body Ready for another look',
+        ),
+      );
+      expect(
+        calls[5],
+        equals(
+          'custom-gh-enterprise api --hostname git.example.com -X PUT '
+          'repos/team-org/knowledge-base/pulls/95/reviews/777/dismissals '
+          '-f message=Updated tests',
+        ),
+      );
+      expect(
+        calls[6],
+        equals(
+          'custom-gh-enterprise pr edit 95 -R '
+          'git.example.com/team-org/knowledge-base --add-reviewer alice',
+        ),
+      );
+    });
+
+    test('buildTriageReport includes enterprise host in -R flag when '
+        'reviewer was dropped from queue', () {
+      final report = buildTriageReport((
+        prData: <String, dynamic>{
+          'number': 95,
+          'title': 'Add semantics invariants',
+          'url': 'https://git.example.com/team-org/knowledge-base/pull/95',
+          'author': {'login': 'author1'},
+          'headRefName': 'feat/a11y',
+          'headRefOid': 'abc1234',
+          'reviewDecision': 'REVIEW_REQUIRED',
+          'reviewRequests': const <Object>[],
+          'humanReviewers': const ['reviewer1'],
+          'mergeable': 'MERGEABLE',
+        },
+        syncStatus: (
+          localBranch: 'feat/a11y',
+          remoteBranch: 'feat/a11y',
+          localHeadSha: 'abc1234',
+          remoteHeadSha: 'abc1234',
+          isSynced: true,
+          syncState: 'in_sync',
+          warning: null,
+        ),
+        unresolvedThreads: const <PrReviewThread>[],
+        reviewComments: const <PrReview>[],
+        generalComments: const <PrComment>[],
+        failedChecks: const <PrCheckRun>[],
+        pendingChecks: const <PrCheckRun>[],
+        checkLogs: const <String, String>{},
+      ));
+
+      expect(
+        report,
+        contains(
+          'gh pr edit 95 -R git.example.com/team-org/knowledge-base '
+          '--add-reviewer reviewer1',
+        ),
+      );
     });
   });
 }
