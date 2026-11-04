@@ -18,11 +18,63 @@ export 'pr_context.dart'
         analyzePrConflicts,
         fetchPrChecks,
         fetchPrGraphQLData,
+        ghExecutableForHost,
         parseMergeTreeConflictOutput,
         runCommand;
 
 final _digitsOnly = RegExp(r'^\d+$');
-final _prUrlRegExp = RegExp(r'github\.com/([^/]+)/([^/]+)/pull/(\d+)');
+final _scpRemotePattern = RegExp(r'^(?:[^@/\s]+@)?([^:/\s]+):(.+)$');
+
+/// Parses a GitHub or GitHub Enterprise pull request URL into its components.
+({String host, String owner, String repo, String prNumber})? parsePrUrl(
+  String input,
+) {
+  final trimmed = input.trim();
+  if (trimmed.isEmpty) return null;
+  final uri = Uri.tryParse(
+    trimmed.contains('://') ? trimmed : 'https://$trimmed',
+  );
+  if (uri == null || !uri.hasAuthority || !uri.host.contains('.')) {
+    return null;
+  }
+  final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+  if (segments case [final owner, final repo, 'pull', final pr, ...]
+      when _digitsOnly.hasMatch(pr)) {
+    return (
+      host: uri.host.toLowerCase(),
+      owner: owner,
+      repo: repo,
+      prNumber: pr,
+    );
+  }
+  return null;
+}
+
+/// Parses a Git remote URL (HTTPS, `ssh://`, or SCP-style `git@host:owner/repo`)
+/// into `(host, owner, repo)`.
+({String host, String owner, String repo})? parseGitRemoteUrl(
+  String remoteUrl,
+) {
+  final trimmed = remoteUrl.trim();
+  final scpMatch = trimmed.contains('://')
+      ? null
+      : _scpRemotePattern.firstMatch(trimmed);
+  final normalized = scpMatch != null
+      ? 'ssh://${scpMatch.group(1)}/${scpMatch.group(2)}'
+      : trimmed;
+  final uri = Uri.tryParse(normalized);
+  if (uri == null || !uri.hasAuthority || !uri.host.contains('.')) {
+    return null;
+  }
+  final segments = uri.pathSegments.where((s) => s.isNotEmpty).toList();
+  if (segments case [final owner, final rawRepo]) {
+    final repo = rawRepo.replaceFirst(RegExp(r'\.git$'), '');
+    if (repo.isNotEmpty) {
+      return (host: uri.host.toLowerCase(), owner: owner, repo: repo);
+    }
+  }
+  return null;
+}
 
 ArgParser buildPrContextArgParser() => ArgParser()
   ..addOption('pr', abbr: 'p', help: 'PR number or GitHub PR URL')
@@ -68,6 +120,7 @@ Future<PrContext> resolvePrContextFromArgs({
   required Never Function(String message) onFail,
   bool requireLocalRepo = true,
   CommandRunner runCommand = runCommand,
+  Map<String, String>? environment,
 }) async {
   final workingDir = targetDir != null
       ? Directory(targetDir).absolute.path
@@ -76,30 +129,34 @@ Future<PrContext> resolvePrContextFromArgs({
     onFail('Target directory "$workingDir" does not exist.');
   }
 
-  final (owner, repo, parsedPrNumber) = _parsePrInput(prInput, onFail);
+  final parsedInput = _parsePrInput(prInput, onFail);
   if (!requireLocalRepo &&
       targetDir == null &&
-      owner != null &&
-      repo != null &&
-      parsedPrNumber != null) {
+      parsedInput.owner != null &&
+      parsedInput.repo != null &&
+      parsedInput.prNumber != null) {
     return PrContext(
       workingDir: workingDir,
-      prNumber: parsedPrNumber,
-      owner: owner,
-      repo: repo,
+      prNumber: parsedInput.prNumber!,
+      owner: parsedInput.owner!,
+      repo: parsedInput.repo!,
+      host: parsedInput.host,
     );
   }
 
-  final prNumber =
-      parsedPrNumber ??
-      await _detectPrNumberFromBranch(workingDir, onFail, runCommand);
+  final remoteInfo = await _resolveGitRemoteInfo(workingDir, runCommand);
+  final resolvedHost = parsedInput.host ?? remoteInfo.host;
+  final ghExe = ghExecutableForHost(resolvedHost, environment: environment);
 
-  final (localOwner, localRepo) = await _resolveLocalRepoOwner(
+  final (ghOwner, ghRepo) = await _resolveLocalRepoOwner(
     workingDir,
     runCommand,
+    ghExecutable: ghExe,
   );
-  final resolvedOwner = owner ?? localOwner;
-  final resolvedRepo = repo ?? localRepo;
+  final localOwner = ghOwner ?? remoteInfo.owner;
+  final localRepo = ghRepo ?? remoteInfo.repo;
+  final resolvedOwner = parsedInput.owner ?? localOwner;
+  final resolvedRepo = parsedInput.repo ?? localRepo;
 
   if (resolvedOwner == null || resolvedRepo == null) {
     onFail('Failed to resolve repository owner and name.');
@@ -107,67 +164,106 @@ Future<PrContext> resolvePrContextFromArgs({
 
   if (localOwner != null &&
       localRepo != null &&
-      owner != null &&
-      repo != null &&
-      localRepo.toLowerCase() != repo.toLowerCase()) {
-    final matchesRemote = await _hasGitRemote(
-      workingDir,
-      owner,
-      repo,
-      runCommand: runCommand,
+      parsedInput.owner != null &&
+      parsedInput.repo != null &&
+      localRepo.toLowerCase() != parsedInput.repo!.toLowerCase() &&
+      !remoteInfo.slugs.contains(
+        '${parsedInput.owner}/${parsedInput.repo}'.toLowerCase(),
+      )) {
+    onFail(
+      'The target directory "$workingDir" is for repository '
+      '"$localOwner/$localRepo", but the specified PR is for repository '
+      '"${parsedInput.owner}/${parsedInput.repo}".',
     );
-    if (!matchesRemote) {
-      onFail(
-        'The target directory "$workingDir" is for repository '
-        '"$localOwner/$localRepo", but the specified PR is for repository '
-        '"$owner/$repo".',
-      );
-    }
   }
+
+  final tempContext = PrContext(
+    workingDir: workingDir,
+    prNumber: parsedInput.prNumber ?? '',
+    owner: resolvedOwner,
+    repo: resolvedRepo,
+    host: resolvedHost,
+  );
+  final prNumber =
+      parsedInput.prNumber ??
+      await _detectPrNumberFromBranch(
+        workingDir,
+        onFail,
+        runCommand,
+        ghExecutable: ghExe,
+        repoSlug: tempContext.repoSlug,
+      );
 
   return PrContext(
     workingDir: workingDir,
     prNumber: prNumber,
     owner: resolvedOwner,
     repo: resolvedRepo,
+    host: resolvedHost,
   );
 }
 
-(String? owner, String? repo, String? prNumber) _parsePrInput(
+({String? host, String? owner, String? repo, String? prNumber}) _parsePrInput(
   String? prInput,
   Never Function(String message) onFail,
 ) {
-  if (prInput == null) return (null, null, null);
-  final prUrlMatch = _prUrlRegExp.firstMatch(prInput);
-  if (prUrlMatch != null) {
-    return (prUrlMatch.group(1), prUrlMatch.group(2), prUrlMatch.group(3));
+  if (prInput == null) {
+    return (host: null, owner: null, repo: null, prNumber: null);
+  }
+  final parsedUrl = parsePrUrl(prInput);
+  if (parsedUrl != null) {
+    return (
+      host: parsedUrl.host,
+      owner: parsedUrl.owner,
+      repo: parsedUrl.repo,
+      prNumber: parsedUrl.prNumber,
+    );
   }
   if (_digitsOnly.hasMatch(prInput)) {
-    return (null, null, prInput);
+    return (host: null, owner: null, repo: null, prNumber: prInput);
   }
   onFail('Invalid PR argument. Please provide a PR number or a GitHub PR URL.');
 }
 
-Future<bool> _hasGitRemote(
+typedef _GitRemoteInfo = ({
+  String? host,
+  String? owner,
+  String? repo,
+  Set<String> slugs,
+});
+
+Future<_GitRemoteInfo> _resolveGitRemoteInfo(
   String workingDir,
-  String owner,
-  String repo, {
-  CommandRunner runCommand = runCommand,
-}) async {
+  CommandRunner runCommand,
+) async {
+  String output;
   try {
-    final output = await runCommand('git', [
+    output = await runCommand('git', [
       'remote',
       '-v',
     ], workingDirectory: workingDir);
-    final pattern = RegExp(
-      '(?:[/:])${RegExp.escape(owner)}/${RegExp.escape(repo)}'
-      r'(?:\.git|/|[\s]|$)',
-      caseSensitive: false,
-    );
-    return output.split('\n').any(pattern.hasMatch);
   } catch (_) {
-    return false;
+    return (host: null, owner: null, repo: null, slugs: const <String>{});
   }
+
+  final byName = <String, ({String host, String owner, String repo})>{};
+  final slugs = <String>{};
+  for (final line in output.split('\n')) {
+    final parts = line.trim().split(RegExp(r'\s+'));
+    if (parts.length < 2) continue;
+    final parsed = parseGitRemoteUrl(parts[1]);
+    if (parsed == null) continue;
+    byName.putIfAbsent(parts[0], () => parsed);
+    slugs.add('${parsed.owner}/${parsed.repo}'.toLowerCase());
+  }
+  final preferred =
+      byName['origin'] ?? byName['upstream'] ?? byName.values.firstOrNull;
+  return (
+    host: preferred?.host,
+    owner: preferred?.owner,
+    repo: preferred?.repo,
+    slugs: slugs,
+  );
 }
 
 /// Extension getters for [PrCheckRun].
@@ -249,11 +345,13 @@ Future<String> fetchFailedCheckLog(
   final runId = parseRunIdFromLink(link);
   var checkRunId = parseCheckRunIdFromLink(link);
 
-  Future<String> ghRepoApi(String subpath) => runCommand('gh', [
-    'api',
-    '--allow-escape-sequences',
-    'repos/${context.owner}/${context.repo}/$subpath',
-  ], workingDirectory: context.workingDir);
+  Future<String> ghRepoApi(String subpath) =>
+      runCommand(context.ghExecutable(), [
+        'api',
+        ...context.apiHostArgs,
+        '--allow-escape-sequences',
+        'repos/${context.owner}/${context.repo}/$subpath',
+      ], workingDirectory: context.workingDir);
 
   Map<dynamic, dynamic>? matchedCheckRun;
   if (runId == null && (checkRunId != null || headSha.isNotEmpty)) {
@@ -355,9 +453,9 @@ Future<String> _fetchActionsRunLog(
   if (combinedLog != null) return combinedLog;
 
   try {
-    return await runCommand('gh', [
+    return await runCommand(context.ghExecutable(), [
       '-R',
-      '${context.owner}/${context.repo}',
+      context.repoSlug,
       'run',
       'view',
       runId,
@@ -374,6 +472,7 @@ Future<void> _replyToComment(
   required String commentId,
   required String body,
   CommandRunner runCommand = runCommand,
+  Map<String, String>? environment,
 }) async {
   if (!_digitsOnly.hasMatch(commentId)) {
     throw ArgumentError('Comment ID must be a numeric database ID.');
@@ -385,8 +484,9 @@ Future<void> _replyToComment(
   final endpoint =
       'repos/${context.owner}/${context.repo}/pulls/${context.prNumber}'
       '/comments/$commentId/replies';
-  await runCommand('gh', [
+  await runCommand(context.ghExecutable(environment: environment), [
     'api',
+    ...context.apiHostArgs,
     endpoint,
     '-f',
     'body=$body',
@@ -399,6 +499,7 @@ Future<void> _resolveReviewThread(
   PrContext context, {
   required String threadId,
   CommandRunner runCommand = runCommand,
+  Map<String, String>? environment,
 }) async {
   if (threadId.trim().isEmpty) {
     throw ArgumentError('Thread ID cannot be empty.');
@@ -413,14 +514,19 @@ Future<void> _resolveReviewThread(
   }
   ''';
 
-  final response = await runCommand('gh', [
-    'api',
-    'graphql',
-    '-f',
-    'query=$mutation',
-    '-f',
-    'threadId=$threadId',
-  ], workingDirectory: context.workingDir);
+  final response = await runCommand(
+    context.ghExecutable(environment: environment),
+    [
+      'api',
+      ...context.apiHostArgs,
+      'graphql',
+      '-f',
+      'query=$mutation',
+      '-f',
+      'threadId=$threadId',
+    ],
+    workingDirectory: context.workingDir,
+  );
 
   final parsed = jsonDecode(response) as Map<String, dynamic>;
   if (parsed['errors'] != null) {
@@ -436,6 +542,7 @@ Future<void> replyAndResolveThread(
   String? commentId,
   String? body,
   CommandRunner runCommand = runCommand,
+  Map<String, String>? environment,
 }) async {
   final hasCommentId = commentId != null && commentId.trim().isNotEmpty;
   final hasBody = body != null && body.trim().isNotEmpty;
@@ -451,12 +558,14 @@ Future<void> replyAndResolveThread(
       commentId: commentId,
       body: body,
       runCommand: runCommand,
+      environment: environment,
     );
   }
   await _resolveReviewThread(
     context,
     threadId: threadId,
     runCommand: runCommand,
+    environment: environment,
   );
 }
 
@@ -492,6 +601,7 @@ Future<void> reRequestPrReview(
   String? dismissMessage,
   void Function(String)? onWarning,
   CommandRunner runCommand = runCommand,
+  Map<String, String>? environment,
 }) async {
   final normalizedLogins = normalizeReviewerLogins(reviewerLogins);
   if (normalizedLogins.isEmpty) {
@@ -504,14 +614,15 @@ Future<void> reRequestPrReview(
   if (comment != null && comment.trim().isEmpty) {
     throw ArgumentError('Comment body cannot be empty.');
   }
+  final ghExe = context.ghExecutable(environment: environment);
 
   if (comment != null) {
-    await runCommand('gh', [
+    await runCommand(ghExe, [
       'pr',
       'comment',
       context.prNumber,
       '-R',
-      '${context.owner}/${context.repo}',
+      context.repoSlug,
       '--body',
       comment,
     ], workingDirectory: context.workingDir);
@@ -526,8 +637,9 @@ Future<void> reRequestPrReview(
         'repos/${context.owner}/${context.repo}/pulls/${context.prNumber}'
         '/reviews/$cleanDismissId/dismissals';
     try {
-      await runCommand('gh', [
+      await runCommand(ghExe, [
         'api',
+        ...context.apiHostArgs,
         '-X',
         'PUT',
         endpoint,
@@ -542,12 +654,12 @@ Future<void> reRequestPrReview(
     }
   }
 
-  await runCommand('gh', [
+  await runCommand(ghExe, [
     'pr',
     'edit',
     context.prNumber,
     '-R',
-    '${context.owner}/${context.repo}',
+    context.repoSlug,
     '--add-reviewer',
     normalizedLogins,
   ], workingDirectory: context.workingDir);
@@ -556,8 +668,10 @@ Future<void> reRequestPrReview(
 Future<String> _detectPrNumberFromBranch(
   String workingDir,
   Never Function(String) onFail,
-  CommandRunner runCommand,
-) async {
+  CommandRunner runCommand, {
+  required String ghExecutable,
+  required String repoSlug,
+}) async {
   String branch;
   try {
     branch = (await runCommand('git', [
@@ -575,9 +689,11 @@ Future<String> _detectPrNumberFromBranch(
     );
   }
 
-  final listOutput = await runCommand('gh', [
+  final listOutput = await runCommand(ghExecutable, [
     'pr',
     'list',
+    '-R',
+    repoSlug,
     '--head',
     branch,
     '--json',
@@ -609,10 +725,11 @@ Future<String> _detectPrNumberFromBranch(
 
 Future<(String?, String?)> _resolveLocalRepoOwner(
   String workingDir,
-  CommandRunner runCommand,
-) async {
+  CommandRunner runCommand, {
+  required String ghExecutable,
+}) async {
   try {
-    final repoOutput = await runCommand('gh', [
+    final repoOutput = await runCommand(ghExecutable, [
       'repo',
       'view',
       '--json',

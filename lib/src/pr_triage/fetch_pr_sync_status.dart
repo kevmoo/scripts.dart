@@ -93,9 +93,9 @@ Future<(String, String)> _resolveRemoteBranchAndSha(
     return (remoteBranch, remoteHeadSha);
   }
   try {
-    final viewOutput = await runCommand('gh', [
+    final viewOutput = await runCommand(context.ghExecutable(), [
       '-R',
-      '${context.owner}/${context.repo}',
+      context.repoSlug,
       'pr',
       'view',
       context.prNumber,

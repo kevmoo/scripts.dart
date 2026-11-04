@@ -7,13 +7,51 @@ class PrContext {
   final String prNumber;
   final String owner;
   final String repo;
+  final String? host;
 
   new({
     required this.workingDir,
     required this.prNumber,
     required this.owner,
     required this.repo,
+    this.host,
   });
+
+  /// Whether [host] targets a non-`github.com` GitHub Enterprise host.
+  bool get isEnterpriseHost {
+    final normalized = host?.trim().toLowerCase();
+    return normalized != null &&
+        normalized.isNotEmpty &&
+        normalized != 'github.com';
+  }
+
+  /// Repository slug (`owner/repo`, or `host/owner/repo` on enterprise hosts)
+  /// for `-R` / `--repo` flags.
+  String get repoSlug =>
+      isEnterpriseHost ? '${host!.trim()}/$owner/$repo' : '$owner/$repo';
+
+  /// Extra `--hostname <host>` arguments for `gh api` calls on enterprise
+  /// hosts (empty for `github.com`).
+  List<String> get apiHostArgs =>
+      isEnterpriseHost ? ['--hostname', host!.trim()] : const [];
+
+  /// Resolves the GitHub CLI executable (`GH_ENTERPRISE_BIN` on enterprise
+  /// hosts when set in [environment], otherwise `'gh'`).
+  String ghExecutable({Map<String, String>? environment}) =>
+      ghExecutableForHost(host, environment: environment);
+}
+
+/// Resolves the GitHub CLI executable for [host].
+String ghExecutableForHost(String? host, {Map<String, String>? environment}) {
+  final normalized = host?.trim().toLowerCase();
+  if (normalized != null &&
+      normalized.isNotEmpty &&
+      normalized != 'github.com') {
+    final bin = (environment ?? Platform.environment)['GH_ENTERPRISE_BIN']
+        ?.trim();
+    if (bin != null && bin.isNotEmpty) return bin;
+  }
+  return 'gh';
 }
 
 /// Function signature for running external process commands.
@@ -103,17 +141,22 @@ typedef PrGraphData = ({
 Future<List<PrCheckRun>> fetchPrChecks(
   PrContext context, {
   CommandRunner runCommand = runCommand,
+  Map<String, String>? environment,
 }) async {
-  final repoArgs = ['-R', '${context.owner}/${context.repo}'];
   try {
-    final checksOutput = await runCommand('gh', [
-      ...repoArgs,
-      'pr',
-      'checks',
-      context.prNumber,
-      '--json',
-      'name,state,bucket,link,workflow',
-    ], workingDirectory: context.workingDir);
+    final checksOutput = await runCommand(
+      context.ghExecutable(environment: environment),
+      [
+        '-R',
+        context.repoSlug,
+        'pr',
+        'checks',
+        context.prNumber,
+        '--json',
+        'name,state,bucket,link,workflow',
+      ],
+      workingDirectory: context.workingDir,
+    );
     final checks = jsonDecode(checksOutput) as List<dynamic>;
     return checks
         .whereType<Map<dynamic, dynamic>>()
@@ -132,6 +175,7 @@ Future<List<PrCheckRun>> fetchPrChecks(
 Future<PrGraphData> fetchPrGraphQLData(
   PrContext context, {
   CommandRunner runCommand = runCommand,
+  Map<String, String>? environment,
 }) async {
   const query = r'''
   query($owner: String!, $repo: String!, $pr: Int!) {
@@ -180,18 +224,23 @@ Future<PrGraphData> fetchPrGraphQLData(
   }
   ''';
 
-  final graphqlResponse = await runCommand('gh', [
-    'api',
-    'graphql',
-    '-f',
-    'owner=${context.owner}',
-    '-f',
-    'repo=${context.repo}',
-    '-F',
-    'pr=${context.prNumber}',
-    '-f',
-    'query=$query',
-  ], workingDirectory: context.workingDir);
+  final graphqlResponse = await runCommand(
+    context.ghExecutable(environment: environment),
+    [
+      'api',
+      ...context.apiHostArgs,
+      'graphql',
+      '-f',
+      'owner=${context.owner}',
+      '-f',
+      'repo=${context.repo}',
+      '-F',
+      'pr=${context.prNumber}',
+      '-f',
+      'query=$query',
+    ],
+    workingDirectory: context.workingDir,
+  );
 
   final parsed = jsonDecode(graphqlResponse) as Map<String, dynamic>;
   if (parsed['errors'] != null) {
@@ -449,9 +498,9 @@ Future<void> _pollUnknownPrMergeable(
       await Future<void>.delayed(retryDelay);
     }
     try {
-      final out = await runCommand('gh', [
+      final out = await runCommand(context.ghExecutable(), [
         '-R',
-        '${context.owner}/${context.repo}',
+        context.repoSlug,
         'pr',
         'view',
         context.prNumber,
