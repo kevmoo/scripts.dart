@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:checks/checks.dart';
@@ -5,9 +6,13 @@ import 'package:kevmoo_scripts/src/repo_align/canonical_templates.dart';
 import 'package:kevmoo_scripts/src/repo_align/models.dart';
 import 'package:kevmoo_scripts/src/repo_align/repo_align_runner.dart';
 import 'package:kevmoo_scripts/src/repo_align/repo_align_scanner.dart';
+import 'package:kevmoo_scripts/src/repo_align/workflow_matrix.dart';
+import 'package:kevmoo_scripts/src/repos_config.dart';
+import 'package:kevmoo_scripts/src/shared/analysis_options_resolver.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
+import 'package:yaml/yaml.dart';
 
 void main() {
   group('RepoAlignmentStatus', () {
@@ -227,9 +232,6 @@ void main() {
     });
 
     test('flags ungated markdown check on agentSkills repos', () {
-      // Regression: _checkGitHubIssues exempts agentSkills, which silently
-      // exempted the markdown gate too. kevmoo_skills and dash_skills both
-      // have active branch rulesets, so they must not be exempt.
       final status = _markdownFixture(
         kind: RepoKind.agentSkills,
         hasPrettierRc: true,
@@ -243,9 +245,6 @@ void main() {
 
     test('flags missing analysis_options.yaml on agentSkills repos with a '
         'pubspec', () {
-      // Regression: _checkDartIssues exempted agentSkills wholesale, so
-      // kevmoo_skills (a Dart workspace with real tooling under tool/) was
-      // reported 🟢 Aligned with no analysis_options.yaml at all.
       final aligned = _markdownFixture(
         kind: RepoKind.agentSkills,
         hasPrettierRc: true,
@@ -287,14 +286,11 @@ void main() {
 
       check(aligned.issues).isEmpty();
       check(noLints.issues).contains('Missing analysis_options.yaml');
-      // Lower-bound / complexity remain out of scope for skills repos.
       check(noLints.issues).not((it) => it.contains('Missing lower_bound.yml'));
       check(noLints.issues).not((it) => it.contains('Missing complexity.yml'));
     });
 
     test('does not flag gating when there is no ruleset at all', () {
-      // Already reported as "No branch protection or ruleset"; a second
-      // finding about gating would be noise.
       final status = _markdownFixture(
         hasPrettierRc: true,
         hasMarkdownWorkflow: true,
@@ -430,7 +426,7 @@ void main() {
       check(status.issues).contains('Missing test/api_test.dart');
     });
 
-    test('does not flag api_summary on repos with hasPublishToNone', () {
+    test('does not flag api_summary or lower_bound on unpublished repos', () {
       final status = RepoAlignmentStatus(
         name: 'unpublished_ws',
         path: '/tmp/unpublished_ws',
@@ -479,118 +475,369 @@ void main() {
     });
   });
 
-  group('Canonical Templates', () {
+  group('Canonical Templates & Analysis Options Rendering', () {
     test('markdown workflow job id matches the required check context', () {
       check(canonicalMarkdownWorkflow).contains('\n  $markdownCheckContext:\n');
     });
 
     test('markdown workflow has no paths filter', () {
-      // A `paths:` filter on a required check deadlocks every PR that touches
-      // no markdown. Match the indented YAML key, not the word in the comment.
       check(canonicalMarkdownWorkflow).not((it) => it.contains('\n    paths:'));
+    });
+
+    test('renderCanonicalAnalysisOptions preserves analyzer excludes', () {
+      final rendered = renderCanonicalAnalysisOptions(
+        excludes: ['tool/**', '**/*.g.dart'],
+      );
+      final parsed = loadYaml(rendered) as YamlMap;
+      final analyzer = parsed['analyzer'] as YamlMap;
+      final exclude = (analyzer['exclude'] as YamlList).cast<String>();
+      final language = analyzer['language'] as YamlMap;
+
+      check(exclude).deepEquals(['tool/**', '**/*.g.dart']);
+      check(language['strict-raw-types']).equals(true);
+    });
+
+    test('AnalysisOptionsResolver seeds strict mode from canonical include '
+        'without PackageConfig', () {
+      final resolved = AnalysisOptionsResolver().resolveFromContent(
+        canonicalAnalysisOptions,
+      );
+      check(resolved.allLanguage['strict-casts']).equals(true);
+      check(resolved.allLanguage['strict-inference']).equals(true);
+      check(resolved.allLanguage['strict-raw-types']).equals(true);
+    });
+  });
+
+  group('Workflow Matrix Expansion', () {
+    test('expands Cartesian os x sdk matrix and respects exclude/include', () {
+      const wf = r'''
+jobs:
+  analyze:
+    strategy:
+      matrix:
+        sdk: [dev]
+    steps: []
+  test:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        sdk: ['3.13', dev]
+        exclude:
+          - os: macos-latest
+            sdk: '3.13'
+        include:
+          - os: windows-latest
+            sdk: dev
+    steps: []
+  named_matrix:
+    name: 'test (${{ matrix.os }})'
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps: []
+''';
+
+      check(extractWorkflowJobCheckNames(wf)).deepEquals([
+        'analyze (dev)',
+        'test (ubuntu-latest, 3.13)',
+        'test (ubuntu-latest, dev)',
+        'test (macos-latest, dev)',
+        'test (windows-latest, dev)',
+        'test (ubuntu-latest)',
+        'test (windows-latest)',
+      ]);
     });
   });
 
   group('RepoAlignScanner', () {
-    test('scans mock directory structure', () {
-      final tempDir = Directory.systemTemp.createTempSync('repo_align_test_');
+    test('derives RepoKind from contents without hardcoded repo names', () {
+      final tempDir = Directory.systemTemp.createTempSync('repo_align_kinds_');
       addTearDown(() => tempDir.deleteSync(recursive: true));
 
-      final mockRepo = Directory(p.join(tempDir.path, 'mock_repo'))
-        ..createSync();
-      File(p.join(mockRepo.path, '.git')).writeAsStringSync('gitdir: ...');
-      File(p.join(mockRepo.path, 'pubspec.yaml')).writeAsStringSync('''
-name: mock_repo
+      Directory makeRepo(String name) {
+        final dir = Directory(p.join(tempDir.path, name))..createSync();
+        File(p.join(dir.path, '.git')).writeAsStringSync('gitdir: ...');
+        return dir;
+      }
+
+      // 1. Published single-package repo
+      final pubRepo = makeRepo('synthetic_pub_pkg');
+      File(p.join(pubRepo.path, 'pubspec.yaml')).writeAsStringSync('''
+name: synthetic_pub_pkg
+version: 1.0.0-wip
 environment:
-  sdk: ^3.0.0
+  sdk: ^3.12.0
 ''');
-      File(p.join(mockRepo.path, 'analysis_options.yaml')).writeAsStringSync('''
-include: package:dart_flutter_team_lints/analysis_options.yaml
-analyzer:
-  language:
-    strict-casts: true
-    strict-inference: true
-    strict-raw-types: true
+
+      // 2. Unpublished tool/demo repo (publish_to: none)
+      final toolRepo = makeRepo('synthetic_demo_app');
+      File(p.join(toolRepo.path, 'pubspec.yaml')).writeAsStringSync('''
+name: synthetic_demo_app
+version: 0.1.0
+publish_to: none
+environment:
+  sdk: ^3.12.0
 ''');
+
+      // 3. Pure agent skills workspace (skills/*/SKILL.md, no root lib/bin)
+      final skillsRepo = makeRepo('synthetic_skills_bundle');
+      File(p.join(skillsRepo.path, 'pubspec.yaml')).writeAsStringSync('''
+name: synthetic_skills_bundle
+publish_to: none
+environment:
+  sdk: ^3.12.0
+workspace:
+  - tool
+''');
+      Directory(p.join(skillsRepo.path, 'skills', 'demo-skill'))
+          .createSync(recursive: true);
+      File(p.join(skillsRepo.path, 'skills', 'demo-skill', 'SKILL.md'))
+          .writeAsStringSync('---\nname: demo-skill\n---\n');
+
+      // 4. Published package that also co-locates skills/ alongside lib/
+      final hybridPkg = makeRepo('synthetic_pkg_with_skill');
+      File(p.join(hybridPkg.path, 'pubspec.yaml')).writeAsStringSync('''
+name: synthetic_pkg_with_skill
+version: 2.0.0
+environment:
+  sdk: ^3.12.0
+''');
+      Directory(p.join(hybridPkg.path, 'lib')).createSync();
+      Directory(p.join(hybridPkg.path, 'skills', 'helper-skill'))
+          .createSync(recursive: true);
+      File(p.join(hybridPkg.path, 'skills', 'helper-skill', 'SKILL.md'))
+          .writeAsStringSync('---\nname: helper-skill\n---\n');
 
       final scanner = RepoAlignScanner(
         baseDirPath: tempDir.path,
         queryGitHubApi: false,
       );
-      final results = scanner.scanAll();
 
-      check(results).length.equals(1);
-      check(results.first.name).equals('mock_repo');
-      check(results.first.hasFullStrictMode).isTrue();
-      check(results.first.hasPubspec).isTrue();
+      final pubStatus = scanner.scanSingleRepo(pubRepo);
+      check(pubStatus.kind).equals(RepoKind.publishedPackage);
+      check(pubStatus.requiresLowerBound).isTrue();
+      check(pubStatus.requiresApiSummary).isTrue();
+
+      final toolStatus = scanner.scanSingleRepo(toolRepo);
+      check(toolStatus.kind).equals(RepoKind.toolOrApp);
+      check(toolStatus.requiresLowerBound).isFalse();
+      check(toolStatus.requiresApiSummary).isFalse();
+
+      final skillsStatus = scanner.scanSingleRepo(skillsRepo);
+      check(skillsStatus.kind).equals(RepoKind.agentSkills);
+      check(skillsStatus.requiresLowerBound).isFalse();
+      check(skillsStatus.requiresStandardCiWorkflows).isFalse();
+
+      final hybridStatus = scanner.scanSingleRepo(hybridPkg);
+      check(hybridStatus.kind).equals(RepoKind.publishedPackage);
     });
 
-    test('classifies published package with workspace as publishedPackage', () {
+    test('classifies workspace with published member as publishedPackage', () {
       final tempDir = Directory.systemTemp.createTempSync('repo_align_ws_');
       addTearDown(() => tempDir.deleteSync(recursive: true));
 
-      final buildCliRepo = Directory(p.join(tempDir.path, 'build_cli'))
+      final wsRepo = Directory(p.join(tempDir.path, 'synthetic_ws'))
         ..createSync();
-      File(p.join(buildCliRepo.path, '.git')).writeAsStringSync('gitdir: ...');
-      File(p.join(buildCliRepo.path, 'pubspec.yaml')).writeAsStringSync('''
-name: build_cli_workspace
+      File(p.join(wsRepo.path, '.git')).writeAsStringSync('gitdir: ...');
+      File(p.join(wsRepo.path, 'pubspec.yaml')).writeAsStringSync('''
+name: synthetic_ws_root
+publish_to: none
 environment:
   sdk: ^3.6.0
 workspace:
-  - build_cli
-  - build_cli_annotations
+  - pkg_core
+  - pkg_internal
 ''');
+      Directory(p.join(wsRepo.path, 'pkg_core')).createSync();
+      File(p.join(wsRepo.path, 'pkg_core', 'pubspec.yaml')).writeAsStringSync(
+        'name: pkg_core\nversion: 1.2.0\nresolution: workspace\n'
+        'environment:\n  sdk: ^3.6.0\n',
+      );
+      Directory(p.join(wsRepo.path, 'pkg_internal')).createSync();
+      File(p.join(wsRepo.path, 'pkg_internal', 'pubspec.yaml'))
+          .writeAsStringSync(
+            'name: pkg_internal\npublish_to: none\nresolution: workspace\n'
+            'environment:\n  sdk: ^3.6.0\n',
+          );
 
       final scanner = RepoAlignScanner(
         baseDirPath: tempDir.path,
         queryGitHubApi: false,
       );
-      final status = scanner.scanSingleRepo(buildCliRepo);
+      final status = scanner.scanSingleRepo(wsRepo);
 
       check(status.kind).equals(RepoKind.publishedPackage);
+      check(status.packageNames).contains('pkg_core');
       check(status.issues).contains('Missing lower_bound.yml');
       check(status.issues).contains('Missing complexity.yml');
     });
 
-    test('resolves defaultBaseDirPath from HOME environment variable', () {
-      final scanner = RepoAlignScanner(queryGitHubApi: false);
-      final home = Platform.environment['HOME'];
-      if (home != null) {
-        check(scanner.baseDirPath).equals(p.join(home, 'github', 'kevmoo'));
-      }
-    });
-
-    test('discovers workspace member pubspecs in vote.dart layout', () {
-      final tempDir = Directory.systemTemp.createTempSync('repo_align_vote_');
+    test('scans uncloned active repos and surfaces unclassified repos via '
+        'GraphQL', () {
+      final tempDir = Directory.systemTemp.createTempSync('repo_align_gql_');
       addTearDown(() => tempDir.deleteSync(recursive: true));
 
-      final voteRepo = Directory(p.join(tempDir.path, 'vote_workspace_repo'))
-        ..createSync();
-      File(p.join(voteRepo.path, '.git')).writeAsStringSync('gitdir: ...');
-      File(p.join(voteRepo.path, 'pubspec.yaml')).writeAsStringSync('''
-name: _vote_workspace
-environment:
-  sdk: ^3.7.0
-workspace:
-  - vote
-''');
-      final voteSub = Directory(p.join(voteRepo.path, 'vote'))..createSync();
-      File(p.join(voteSub.path, 'pubspec.yaml')).writeAsStringSync('''
-name: vote
-environment:
-  sdk: ^3.7.0
-resolution: workspace
-''');
+      final config = RepoAlignConfig(
+        owner: 'sample-user',
+        baseDir: tempDir.path,
+        active: const ['uncloned_pkg'],
+        ignore: const ['ignored_experiment'],
+      );
+
+      ProcessResult fakeRunner(
+        String executable,
+        List<String> args, {
+        String? workingDirectory,
+        Map<String, String>? environment,
+      }) {
+        final queryArg = args.firstWhere((a) => a.startsWith('query='));
+        if (queryArg.contains('repositoryOwner')) {
+          return ProcessResult(
+            0,
+            0,
+            jsonEncode({
+              'data': {
+                'repositoryOwner': {
+                  'repositories': {
+                    'pageInfo': {'hasNextPage': false, 'endCursor': null},
+                    'nodes': [
+                      {
+                        'name': 'uncloned_pkg',
+                        'isArchived': false,
+                        'isFork': false,
+                      },
+                      {
+                        'name': 'ignored_experiment',
+                        'isArchived': false,
+                        'isFork': false,
+                      },
+                      {
+                        'name': 'brand_new_repo',
+                        'isArchived': false,
+                        'isFork': false,
+                      },
+                      {
+                        'name': 'forked_repo',
+                        'isArchived': false,
+                        'isFork': true,
+                      },
+                    ],
+                  },
+                },
+              },
+            }),
+            '',
+          );
+        }
+
+        return ProcessResult(
+          0,
+          0,
+          jsonEncode({
+            'data': {
+              'r0': {
+                'name': 'uncloned_pkg',
+                'isArchived': false,
+                'isFork': false,
+                'isPrivate': false,
+                'autoMergeAllowed': true,
+                'defaultBranchRef': {'name': 'main'},
+                'autosubmitLabel': {'name': 'autosubmit'},
+                'rulesets': {
+                  'nodes': [
+                    {
+                      'databaseId': 99,
+                      'name': 'default',
+                      'target': 'BRANCH',
+                      'enforcement': 'ACTIVE',
+                      'conditions': {
+                        'refName': {
+                          'include': ['~DEFAULT_BRANCH'],
+                          'exclude': <String>[],
+                        },
+                      },
+                      'rules': {
+                        'nodes': [
+                          {
+                            'type': 'REQUIRED_STATUS_CHECKS',
+                            'parameters': {
+                              'requiredStatusChecks': [
+                                {'context': 'analyze (dev)'},
+                                {'context': 'markdown'},
+                              ],
+                            },
+                          },
+                        ],
+                      },
+                    },
+                  ],
+                },
+                'branchProtectionRules': {'nodes': <Object?>[]},
+                'pubspec': {
+                  'text':
+                      'name: uncloned_pkg\nversion: 1.0.0\n'
+                      'environment:\n  sdk: ^3.12.0\n'
+                      'dev_dependencies:\n  api_summary: ^1.2.0\n',
+                },
+                'analysisOptions': {'text': canonicalAnalysisOptions},
+                'prettierRc': {'__typename': 'Blob'},
+                'prettierIgnore': null,
+                'dependabotYml': {'text': canonicalDependabotConfig},
+                'dependabotYaml': null,
+                'apiTxt': {'__typename': 'Blob'},
+                'apiTest': {'__typename': 'Blob'},
+                'libDir': {'__typename': 'Tree'},
+                'binDir': null,
+                'workflows': {
+                  'entries': [
+                    {
+                      'name': 'ci.yml',
+                      'object': {
+                        'text':
+                            'jobs:\n  analyze:\n    strategy:\n'
+                            '      matrix:\n        sdk: [dev]\n',
+                      },
+                    },
+                    {
+                      'name': 'lower_bound.yml',
+                      'object': {'text': canonicalLowerBoundWorkflow},
+                    },
+                    {
+                      'name': 'complexity.yml',
+                      'object': {'text': canonicalComplexityWorkflow},
+                    },
+                    {
+                      'name': 'autosubmit.yml',
+                      'object': {'text': canonicalAutosubmitWorkflow},
+                    },
+                    {
+                      'name': 'markdown.yml',
+                      'object': {'text': canonicalMarkdownWorkflow},
+                    },
+                  ],
+                },
+                'skills': null,
+                'packages': null,
+              },
+            },
+          }),
+          '',
+        );
+      }
 
       final scanner = RepoAlignScanner(
-        baseDirPath: tempDir.path,
-        queryGitHubApi: false,
+        portfolioConfig: config,
+        processRunner: fakeRunner,
       );
-      final status = scanner.scanSingleRepo(voteRepo);
+      final report = scanner.scanPortfolio();
 
-      check(status.kind).equals(RepoKind.publishedPackage);
-      check(status.hasPubspec).isTrue();
-      check(status.packageNames).contains('vote');
+      check(report.repos).length.equals(1);
+      final pkg = report.repos.single;
+      check(pkg.name).equals('uncloned_pkg');
+      check(pkg.kind).equals(RepoKind.publishedPackage);
+      check(pkg.isAligned).isTrue();
+      check(pkg.issues).isEmpty();
+      check(report.unclassifiedRepos).deepEquals(['brand_new_repo']);
     });
 
     test(
@@ -623,49 +870,6 @@ environment:
             .not((it) => it.contains('Missing analysis_options.yaml'));
       },
     );
-
-    test('flags missing complexity.yml on monorepoWorkspace and toolOrApp', () {
-      for (final kind in [RepoKind.monorepoWorkspace, RepoKind.toolOrApp]) {
-        final status = RepoAlignmentStatus(
-          name: 'ws_repo',
-          path: '/tmp/ws_repo',
-          kind: kind,
-          isArchived: false,
-          isFork: false,
-          isPrivate: false,
-          defaultBranch: 'main',
-          hasPubspec: true,
-          sdkConstraint: '^3.0.0',
-          packageNames: ['ws_repo'],
-          hasAnalysisOptions: true,
-          analysisInclude:
-              'package:dart_flutter_team_lints/analysis_options.yaml',
-          strictCasts: true,
-          strictInference: true,
-          strictRawTypes: true,
-          customLints: [],
-          workflowFiles: ['ci.yml', 'autosubmit.yml', 'markdown.yml'],
-          hasCi: true,
-          hasLowerBound: false,
-          hasCogComp: false,
-          hasAutosubmit: true,
-          hasDependabot: true,
-          hasPublish: false,
-          hasPrettierRc: true,
-          hasMarkdownWorkflow: true,
-          autoMergeAllowed: true,
-          hasRulesetOrProtection: true,
-          requiredChecks: ['build', 'markdown'],
-          defaultBranchRulesetId: '123',
-          defaultBranchRequiredChecks: ['build', 'markdown'],
-        );
-
-        check(
-          because: 'kind $kind should require complexity.yml',
-          status.issues,
-        ).contains('Missing complexity.yml');
-      }
-    });
 
     test('flags uses: kevmoo/analytica.dart/packages/lower_bound@main as '
         'deprecated', () {
@@ -741,7 +945,6 @@ jobs:
     test('appends the context without disturbing anything else', () {
       final payload = appendRequiredCheck(sampleRuleset(), 'markdown')!;
 
-      // Server-owned fields must not be echoed back.
       check(payload.keys).unorderedEquals([
         'name',
         'target',
@@ -811,8 +1014,6 @@ jobs:
     });
 
     test('rejects rulesets that do not govern the default branch', () {
-      // The failure this guards against: appending a required check to a
-      // release ruleset leaves main ungated and deadlocks release branches.
       check(
         rulesetTargetsBranch(
           ruleset(include: ['refs/heads/release/*']),

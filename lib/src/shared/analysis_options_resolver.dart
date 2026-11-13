@@ -6,6 +6,9 @@ import 'package:package_config/package_config.dart';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+const _canonicalTeamLintsInclude =
+    'package:dart_flutter_team_lints/analysis_options.yaml';
+
 /// Resolved bundle of explicit and inherited linter rules and language options.
 class ResolvedAnalysisOptions {
   final Set<String> explicitLints;
@@ -90,6 +93,19 @@ class AnalysisOptionsResolver {
   ResolvedAnalysisOptions resolveFromFile(String filePath) =>
       _resolveFromFile(filePath);
 
+  /// Resolve analysis options from raw YAML [content] (for example, fetched via
+  /// GitHub GraphQL or `git show` without a local checkout).
+  ResolvedAnalysisOptions resolveFromContent(String content, {Uri? sourceUrl}) {
+    YamlMap yaml;
+    try {
+      final parsed = loadYaml(content, sourceUrl: sourceUrl);
+      yaml = parsed is YamlMap ? parsed : YamlMap();
+    } catch (_) {
+      yaml = YamlMap();
+    }
+    return _resolveFromYamlMap(yaml);
+  }
+
   ResolvedAnalysisOptions _resolveFromFile(String path) {
     final file = File(path);
     if (!file.existsSync()) {
@@ -100,30 +116,33 @@ class AnalysisOptionsResolver {
         includedLanguage: const {},
       );
     }
+    return _resolveFromYamlMap(openYamlMap(path));
+  }
 
-    final yaml = openYamlMap(path);
+  ResolvedAnalysisOptions _resolveFromYamlMap(YamlMap yaml) {
     final includedLints = <String>{};
     final includedLanguage = <String, dynamic>{};
 
-    final includeKey = yaml['include'] as String?;
+    final includeKey = yaml['include']?.toString();
     if (includeKey != null) {
       final includeUri = Uri.tryParse(includeKey);
-      if (includeUri != null) {
-        final inherited = _safeResolveUri(includeUri);
-        if (inherited != null) {
-          includedLints.addAll(inherited.allLints);
-          includedLanguage.addAll(inherited.allLanguage);
-        }
+      final inherited = includeUri == null ? null : _safeResolveUri(includeUri);
+      if (inherited != null) {
+        includedLints.addAll(inherited.allLints);
+        includedLanguage.addAll(inherited.allLanguage);
+      } else if (includeKey == _canonicalTeamLintsInclude) {
+        // `package:dart_flutter_team_lints/analysis_options.yaml` enables both
+        // `strict-casts` and `strict-inference`; seed them when scanning remote
+        // blobs or un-resolved checkouts lacking `.dart_tool/package_config.json`.
+        includedLanguage['strict-casts'] = true;
+        includedLanguage['strict-inference'] = true;
       }
     }
 
-    final explicitLints = _extractExplicitLints(yaml);
-    final explicitLanguage = _extractExplicitLanguage(yaml);
-
     return ResolvedAnalysisOptions(
-      explicitLints: explicitLints,
+      explicitLints: _extractExplicitLints(yaml),
       includedLints: includedLints,
-      explicitLanguage: explicitLanguage,
+      explicitLanguage: _extractExplicitLanguage(yaml),
       includedLanguage: includedLanguage,
     );
   }

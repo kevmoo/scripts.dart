@@ -611,7 +611,7 @@ Future<void> runPuppyCli(List<String> args) async {
   });
 }
 
-void runRepoAlignCli(List<String> args) {
+Future<void> runRepoAlignCli(List<String> args) async {
   final parser = ArgParser()
     ..addCommand('check')
     ..addCommand('fix')
@@ -693,7 +693,7 @@ void runRepoAlignCli(List<String> args) {
   final runner = RepoAlignRunner();
 
   if (commandName == 'check') {
-    runner.runCheck(
+    await runner.runCheck(
       targetRepo: targetRepo,
       targetDir: targetDir,
       jsonOutput: jsonOutput,

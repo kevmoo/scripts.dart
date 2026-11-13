@@ -16,6 +16,7 @@ void main() {
     check(
       loadGitUpRepoConfig(p.join(d.sandbox, 'repo'), homeDirectory: d.sandbox),
     ).isNull();
+    check(loadRepoAlignConfig(homeDirectory: d.sandbox)).isNull();
 
     File(p.join(d.sandbox, '.config', 'kscripts', 'repos.yaml'))
       ..createSync(recursive: true)
@@ -24,10 +25,11 @@ void main() {
     check(
       loadGitUpRepoConfig(p.join(d.sandbox, 'repo'), homeDirectory: d.sandbox),
     ).isNull();
+    check(loadRepoAlignConfig(homeDirectory: d.sandbox)).isNull();
   });
 
   test(
-    'resolves ~/ paths, symlinks, and ignores other tool sections',
+    'resolves ~/ paths, symlinks, and coexists with repo-align section',
     () async {
       await d.dir('real', [d.dir('sdk')]).create();
       final realSdk = p.join(d.sandbox, 'real', 'sdk');
@@ -37,6 +39,15 @@ void main() {
       File(p.join(d.sandbox, '.config', 'kscripts', 'repos.yaml'))
         ..createSync(recursive: true)
         ..writeAsStringSync('''
+repo-align:
+  owner: example-user
+  baseDir: ~/github/example-user
+  active:
+    - alpha_pkg
+    - beta_tool
+  ignore:
+    - old_archive
+
 ~/real/sdk:
   other-tool:
     enabled: true
@@ -62,6 +73,16 @@ void main() {
         ..has((c) => c.post, 'post').equals('echo synced')
         ..has((c) => c.override, 'override').isNull();
 
+      final alignConfig = loadRepoAlignConfig(homeDirectory: d.sandbox);
+      check(alignConfig).isNotNull()
+        ..has((c) => c.owner, 'owner').equals('example-user')
+        ..has(
+          (c) => c.baseDir,
+          'baseDir',
+        ).equals(p.canonicalize(p.join(d.sandbox, 'github', 'example-user')))
+        ..has((c) => c.active, 'active').deepEquals(['alpha_pkg', 'beta_tool'])
+        ..has((c) => c.ignore, 'ignore').deepEquals(['old_archive']);
+
       check(
         loadGitUpRepoConfig(
           p.join(d.sandbox, 'other', 'repo'),
@@ -70,6 +91,29 @@ void main() {
       ).isNull();
     },
   );
+
+  test('defaults repo-align baseDir to ~/github/<owner> when omitted', () {
+    final configPath = p.join(d.sandbox, 'repos.yaml');
+    File(configPath).writeAsStringSync('''
+repo-align:
+  owner: sample-owner
+  active:
+    - pkg_one
+''');
+
+    final config = loadRepoAlignConfig(
+      configPath: configPath,
+      homeDirectory: d.sandbox,
+    );
+    check(config).isNotNull()
+      ..has((c) => c.owner, 'owner').equals('sample-owner')
+      ..has(
+        (c) => c.baseDir,
+        'baseDir',
+      ).equals(p.canonicalize(p.join(d.sandbox, 'github', 'sample-owner')))
+      ..has((c) => c.active, 'active').deepEquals(['pkg_one'])
+      ..has((c) => c.ignore, 'ignore').isEmpty();
+  });
 
   test('allowWorktree: true defaults cleanBranches to false unless set', () {
     final configPath = p.join(d.sandbox, 'repos.yaml');
@@ -128,6 +172,25 @@ void main() {
       (
         yaml: '~/real_target:\n  git-up: {}\n~/alias_target:\n  git-up: {}\n',
         expectedError: 'Duplicate repository entries',
+      ),
+      (
+        yaml: 'repo-align:\n  active: []\n',
+        expectedError: 'Missing required key "owner" under "repo-align".',
+      ),
+      (
+        yaml: 'repo-align:\n  owner: u\n  tier: 1\n',
+        expectedError: 'Unknown key "tier" under "repo-align"',
+      ),
+      (
+        yaml: 'repo-align:\n  owner: u\n  active:\n    - dup\n    - dup\n',
+        expectedError: 'Duplicate repository "dup" in "repo-align" -> "active"',
+      ),
+      (
+        yaml:
+            'repo-align:\n  owner: u\n  active:\n    - same\n'
+            '  ignore:\n    - same\n',
+        expectedError:
+            'Repository "same" cannot appear in both "active" and "ignore"',
       ),
     ];
 

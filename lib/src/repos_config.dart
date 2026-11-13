@@ -7,6 +7,8 @@ import 'package:yaml/yaml.dart';
 import 'git_up.dart';
 import 'testable_print.dart';
 
+const _repoAlignTopLevelKey = 'repo-align';
+
 const _allowedGitUpKeys = {
   'allowWorktree',
   'branch',
@@ -16,6 +18,8 @@ const _allowedGitUpKeys = {
   'post',
   'override',
 };
+
+const _allowedRepoAlignKeys = {'owner', 'baseDir', 'active', 'ignore'};
 
 /// Per-repository `git-up` configuration loaded from
 /// `~/.config/kscripts/repos.yaml`.
@@ -45,6 +49,22 @@ class GitUpRepoConfig {
   });
 }
 
+/// Portfolio-wide `repo-align` configuration loaded from
+/// `~/.config/kscripts/repos.yaml`.
+final class RepoAlignConfig {
+  final String owner;
+  final String baseDir;
+  final List<String> active;
+  final List<String> ignore;
+
+  const new({
+    required this.owner,
+    required this.baseDir,
+    required this.active,
+    required this.ignore,
+  });
+}
+
 /// Loads and validates the `git-up` entry matching [repoPath] from
 /// [configPath] (defaulting to `<home>/.config/kscripts/repos.yaml`).
 ///
@@ -52,13 +72,48 @@ class GitUpRepoConfig {
 /// `git-up` entry matching [repoPath].
 ///
 /// Throws a [GitUpException] with [ExitCode.config] if the file contains
-/// malformed YAML, duplicate canonical paths, unknown `git-up` keys, or
-/// invalid field types.
+/// malformed YAML, duplicate canonical paths, unknown keys, or invalid field
+/// types.
 GitUpRepoConfig? loadGitUpRepoConfig(
   String repoPath, {
   String? configPath,
   String? homeDirectory,
 }) {
+  final loaded = _loadValidatedReposYaml(
+    configPath: configPath,
+    homeDirectory: homeDirectory,
+  );
+  if (loaded == null) return null;
+
+  final canonicalTarget = _canonicalizeRepoPath(
+    repoPath,
+    homeDirectory: loaded.home,
+  );
+  return loaded.gitUpByCanonicalPath[canonicalTarget];
+}
+
+/// Loads and validates the top-level `repo-align` configuration from
+/// [configPath] (defaulting to `<home>/.config/kscripts/repos.yaml`).
+///
+/// Returns `null` when the configuration file does not exist or has no
+/// `repo-align` section.
+///
+/// Throws a [GitUpException] with [ExitCode.config] if any section in
+/// `repos.yaml` is invalid.
+RepoAlignConfig? loadRepoAlignConfig({
+  String? configPath,
+  String? homeDirectory,
+}) => _loadValidatedReposYaml(
+  configPath: configPath,
+  homeDirectory: homeDirectory,
+)?.repoAlign;
+
+({
+  String? home,
+  Map<String, GitUpRepoConfig?> gitUpByCanonicalPath,
+  RepoAlignConfig? repoAlign,
+})?
+_loadValidatedReposYaml({String? configPath, String? homeDirectory}) {
   final home = _effectiveHome(homeDirectory);
   final effectivePath =
       configPath ??
@@ -71,10 +126,9 @@ GitUpRepoConfig? loadGitUpRepoConfig(
   final rootMap = _readRootYamlMap(file);
   if (rootMap == null) return null;
 
-  final canonicalTarget = _canonicalizeRepoPath(repoPath, homeDirectory: home);
-
   final seenPaths = <String, String>{};
-  GitUpRepoConfig? matched;
+  final gitUpByCanonicalPath = <String, GitUpRepoConfig?>{};
+  RepoAlignConfig? repoAlign;
 
   for (final MapEntry(:key, :value) in rootMap.entries) {
     if (key is! String || key.trim().isEmpty) {
@@ -82,6 +136,15 @@ GitUpRepoConfig? loadGitUpRepoConfig(
         effectivePath,
         'Repository keys must be non-empty path strings (got "$key").',
       );
+    }
+
+    if (key == _repoAlignTopLevelKey) {
+      repoAlign = _parseRepoAlignSection(
+        value,
+        configPath: effectivePath,
+        homeDirectory: home,
+      );
+      continue;
     }
 
     final canonicalKey = _canonicalizeRepoPath(
@@ -98,17 +161,144 @@ GitUpRepoConfig? loadGitUpRepoConfig(
     }
     seenPaths[canonicalKey] = key;
 
-    final parsed = _parseGitUpSection(
+    gitUpByCanonicalPath[canonicalKey] = _parseGitUpSection(
       value,
       configPath: effectivePath,
       repoKey: key,
     );
-    if (canonicalKey == canonicalTarget) {
-      matched = parsed;
+  }
+
+  return (
+    home: home,
+    gitUpByCanonicalPath: gitUpByCanonicalPath,
+    repoAlign: repoAlign,
+  );
+}
+
+RepoAlignConfig _parseRepoAlignSection(
+  Object? rawValue, {
+  required String configPath,
+  required String? homeDirectory,
+}) {
+  if (rawValue is! YamlMap) {
+    _failConfig(configPath, 'Top-level "repo-align" entry must be a YAML map.');
+  }
+
+  for (final key in rawValue.keys) {
+    if (key is! String || !_allowedRepoAlignKeys.contains(key)) {
+      final allowed = _allowedRepoAlignKeys.join(', ');
+      _failConfig(
+        configPath,
+        'Unknown key "$key" under "repo-align" (allowed keys: $allowed).',
+      );
     }
   }
 
-  return matched;
+  final owner = _readSectionString(
+    rawValue,
+    'owner',
+    configPath,
+    sectionLabel: '"repo-align"',
+    allowEmpty: false,
+  );
+  if (owner == null) {
+    _failConfig(configPath, 'Missing required key "owner" under "repo-align".');
+  }
+
+  final rawBaseDir = _readSectionString(
+    rawValue,
+    'baseDir',
+    configPath,
+    sectionLabel: '"repo-align"',
+    allowEmpty: false,
+  );
+  final baseDir = _resolveRepoAlignBaseDir(
+    rawBaseDir,
+    owner: owner,
+    homeDirectory: homeDirectory,
+    configPath: configPath,
+  );
+
+  final active = _readRepoNameList(rawValue, 'active', configPath);
+  final ignore = _readRepoNameList(rawValue, 'ignore', configPath);
+  _validateDisjointLists(active, ignore, configPath);
+
+  return RepoAlignConfig(
+    owner: owner,
+    baseDir: baseDir,
+    active: List.unmodifiable(active),
+    ignore: List.unmodifiable(ignore),
+  );
+}
+
+String _resolveRepoAlignBaseDir(
+  String? rawBaseDir, {
+  required String owner,
+  required String? homeDirectory,
+  required String configPath,
+}) {
+  if (rawBaseDir != null) {
+    return _canonicalizeRepoPath(
+      rawBaseDir,
+      homeDirectory: homeDirectory,
+      sourceConfigPath: configPath,
+    );
+  }
+  if (homeDirectory == null) {
+    _failConfig(
+      configPath,
+      'Specify "baseDir" under "repo-align" when HOME is not set.',
+    );
+  }
+  return p.canonicalize(p.join(homeDirectory, 'github', owner));
+}
+
+List<String> _readRepoNameList(YamlMap map, String key, String configPath) {
+  if (!map.containsKey(key) || map[key] == null) return const [];
+  final raw = map[key];
+  if (raw is! YamlList) {
+    _failConfig(
+      configPath,
+      'Key "$key" under "repo-align" must be a YAML list of repository names.',
+    );
+  }
+
+  final seen = <String>{};
+  final names = <String>[];
+  for (final item in raw) {
+    if (item is! String || item.trim().isEmpty) {
+      _failConfig(
+        configPath,
+        'Entries in "repo-align" -> "$key" must be non-empty strings.',
+      );
+    }
+    final trimmed = item.trim();
+    if (!seen.add(trimmed)) {
+      _failConfig(
+        configPath,
+        'Duplicate repository "$trimmed" in "repo-align" -> "$key".',
+      );
+    }
+    names.add(trimmed);
+  }
+  return names;
+}
+
+void _validateDisjointLists(
+  List<String> active,
+  List<String> ignore,
+  String configPath,
+) {
+  final ignoreSet = ignore.toSet();
+  for (final repo in active) {
+    if (ignoreSet.contains(repo)) {
+      _failConfig(
+        configPath,
+        'Repository "$repo" cannot appear in both "active" and "ignore" under '
+        '"repo-align".',
+      );
+    }
+  }
 }
 
 /// Expands a leading `~` against [homeDirectory] (or `HOME` outside test zones)
@@ -205,23 +395,24 @@ GitUpRepoConfig? _parseGitUpSection(
     }
   }
 
+  final sectionLabel = '"$repoKey" -> "git-up"';
   final allowWorktree =
       _readBool(rawSection, 'allowWorktree', configPath, repoKey) ?? false;
 
   return GitUpRepoConfig(
     allowWorktree: allowWorktree,
-    branch: _readString(
+    branch: _readSectionString(
       rawSection,
       'branch',
       configPath,
-      repoKey,
+      sectionLabel: sectionLabel,
       allowEmpty: false,
     ),
-    upstream: _readString(
+    upstream: _readSectionString(
       rawSection,
       'upstream',
       configPath,
-      repoKey,
+      sectionLabel: sectionLabel,
       allowEmpty: false,
     ),
     // Linked worktrees share branches and worktrees with every sibling in a
@@ -229,25 +420,25 @@ GitUpRepoConfig? _parseGitUpSection(
     cleanBranches:
         _readBool(rawSection, 'cleanBranches', configPath, repoKey) ??
         !allowWorktree,
-    before: _readString(
+    before: _readSectionString(
       rawSection,
       'before',
       configPath,
-      repoKey,
+      sectionLabel: sectionLabel,
       allowEmpty: true,
     ),
-    post: _readString(
+    post: _readSectionString(
       rawSection,
       'post',
       configPath,
-      repoKey,
+      sectionLabel: sectionLabel,
       allowEmpty: true,
     ),
-    override: _readString(
+    override: _readSectionString(
       rawSection,
       'override',
       configPath,
-      repoKey,
+      sectionLabel: sectionLabel,
       allowEmpty: false,
     ),
   );
@@ -263,26 +454,23 @@ bool? _readBool(YamlMap map, String key, String configPath, String repoKey) {
   );
 }
 
-String? _readString(
+String? _readSectionString(
   YamlMap map,
   String key,
-  String configPath,
-  String repoKey, {
+  String configPath, {
+  required String sectionLabel,
   required bool allowEmpty,
 }) {
   if (!map.containsKey(key)) return null;
   final value = map[key];
   if (value is! String) {
-    _failConfig(
-      configPath,
-      'Key "$key" under "$repoKey" -> "git-up" must be a string.',
-    );
+    _failConfig(configPath, 'Key "$key" under $sectionLabel must be a string.');
   }
   final trimmed = value.trim();
   if (!allowEmpty && trimmed.isEmpty) {
     _failConfig(
       configPath,
-      'Key "$key" under "$repoKey" -> "git-up" must not be empty.',
+      'Key "$key" under $sectionLabel must not be empty.',
     );
   }
   return trimmed;
