@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:io/ansi.dart';
+import 'package:path/path.dart' as p;
 
 import 'util.dart';
 
@@ -46,7 +47,7 @@ Future<ProcessResult> defaultProcessRunner(
 
 Future<bool> isProcessRunning(int pid, {String procPath = '/proc'}) async {
   if (Platform.isLinux) {
-    return Directory('$procPath/$pid').exists();
+    return Directory(p.join(procPath, '$pid')).exists();
   }
 
   try {
@@ -88,16 +89,19 @@ String abbreviatePath(String path) {
   return path;
 }
 
-Future<String> getProcessName(int pid) async {
+Future<String> getProcessName(
+  int pid, {
+  ProcessRunner processRunner = defaultProcessRunner,
+  p.Context? pathContext,
+}) async {
   try {
-    final output = await runProcess('ps', [
-      '-p',
-      pid.toString(),
-      '-o',
-      'comm=',
-    ]);
-    final name = output.trim().split('/').last;
-    if (name.isNotEmpty) return name;
+    final result = await processRunner('ps', ['-p', '$pid', '-o', 'comm=']);
+    if (result.exitCode == 0) {
+      final name = (pathContext ?? p.context).basename(
+        (result.stdout as String).trim(),
+      );
+      if (name.isNotEmpty) return name;
+    }
   } on ProcessException {
     // Process likely exited or ps is unavailable.
   }
@@ -208,37 +212,30 @@ void _printKillSummary(int killedCount, List<int> failedPids) {
   }
 }
 
-String formatCmdline(String cmdline) {
-  if (cmdline == '<unknown>') return cmdline;
+const _scriptExtensions = {'.dart', '.snapshot'};
 
-  final parts = cmdline.trim().split(RegExp(r'\s+'));
-  if (parts.isEmpty || parts.first.isEmpty) return cmdline;
+String formatCmdline(String cmdline, {p.Context? pathContext}) {
+  final trimmed = cmdline.trim();
+  if (trimmed.isEmpty || cmdline == '<unknown>') return cmdline;
 
-  final result = <String>[];
-
-  // First part is the executable. Get the base name.
-  final exePath = parts.first;
-  final exeName = exePath.split('/').last;
-  result.add(exeName);
+  final context = pathContext ?? p.context;
+  final parts = trimmed.split(RegExp(r'\s+'));
+  final result = <String>[context.basename(parts.first)];
 
   var addedArgs = 0;
-  for (var i = 1; i < parts.length; i++) {
-    final part = parts[i];
-    if (part.isEmpty) continue;
-
-    // Skip dashed flags
+  for (final part in parts.skip(1)) {
+    // Skip dashed flags.
     if (part.startsWith('-')) continue;
 
-    final baseName = part.split('/').last;
-    if (part.endsWith('.dart') || part.endsWith('.snapshot')) {
-      result.add(baseName);
-      break; // Stop after the script
+    result.add(context.basename(part));
+    final hasTrailingSeparator =
+        part.endsWith('/') || part.endsWith(context.separator);
+    if (!hasTrailingSeparator &&
+        _scriptExtensions.contains(context.extension(part))) {
+      break; // Stop after the script.
     }
 
-    result.add(baseName);
-    addedArgs++;
-
-    if (addedArgs >= 3) break;
+    if (++addedArgs >= 3) break;
   }
 
   return result.join(' ');
