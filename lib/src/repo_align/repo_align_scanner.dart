@@ -449,7 +449,7 @@ class RepoAlignScanner {
   }) => RepoAlignmentStatus(
     name: name,
     path: path,
-    kind: kind,
+    kind: portfolioConfig?.kinds[name] ?? kind,
     isArchived: ghInfo.isArchived,
     isFork: ghInfo.isFork,
     isPrivate: ghInfo.isPrivate,

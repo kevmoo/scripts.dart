@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
 import 'git_up.dart';
+import 'repo_align/models.dart' show RepoKind;
 import 'testable_print.dart';
 
 const _repoAlignTopLevelKey = 'repo-align';
@@ -19,7 +20,7 @@ const _allowedGitUpKeys = {
   'override',
 };
 
-const _allowedRepoAlignKeys = {'owner', 'baseDir', 'active', 'ignore'};
+const _allowedRepoAlignKeys = {'owner', 'baseDir', 'active', 'ignore', 'kinds'};
 
 /// Per-repository `git-up` configuration loaded from
 /// `~/.config/kscripts/repos.yaml`.
@@ -57,11 +58,17 @@ final class RepoAlignConfig {
   final List<String> active;
   final List<String> ignore;
 
+  /// Explicit [RepoKind] overrides for `active` repositories whose contents
+  /// would otherwise classify them as a stricter kind (for example, an
+  /// experiment that carries a `pubspec.yaml`).
+  final Map<String, RepoKind> kinds;
+
   const new({
     required this.owner,
     required this.baseDir,
     required this.active,
     required this.ignore,
+    this.kinds = const {},
   });
 }
 
@@ -222,12 +229,14 @@ RepoAlignConfig _parseRepoAlignSection(
   final active = _readRepoNameList(rawValue, 'active', configPath);
   final ignore = _readRepoNameList(rawValue, 'ignore', configPath);
   _validateDisjointLists(active, ignore, configPath);
+  final kinds = _readRepoKindOverrides(rawValue, active, configPath);
 
   return RepoAlignConfig(
     owner: owner,
     baseDir: baseDir,
     active: List.unmodifiable(active),
     ignore: List.unmodifiable(ignore),
+    kinds: Map.unmodifiable(kinds),
   );
 }
 
@@ -282,6 +291,48 @@ List<String> _readRepoNameList(YamlMap map, String key, String configPath) {
     names.add(trimmed);
   }
   return names;
+}
+
+Map<String, RepoKind> _readRepoKindOverrides(
+  YamlMap map,
+  List<String> active,
+  String configPath,
+) {
+  final raw = map['kinds'];
+  if (raw == null) return const {};
+  if (raw is! YamlMap) {
+    _failConfig(
+      configPath,
+      'Key "kinds" under "repo-align" must be a YAML map of repository name '
+      'to kind.',
+    );
+  }
+
+  final allowedKinds = {
+    for (final kind in RepoKind.values)
+      if (kind != RepoKind.legacyOrIgnored) kind.name: kind,
+  };
+  final activeSet = active.toSet();
+  final result = <String, RepoKind>{};
+  for (final MapEntry(:key, :value) in raw.entries) {
+    if (key is! String || !activeSet.contains(key)) {
+      _failConfig(
+        configPath,
+        'Repository "$key" in "repo-align" -> "kinds" must also be listed '
+        'in "active".',
+      );
+    }
+    final kind = allowedKinds[value];
+    if (kind == null) {
+      _failConfig(
+        configPath,
+        'Invalid kind "$value" for "$key" in "repo-align" -> "kinds" '
+        '(allowed: ${allowedKinds.keys.join(', ')}).',
+      );
+    }
+    result[key] = kind;
+  }
+  return result;
 }
 
 void _validateDisjointLists(

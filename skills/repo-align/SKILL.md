@@ -64,11 +64,16 @@ repo-align:
     - scripts.dart
   ignore:
     - personal_dotfiles
+  kinds:
+    dartpad_mcp: experimentalOrPrototype
 ```
 
 Repository capabilities are derived directly from repository contents
-(`publish_to` and `version` in `pubspec.yaml` vs. `skills/*/SKILL.md`) with no
-manual tier tags:
+(`publish_to` and `version` in `pubspec.yaml` vs. `skills/*/SKILL.md`). The
+optional `kinds` map overrides that derived kind for an `active` repository (any
+`RepoKind` except `legacyOrIgnored`; use `ignore` for that), such as marking a
+prototype that carries a `pubspec.yaml` as `experimentalOrPrototype` so it skips
+`complexity.yml`, `autosubmit.yml`, `lower_bound.yml`, and `api_summary`:
 
 - **Published packages & workspaces** (`publish_to != 'none'` and
   `version != null`): require `lower_bound.yml` and `api_summary` (`api.txt` +

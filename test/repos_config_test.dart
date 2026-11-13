@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:checks/checks.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/git_up.dart';
+import 'package:kevmoo_scripts/src/repo_align/models.dart';
 import 'package:kevmoo_scripts/src/repos_config.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
@@ -115,6 +116,28 @@ repo-align:
       ..has((c) => c.ignore, 'ignore').isEmpty();
   });
 
+  test('parses repo-align kinds overrides for active repos', () {
+    final configPath = p.join(d.sandbox, 'repos.yaml');
+    File(configPath).writeAsStringSync('''
+repo-align:
+  owner: sample-owner
+  active:
+    - pkg_one
+    - proto_app
+  kinds:
+    proto_app: experimentalOrPrototype
+''');
+
+    final config = loadRepoAlignConfig(
+      configPath: configPath,
+      homeDirectory: d.sandbox,
+    );
+    check(config)
+        .isNotNull()
+        .has((c) => c.kinds, 'kinds')
+        .deepEquals({'proto_app': RepoKind.experimentalOrPrototype});
+  });
+
   test('allowWorktree: true defaults cleanBranches to false unless set', () {
     final configPath = p.join(d.sandbox, 'repos.yaml');
     final repo = p.join(d.sandbox, 'repo');
@@ -191,6 +214,30 @@ repo-align:
             '  ignore:\n    - same\n',
         expectedError:
             'Repository "same" cannot appear in both "active" and "ignore"',
+      ),
+      (
+        yaml: 'repo-align:\n  owner: u\n  kinds:\n    - nope\n',
+        expectedError: 'Key "kinds" under "repo-align" must be a YAML map',
+      ),
+      (
+        yaml:
+            'repo-align:\n  owner: u\n  active:\n    - a\n'
+            '  kinds:\n    b: toolOrApp\n',
+        expectedError:
+            'Repository "b" in "repo-align" -> "kinds" must also be listed '
+            'in "active"',
+      ),
+      (
+        yaml:
+            'repo-align:\n  owner: u\n  active:\n    - a\n'
+            '  kinds:\n    a: prototype\n',
+        expectedError: 'Invalid kind "prototype" for "a"',
+      ),
+      (
+        yaml:
+            'repo-align:\n  owner: u\n  active:\n    - a\n'
+            '  kinds:\n    a: legacyOrIgnored\n',
+        expectedError: 'Invalid kind "legacyOrIgnored" for "a"',
       ),
     ];
 
