@@ -52,7 +52,7 @@ Duration _defaultGhRetryDelay(int retryCount) =>
 
 /// Executes `gh` with [args] via [runner], retrying transient 502/503/504
 /// gateway failures up to [retries] times.
-Future<ProcessResult> _runGhWithRetry(
+Future<ProcessResult> runGhWithRetry(
   ProcessRunner runner,
   List<String> args, {
   int retries = 3,
@@ -73,7 +73,7 @@ Future<ProcessResult> _runGhWithRetry(
   return result;
 }
 
-/// Synchronous counterpart to [_runGhWithRetry] for [SyncProcessRunner]
+/// Synchronous counterpart to [runGhWithRetry] for [SyncProcessRunner]
 /// callers.
 ProcessResult runGhWithRetrySync(
   SyncProcessRunner runner,
@@ -137,7 +137,7 @@ Future<List<Map<String, dynamic>>> paginateGraphQLSearch({
       maxPageSize: maxPageSize,
       cursor: cursor,
     );
-    final result = await _runGhWithRetry(
+    final result = await runGhWithRetry(
       runner,
       args,
       retries: retries,

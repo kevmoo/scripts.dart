@@ -10,6 +10,16 @@ enum RepoKind {
   legacyOrIgnored,
 }
 
+/// Combined result of a portfolio alignment scan, pairing evaluated
+/// [repos] with any non-fork, non-archived remote repositories not yet listed
+/// in `repos.yaml` ([unclassifiedRepos]).
+final class RepoAlignScanReport {
+  final List<RepoAlignmentStatus> repos;
+  final List<String> unclassifiedRepos;
+
+  const new({required this.repos, this.unclassifiedRepos = const []});
+}
+
 /// Information about a discovered repository's alignment status.
 class RepoAlignmentStatus {
   final String name;
@@ -140,9 +150,9 @@ class RepoAlignmentStatus {
   }
 
   /// Dart lint standards apply to any repo carrying a `pubspec.yaml`,
-  /// including [RepoKind.agentSkills] -- `kevmoo_skills` and `dash_skills`
-  /// ship real Dart tooling under a workspace root, and a root
-  /// `analysis_options.yaml` governs every workspace member.
+  /// including [RepoKind.agentSkills] -- skills workspaces carry real Dart
+  /// tooling under `tool/`, and a root `analysis_options.yaml` governs every
+  /// workspace member.
   void _checkDartIssues(List<String> result) {
     if (!hasPubspec) return;
 
@@ -186,6 +196,10 @@ class RepoAlignmentStatus {
       !hasPublishToNone &&
       (kind == RepoKind.publishedPackage || kind == RepoKind.monorepoWorkspace);
 
+  /// Whether this repository has published packages that require
+  /// `lower_bound.yml`.
+  bool get requiresLowerBound => requiresApiSummary;
+
   /// Whether this repository kind requires standard Dart CI workflows
   /// (`complexity.yml` and `autosubmit.yml`).
   bool get requiresStandardCiWorkflows =>
@@ -205,7 +219,7 @@ class RepoAlignmentStatus {
   void _checkCiIssues(List<String> result) {
     _checkDependabotAndWorkflowHygiene(result);
     if (!requiresStandardCiWorkflows) return;
-    if (kind == RepoKind.publishedPackage && !hasLowerBound) {
+    if (requiresLowerBound && !hasLowerBound) {
       result.add('Missing lower_bound.yml');
     }
     if (!hasCogComp) result.add('Missing complexity.yml');

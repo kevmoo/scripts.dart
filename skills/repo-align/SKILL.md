@@ -46,7 +46,39 @@ from the same remote.
 > the remote. Only use a path install to test uncommitted work, and reinstall
 > from Git afterwards.
 
-## 1. Read-Only Alignment Audit (`check`)
+## 1. Portfolio Configuration (`~/.config/kscripts/repos.yaml`)
+
+When `~/.config/kscripts/repos.yaml` defines a top-level `repo-align:` block,
+`kscripts repo-align check` queries the `active` repositories' `HEAD` trees and
+branch rulesets in a batched GitHub GraphQL pass (even when an `active`
+repository is not cloned on the current machine), skips `ignore` repositories,
+and lists any newly created non-fork, non-archived repositories in an
+`Unclassified Repositories` footer:
+
+```yaml
+repo-align:
+  owner: kevmoo
+  baseDir: ~/github/kevmoo
+  active:
+    - build_cli
+    - scripts.dart
+  ignore:
+    - personal_dotfiles
+```
+
+Repository capabilities are derived directly from repository contents
+(`publish_to` and `version` in `pubspec.yaml` vs. `skills/*/SKILL.md`) with no
+manual tier tags:
+
+- **Published packages & workspaces** (`publish_to != 'none'` and
+  `version != null`): require `lower_bound.yml` and `api_summary` (`api.txt` +
+  `test/api_test.dart`).
+- **Unpublished tools, demos & harnesses** (`publish_to: none` or omitted
+  `version`): require `analysis_options.yaml`, `complexity.yml`,
+  `autosubmit.yml`, `dependabot.yml`, `.prettierrc.json`, `markdown.yml`, and
+  branch rulesets, while skipping `lower_bound.yml` and `api_summary`.
+
+## 2. Read-Only Alignment Audit (`check`)
 
 Always begin with a non-destructive check to identify drift across local files
 and remote GitHub settings:
@@ -85,7 +117,7 @@ and remote GitHub settings:
   - Branch protection rulesets and required status checks matching the workflow
     matrix jobs (detects critical ungated auto-merge configurations).
 
-## 2. Step 1 of Remediation: Local Repository File Fixes (`--ci --lints` via Worktree PR)
+## 3. Step 1 of Remediation: Local Repository File Fixes (`--ci --lints` via Worktree PR)
 
 Always land local workflow and lint file fixes on `main` via a Pull Request
 **before** applying remote GitHub branch rulesets (`--github`). Requiring a
@@ -126,7 +158,7 @@ Never modify files directly on `main`. For each target repository:
      empty `## <version>-wip` section header in `CHANGELOG.md`.
    - Push the feature branch and open a PR via `gh pr create --body-file -`.
 
-## 3. Step 2 of Remediation: Remote GitHub Settings (`--github`)
+## 4. Step 2 of Remediation: Remote GitHub Settings (`--github`)
 
 Once the workflow files exist on `main` (or if only remote settings are
 drifted), confirm with the user via `ask_question` and apply remote ruleset,

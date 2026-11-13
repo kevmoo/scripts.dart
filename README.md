@@ -435,16 +435,24 @@ installed and authenticated in your `PATH`.
 **Usage:**
 
 ```shell
-kscripts repo-align <check|fix> [options]
+kscripts repo-align <check|fix|apply> [options]
 
 -r, --repo            Target a specific repository by name (e.g. stats, pubviz)
+-d, --dir             Target a specific checkout or sibling worktree directory for local checks/fixes
     --json            Output check results in JSON format
     --[no-]lints      Fix/synchronize analysis_options.yaml
+    --[no-]api-summary Fix/synchronize api_summary dev_dependency, api.txt, and test/api_test.dart
     --[no-]ci         Fix/synchronize CI workflows (lower_bound, complexity, autosubmit, dependabot)
     --[no-]github     Fix/synchronize GitHub remote settings (auto-merge, rulesets)
+    --[no-]spot       Fix/synchronize managed <!-- BEGIN SPOT --> markdown blocks
 -n, --[no-]dry-run    Preview changes without modifying files or remote settings
 -h, --help            Show command usage
 ```
+
+Optional portfolio membership can be configured under a top-level `repo-align:`
+section in `~/.config/kscripts/repos.yaml` (`owner`, `baseDir`, `active`, and
+`ignore`), allowing `check` to audit `HEAD` across all `active` repositories via
+batched GitHub GraphQL and flag newly created unclassified repositories.
 
 ### `tighten`
 

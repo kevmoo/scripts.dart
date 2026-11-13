@@ -1,101 +1,299 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+import '../process_utils.dart';
+import '../repos_config.dart';
 import '../shared/analysis_options_resolver.dart';
 import '../shared/git_cli.dart';
 import '../shared/spot_sync.dart';
 import 'models.dart';
-
-/// Known legacy or non-code repositories to ignore/mark legacy.
-const Set<String> _legacyOrIgnoredRepos = {
-  'wynette',
-  'kevmoo_legacy',
-  'lint_cleanup',
-  'vday_elle',
-  'j832',
-  'default_git_branch',
-  'personal_dotfiles',
-  'personal_knowledge',
-  'dart-sdk-agent-config',
-  'graf',
-  'kevmoo.github.io',
-  'dart_in_the_shell',
-  'holdings',
-  'json_compare_bench',
-};
-
-/// Known published packages on pub.dev.
-const Set<String> _publishedPackages = {
-  'bench_press',
-  'build_cli',
-  'build_verify',
-  'build_version',
-  'completion',
-  'completion.dart',
-  'dhttpd',
-  'git',
-  'lower_bound',
-  'lower_bound.dart',
-  'peanut',
-  'peanut.dart',
-  'pubviz',
-  'qr',
-  'qr.dart',
-  'source_gen_test',
-  'stats',
-  'vote',
-  'vote.dart',
-};
+import 'repo_align_graphql.dart';
+import 'workflow_matrix.dart';
 
 class RepoAlignScanner {
   static String get defaultBaseDirPath => p.join(
-    Platform.environment['HOME'] ?? '/usr/local/google/home/kevmoo',
+    Platform.environment['HOME'] ?? Directory.current.path,
     'github',
     'kevmoo',
   );
 
   final String baseDirPath;
+  final String owner;
   final bool queryGitHubApi;
+  final RepoAlignConfig? portfolioConfig;
+  final SyncProcessRunner processRunner;
+  final ProcessRunner asyncProcessRunner;
 
-  new({String? baseDirPath, this.queryGitHubApi = true})
-    : baseDirPath = baseDirPath ?? defaultBaseDirPath;
+  factory({
+    String? baseDirPath,
+    String? owner,
+    bool queryGitHubApi = true,
+    RepoAlignConfig? portfolioConfig,
+    String? homeDirectory,
+    SyncProcessRunner processRunner = defaultSyncProcessRunner,
+    ProcessRunner asyncProcessRunner = defaultProcessRunner,
+  }) {
+    final resolvedConfig =
+        portfolioConfig ??
+        (baseDirPath == null
+            ? loadRepoAlignConfig(homeDirectory: homeDirectory)
+            : null);
+    return ._(
+      baseDirPath: baseDirPath ?? resolvedConfig?.baseDir ?? defaultBaseDirPath,
+      owner: owner ?? resolvedConfig?.owner ?? 'kevmoo',
+      queryGitHubApi: queryGitHubApi,
+      portfolioConfig: resolvedConfig,
+      processRunner: processRunner,
+      asyncProcessRunner: asyncProcessRunner,
+    );
+  }
 
-  List<RepoAlignmentStatus> scanAll({String? targetRepo, String? targetDir}) {
+  const new _({
+    required this.baseDirPath,
+    required this.owner,
+    required this.queryGitHubApi,
+    required this.portfolioConfig,
+    required this.processRunner,
+    required this.asyncProcessRunner,
+  });
+
+  List<RepoAlignmentStatus> scanAll({String? targetRepo, String? targetDir}) =>
+      scanPortfolio(targetRepo: targetRepo, targetDir: targetDir).repos;
+
+  /// Asynchronous counterpart to [scanPortfolio] that executes all remote
+  /// GitHub GraphQL batches concurrently.
+  Future<RepoAlignScanReport> scanPortfolioAsync({
+    String? targetRepo,
+    String? targetDir,
+  }) async {
+    final config = portfolioConfig;
+    if (targetDir == null && config != null && queryGitHubApi) {
+      return _scanFromPortfolioConfigAsync(config, targetRepo: targetRepo);
+    }
+    return scanPortfolio(targetRepo: targetRepo, targetDir: targetDir);
+  }
+
+  Future<RepoAlignScanReport> _scanFromPortfolioConfigAsync(
+    RepoAlignConfig config, {
+    String? targetRepo,
+  }) async {
+    final canonicalSpotDefs = loadCanonicalSpotDefs();
+    if (targetRepo != null) {
+      final snapshots = await fetchRemoteRepoSnapshotsAsync(
+        owner,
+        [targetRepo],
+        runner: asyncProcessRunner,
+        targetsBranchPredicate: rulesetTargetsBranch,
+      );
+      return _assembleSingleTargetReport(
+        targetRepo,
+        snapshots[targetRepo],
+        canonicalSpotDefs: canonicalSpotDefs,
+      );
+    }
+
+    final activeNames = [...config.active]..sort();
+    final snapshotsFuture = fetchRemoteRepoSnapshotsAsync(
+      owner,
+      activeNames,
+      runner: asyncProcessRunner,
+      targetsBranchPredicate: rulesetTargetsBranch,
+    );
+    final ownerReposFuture = fetchOwnerActiveCandidateReposAsync(
+      owner,
+      runner: asyncProcessRunner,
+    );
+    final snapshots = await snapshotsFuture;
+    final ownerRepos = await ownerReposFuture;
+
+    return _assemblePortfolioReport(
+      config,
+      activeNames: activeNames,
+      snapshots: snapshots,
+      ownerRepos: ownerRepos,
+      canonicalSpotDefs: canonicalSpotDefs,
+    );
+  }
+
+  /// Scans the configured portfolio (or local directory fallback when no
+  /// `repos.yaml` is present) and reports both evaluated repositories and any
+  /// unclassified non-fork, non-archived remote repositories.
+  RepoAlignScanReport scanPortfolio({String? targetRepo, String? targetDir}) {
     if (targetDir != null) {
       final dir = Directory(targetDir);
       if (!dir.existsSync()) {
         throw FileSystemException('Target directory does not exist', targetDir);
       }
-      return [scanSingleRepo(dir, repoNameOverride: targetRepo)];
+      return RepoAlignScanReport(
+        repos: [scanSingleRepo(dir, repoNameOverride: targetRepo)],
+      );
     }
 
+    final config = portfolioConfig;
+    if (config != null && queryGitHubApi) {
+      return _scanFromPortfolioConfig(config, targetRepo: targetRepo);
+    }
+
+    return RepoAlignScanReport(
+      repos: _scanLocalBaseDirectory(targetRepo: targetRepo),
+    );
+  }
+
+  RepoAlignScanReport _scanFromPortfolioConfig(
+    RepoAlignConfig config, {
+    String? targetRepo,
+  }) {
+    final canonicalSpotDefs = loadCanonicalSpotDefs();
+    if (targetRepo != null) {
+      final snapshots = fetchRemoteRepoSnapshots(
+        owner,
+        [targetRepo],
+        runner: processRunner,
+        targetsBranchPredicate: rulesetTargetsBranch,
+      );
+      return _assembleSingleTargetReport(
+        targetRepo,
+        snapshots[targetRepo],
+        canonicalSpotDefs: canonicalSpotDefs,
+      );
+    }
+
+    final activeNames = [...config.active]..sort();
+    final snapshots = fetchRemoteRepoSnapshots(
+      owner,
+      activeNames,
+      runner: processRunner,
+      targetsBranchPredicate: rulesetTargetsBranch,
+    );
+    final ownerRepos = fetchOwnerActiveCandidateRepos(
+      owner,
+      runner: processRunner,
+    );
+    return _assemblePortfolioReport(
+      config,
+      activeNames: activeNames,
+      snapshots: snapshots,
+      ownerRepos: ownerRepos,
+      canonicalSpotDefs: canonicalSpotDefs,
+    );
+  }
+
+  RepoAlignScanReport _assembleSingleTargetReport(
+    String targetRepo,
+    RemoteRepoSnapshot? snap, {
+    required Map<String, String> canonicalSpotDefs,
+  }) {
+    if (snap != null) {
+      return RepoAlignScanReport(
+        repos: [
+          _buildStatusFromRemoteSnapshot(
+            snap,
+            isExplicitlyIgnored: false,
+            canonicalSpotDefs: canonicalSpotDefs,
+          ),
+        ],
+      );
+    }
+    final localDir = Directory(p.join(baseDirPath, targetRepo));
+    if (!localDir.existsSync()) return const RepoAlignScanReport(repos: []);
+    return RepoAlignScanReport(repos: [scanSingleRepo(localDir)]);
+  }
+
+  RepoAlignScanReport _assemblePortfolioReport(
+    RepoAlignConfig config, {
+    required List<String> activeNames,
+    required Map<String, RemoteRepoSnapshot> snapshots,
+    required List<String> ownerRepos,
+    required Map<String, String> canonicalSpotDefs,
+  }) {
+    final repos = <RepoAlignmentStatus>[];
+    for (final name in activeNames) {
+      final snap = snapshots[name];
+      if (snap != null) {
+        repos.add(
+          _buildStatusFromRemoteSnapshot(
+            snap,
+            isExplicitlyIgnored: false,
+            canonicalSpotDefs: canonicalSpotDefs,
+          ),
+        );
+      } else {
+        final localDir = Directory(p.join(baseDirPath, name));
+        if (localDir.existsSync()) {
+          repos.add(scanSingleRepo(localDir));
+        }
+      }
+    }
+
+    final known = {...config.active, ...config.ignore};
+    final unclassified = ownerRepos.where((r) => !known.contains(r)).toList();
+    return RepoAlignScanReport(repos: repos, unclassifiedRepos: unclassified);
+  }
+
+  List<RepoAlignmentStatus> _scanLocalBaseDirectory({String? targetRepo}) {
     final baseDir = Directory(baseDirPath);
     if (!baseDir.existsSync()) {
       throw FileSystemException('Base directory does not exist', baseDirPath);
     }
 
+    final candidateDirs = _discoverCandidateLocalDirs(
+      baseDir,
+      targetRepo: targetRepo,
+    );
+    final names = candidateDirs.map((d) => p.basename(d.path)).toList();
+    final snapshots = queryGitHubApi
+        ? fetchRemoteRepoSnapshots(
+            owner,
+            names,
+            runner: processRunner,
+            targetsBranchPredicate: rulesetTargetsBranch,
+          )
+        : const <String, RemoteRepoSnapshot>{};
+
+    final ignoreSet = portfolioConfig?.ignore.toSet() ?? const <String>{};
+    final canonicalSpotDefs = loadCanonicalSpotDefs();
+    return [
+      for (final dir in candidateDirs)
+        _scanLocalDirectoryWithOptionalRemote(
+          dir,
+          name: p.basename(dir.path),
+          remote: snapshots[p.basename(dir.path)],
+          isExplicitlyIgnored:
+              targetRepo == null && ignoreSet.contains(p.basename(dir.path)),
+          canonicalSpotDefs: canonicalSpotDefs,
+        ),
+    ];
+  }
+
+  List<Directory> _discoverCandidateLocalDirs(
+    Directory baseDir, {
+    required String? targetRepo,
+  }) {
     final entries = baseDir.listSync().whereType<Directory>().toList()
       ..sort((a, b) => p.basename(a.path).compareTo(p.basename(b.path)));
-
-    final results = <RepoAlignmentStatus>[];
-
-    for (final dir in entries) {
-      final name = p.basename(dir.path);
-      if (name.startsWith('.') || name.startsWith('_')) continue;
-      if (targetRepo != null && name != targetRepo) continue;
-
-      final gitDir = Directory(p.join(dir.path, '.git'));
-      final gitFile = File(p.join(dir.path, '.git'));
-      if (!gitDir.existsSync() && !gitFile.existsSync()) continue;
-
-      results.add(scanSingleRepo(dir));
-    }
-
-    return results;
+    return entries
+        .where((d) => _shouldScanLocalRepoDir(d, targetRepo: targetRepo))
+        .toList();
   }
+
+  bool _shouldScanLocalRepoDir(Directory dir, {required String? targetRepo}) {
+    final name = p.basename(dir.path);
+    if (name.startsWith('.') || name.startsWith('_')) return false;
+    if (targetRepo != null) return name == targetRepo && _hasGitMetadata(dir);
+    final config = portfolioConfig;
+    if (config != null &&
+        !config.active.contains(name) &&
+        config.ignore.contains(name)) {
+      return false;
+    }
+    return _hasGitMetadata(dir);
+  }
+
+  static bool _hasGitMetadata(Directory dir) =>
+      Directory(p.join(dir.path, '.git')).existsSync() ||
+      File(p.join(dir.path, '.git')).existsSync();
 
   static String _resolveCanonicalRepoName(
     Directory dir, {
@@ -132,75 +330,257 @@ class RepoAlignScanner {
       dir,
       repoNameOverride: repoNameOverride,
     );
-    final pubInfo = _scanPubspec(dir);
-    final kind = _determineKind(name, pubInfo);
-    final analysis = _scanAnalysisOptions(dir);
-    final workflows = _scanWorkflows(dir);
-    final dependabot = _scanDependabot(dir);
-    final markdown = _scanMarkdownConfig(dir);
-    final spotDrift = scanRepoSpotDrift(dir).map((i) => i.message).toList();
-    final ghInfo = queryGitHubApi
-        ? _scanGitHubRemote(name)
-        : _defaultGitHubInfo();
-
-    return RepoAlignmentStatus(
+    final remote = queryGitHubApi
+        ? fetchRemoteRepoSnapshots(
+            owner,
+            [name],
+            runner: processRunner,
+            targetsBranchPredicate: rulesetTargetsBranch,
+          )[name]
+        : null;
+    final ignoreSet = portfolioConfig?.ignore.toSet() ?? const <String>{};
+    return _scanLocalDirectoryWithOptionalRemote(
+      dir,
       name: name,
-      path: dir.path,
-      kind: kind,
-      isArchived: ghInfo.isArchived,
-      isFork: ghInfo.isFork,
-      isPrivate: ghInfo.isPrivate,
-      defaultBranch: ghInfo.defaultBranch,
-      hasPubspec: pubInfo.hasPubspec,
-      sdkConstraint: pubInfo.sdkConstraint,
-      packageNames: pubInfo.packageNames,
-      hasPublishToNone: pubInfo.hasPublishToNone,
-      hasApiSummaryDevDep: pubInfo.hasApiSummaryDevDep,
-      hasApiTxt: pubInfo.hasApiTxt,
-      hasApiTest: pubInfo.hasApiTest,
-      hasAnalysisOptions: analysis.hasAnalysisOptions,
-      analysisInclude: analysis.analysisInclude,
-      strictCasts: analysis.strictCasts,
-      strictInference: analysis.strictInference,
-      strictRawTypes: analysis.strictRawTypes,
-      customLints: analysis.customLints,
-      workflowFiles: workflows.files,
-      hasCi: workflows.hasCi,
-      hasLowerBound: workflows.hasLowerBound,
-      hasCogComp: workflows.hasCogComp,
-      hasAutosubmit: workflows.hasAutosubmit,
-      hasDependabot: dependabot.hasDependabot,
-      hasCanonicalDependabot: dependabot.hasCanonicalDependabot,
-      hasDeprecatedAnalyticaRef: workflows.hasDeprecatedAnalyticaRef,
-      hasNarrowWorkflowsPathFilter: workflows.hasNarrowWorkflowsPathFilter,
-      hasPublish: workflows.hasPublish,
-      hasHealth: workflows.hasHealth,
-      hasPostSummaries: workflows.hasPostSummaries,
-      expectedCiCheckPrefixes: workflows.expectedCiCheckPrefixes,
-      hasPrettierRc: markdown.hasPrettierRc,
-      hasMarkdownWorkflow: markdown.hasMarkdownWorkflow,
-      hasPrettierIgnore: markdown.hasPrettierIgnore,
-      spotDriftIssues: spotDrift,
-      autoMergeAllowed: ghInfo.autoMergeAllowed,
-      hasAutosubmitLabel: ghInfo.hasAutosubmitLabel,
-      hasRulesetOrProtection: ghInfo.hasRulesetOrProtection,
-      requiredChecks: ghInfo.requiredChecks,
-      defaultBranchRulesetId: ghInfo.defaultBranchRulesetId,
-      defaultBranchRequiredChecks: ghInfo.defaultBranchRequiredChecks,
+      remote: remote,
+      isExplicitlyIgnored: repoNameOverride == null && ignoreSet.contains(name),
+      canonicalSpotDefs: loadCanonicalSpotDefs(),
     );
   }
 
-  _PubspecInfo _scanPubspec(Directory dir) {
-    final pubspecFile = File(p.join(dir.path, 'pubspec.yaml'));
-    if (!pubspecFile.existsSync()) {
-      return _emptyPubspecInfo();
+  RepoAlignmentStatus _scanLocalDirectoryWithOptionalRemote(
+    Directory dir, {
+    required String name,
+    required RemoteRepoSnapshot? remote,
+    required bool isExplicitlyIgnored,
+    required Map<String, String> canonicalSpotDefs,
+  }) {
+    final pubInfo = _scanLocalPubspec(dir);
+    final workflows = _scanLocalWorkflows(dir);
+    final hasRootLibOrBin =
+        Directory(p.join(dir.path, 'lib')).existsSync() ||
+        Directory(p.join(dir.path, 'bin')).existsSync();
+    final hasSkillsMarkdown = _hasLocalSkillsMarkdown(dir);
+    final kind = _determineKind(
+      isExplicitlyIgnored: isExplicitlyIgnored,
+      pub: pubInfo,
+      workflows: workflows,
+      hasRootLibOrBin: hasRootLibOrBin,
+      hasSkillsMarkdown: hasSkillsMarkdown,
+    );
+    final analysis = _scanLocalAnalysisOptions(dir);
+    final dependabot = _scanDependabotText(_readLocalDependabot(dir));
+    final markdown = _scanLocalMarkdownConfig(dir);
+    final spotDrift = scanRepoSpotDrift(
+      dir,
+      canonicalDefs: canonicalSpotDefs,
+    ).map((i) => i.message).toList();
+    final ghInfo = _gitHubInfoFromSnapshot(remote);
+
+    return _assembleStatus(
+      name: name,
+      path: dir.path,
+      kind: kind,
+      pubInfo: pubInfo,
+      analysis: analysis,
+      workflows: workflows,
+      dependabot: dependabot,
+      markdown: markdown,
+      spotDrift: spotDrift,
+      ghInfo: ghInfo,
+    );
+  }
+
+  RepoAlignmentStatus _buildStatusFromRemoteSnapshot(
+    RemoteRepoSnapshot snap, {
+    required bool isExplicitlyIgnored,
+    required Map<String, String> canonicalSpotDefs,
+  }) {
+    final localDir = Directory(p.join(baseDirPath, snap.name));
+    final pubInfo = _scanRemotePubspec(snap);
+    final workflows = inspectWorkflowContents(snap.workflowFiles);
+    final kind = _determineKind(
+      isExplicitlyIgnored: isExplicitlyIgnored,
+      pub: pubInfo,
+      workflows: workflows,
+      hasRootLibOrBin: snap.hasRootLibOrBin,
+      hasSkillsMarkdown: snap.hasSkillsMarkdown,
+    );
+    final analysis = _scanRemoteAnalysisOptions(snap.analysisOptionsText);
+    final dependabot = _scanDependabotText(snap.dependabotText);
+    final markdown = (
+      hasPrettierRc: snap.hasPrettierRc,
+      hasMarkdownWorkflow:
+          snap.workflowFiles.containsKey('markdown.yml') ||
+          snap.workflowFiles.containsKey('markdown.yaml'),
+      hasPrettierIgnore: snap.hasPrettierIgnore,
+    );
+    final spotDrift = _scanOriginHeadSpotDrift(
+      localDir,
+      canonicalDefs: canonicalSpotDefs,
+    );
+    final ghInfo = _gitHubInfoFromSnapshot(snap);
+
+    return _assembleStatus(
+      name: snap.name,
+      path: localDir.path,
+      kind: kind,
+      pubInfo: pubInfo,
+      analysis: analysis,
+      workflows: workflows,
+      dependabot: dependabot,
+      markdown: markdown,
+      spotDrift: spotDrift,
+      ghInfo: ghInfo,
+    );
+  }
+
+  RepoAlignmentStatus _assembleStatus({
+    required String name,
+    required String path,
+    required RepoKind kind,
+    required _PubspecInfo pubInfo,
+    required _AnalysisInfo analysis,
+    required WorkflowsScanInfo workflows,
+    required ({bool hasDependabot, bool hasCanonicalDependabot}) dependabot,
+    required _MarkdownInfo markdown,
+    required List<String> spotDrift,
+    required _GitHubInfo ghInfo,
+  }) => RepoAlignmentStatus(
+    name: name,
+    path: path,
+    kind: kind,
+    isArchived: ghInfo.isArchived,
+    isFork: ghInfo.isFork,
+    isPrivate: ghInfo.isPrivate,
+    defaultBranch: ghInfo.defaultBranch,
+    hasPubspec: pubInfo.hasPubspec,
+    sdkConstraint: pubInfo.sdkConstraint,
+    packageNames: pubInfo.packageNames,
+    hasPublishToNone: pubInfo.hasPublishToNone,
+    hasApiSummaryDevDep: pubInfo.hasApiSummaryDevDep,
+    hasApiTxt: pubInfo.hasApiTxt,
+    hasApiTest: pubInfo.hasApiTest,
+    hasAnalysisOptions: analysis.hasAnalysisOptions,
+    analysisInclude: analysis.analysisInclude,
+    strictCasts: analysis.strictCasts,
+    strictInference: analysis.strictInference,
+    strictRawTypes: analysis.strictRawTypes,
+    customLints: analysis.customLints,
+    workflowFiles: workflows.files,
+    hasCi: workflows.hasCi,
+    hasLowerBound: workflows.hasLowerBound,
+    hasCogComp: workflows.hasCogComp,
+    hasAutosubmit: workflows.hasAutosubmit,
+    hasDependabot: dependabot.hasDependabot,
+    hasCanonicalDependabot: dependabot.hasCanonicalDependabot,
+    hasDeprecatedAnalyticaRef: workflows.hasDeprecatedAnalyticaRef,
+    hasNarrowWorkflowsPathFilter: workflows.hasNarrowWorkflowsPathFilter,
+    hasPublish: workflows.hasPublish,
+    hasHealth: workflows.hasHealth,
+    hasPostSummaries: workflows.hasPostSummaries,
+    expectedCiCheckPrefixes: workflows.expectedCiCheckPrefixes,
+    hasPrettierRc: markdown.hasPrettierRc,
+    hasMarkdownWorkflow: markdown.hasMarkdownWorkflow,
+    hasPrettierIgnore: markdown.hasPrettierIgnore,
+    spotDriftIssues: spotDrift,
+    autoMergeAllowed: ghInfo.autoMergeAllowed,
+    hasAutosubmitLabel: ghInfo.hasAutosubmitLabel,
+    hasRulesetOrProtection: ghInfo.hasRulesetOrProtection,
+    requiredChecks: ghInfo.requiredChecks,
+    defaultBranchRulesetId: ghInfo.defaultBranchRulesetId,
+    defaultBranchRequiredChecks: ghInfo.defaultBranchRequiredChecks,
+  );
+
+  RepoKind _determineKind({
+    required bool isExplicitlyIgnored,
+    required _PubspecInfo pub,
+    required WorkflowsScanInfo workflows,
+    required bool hasRootLibOrBin,
+    required bool hasSkillsMarkdown,
+  }) {
+    if (isExplicitlyIgnored) return RepoKind.legacyOrIgnored;
+    if (hasSkillsMarkdown &&
+        !hasRootLibOrBin &&
+        !workflows.hasPublish &&
+        !pub.hasAnyApiTxt) {
+      return RepoKind.agentSkills;
     }
+    if (!pub.hasPubspec) return RepoKind.experimentalOrPrototype;
+    if (!pub.hasPublishToNone) return RepoKind.publishedPackage;
+    if (pub.isWorkspace) return RepoKind.monorepoWorkspace;
+    return RepoKind.toolOrApp;
+  }
+
+  static bool _hasLocalSkillsMarkdown(Directory dir) {
+    final skillsDir = Directory(p.join(dir.path, 'skills'));
+    if (!skillsDir.existsSync()) return false;
+    for (final entry in skillsDir.listSync().whereType<Directory>()) {
+      if (File(p.join(entry.path, 'SKILL.md')).existsSync()) return true;
+    }
+    return false;
+  }
+
+  List<String> _scanOriginHeadSpotDrift(
+    Directory localDir, {
+    required Map<String, String> canonicalDefs,
+  }) {
+    if (!localDir.existsSync() || !_hasGitMetadata(localDir)) return const [];
+
+    final grepRes = defaultGitCli.runSync(const [
+      'grep',
+      '-I',
+      '-l',
+      '-E',
+      '(BEGIN|END) SPOT:',
+      'origin/HEAD',
+      '--',
+      '*.md',
+    ], workingDirectory: localDir.path);
+    if (grepRes.exitCode != 0) return const [];
+
+    final issues = <String>[];
+    for (final rawLine in grepRes.stdout.toString().split('\n')) {
+      final spec = rawLine.trim();
+      if (!spec.startsWith('origin/HEAD:')) continue;
+      final relPath = spec.substring('origin/HEAD:'.length);
+      final text = defaultGitCli.stdoutOrNullSync([
+        'show',
+        spec,
+      ], workingDirectory: localDir.path);
+      if (text == null) continue;
+      issues.addAll(
+        checkSpotBlocksInLines(
+          relPath,
+          text.split('\n'),
+          canonicalDefs: canonicalDefs,
+        ).map((i) => i.message),
+      );
+    }
+    return issues;
+  }
+
+  _PubspecInfo _scanLocalPubspec(Directory dir) {
+    final pubspecFile = File(p.join(dir.path, 'pubspec.yaml'));
+    if (!pubspecFile.existsSync()) return _emptyPubspecInfo();
 
     final acc = _PubspecScanAccumulator();
-    final rootMeta = _readRootPubspec(dir, pubspecFile, acc);
+    final rootMeta = _parseRootPubspecText(
+      pubspecFile.readAsStringSync(),
+      acc,
+      hasRootApiTxt: File(p.join(dir.path, 'api.txt')).existsSync(),
+      hasRootApiTest: File(p.join(dir.path, 'test', 'api_test.dart'))
+          .existsSync(),
+      resolveMember: (member) => _readLocalSubPackage(dir, member),
+    );
 
     if (!rootMeta.isWorkspace) {
-      _scanPackagesDirectory(dir, acc);
+      final pkgsDir = Directory(p.join(dir.path, 'packages'));
+      if (pkgsDir.existsSync()) {
+        for (final sub in pkgsDir.listSync().whereType<Directory>()) {
+          acc.processPackageBlob(_readLocalDirectoryPackage(sub));
+        }
+      }
     }
 
     return acc.toInfo(
@@ -209,24 +589,55 @@ class RepoAlignScanner {
     );
   }
 
-  _PubspecInfo _emptyPubspecInfo() => (
-    hasPubspec: false,
-    sdkConstraint: null,
-    isWorkspace: false,
-    packageNames: <String>[],
-    hasPublishToNone: true,
-    hasApiSummaryDevDep: false,
-    hasApiTxt: false,
-    hasApiTest: false,
-  );
+  _PubspecInfo _scanRemotePubspec(RemoteRepoSnapshot snap) {
+    final rootText = snap.rootPubspecText;
+    if (rootText == null) return _emptyPubspecInfo();
 
-  ({String? sdkConstraint, bool isWorkspace}) _readRootPubspec(
-    Directory dir,
-    File pubspecFile,
-    _PubspecScanAccumulator acc,
-  ) {
+    final acc = _PubspecScanAccumulator();
+    final rootMeta = _parseRootPubspecText(
+      rootText,
+      acc,
+      hasRootApiTxt: snap.hasRootApiTxt,
+      hasRootApiTest: snap.hasRootApiTest,
+      resolveMember: (member) => snap.subPackages[member],
+    );
+
+    if (!rootMeta.isWorkspace) {
+      for (final MapEntry(:key, :value) in snap.subPackages.entries) {
+        if (key.startsWith('packages/')) {
+          acc.processPackageBlob(value);
+        }
+      }
+    }
+
+    return acc.toInfo(
+      sdkConstraint: rootMeta.sdkConstraint,
+      isWorkspace: rootMeta.isWorkspace,
+    );
+  }
+
+  RemotePackageBlobInfo? _readLocalSubPackage(Directory root, String member) =>
+      _readLocalDirectoryPackage(Directory(p.join(root.path, member)));
+
+  RemotePackageBlobInfo? _readLocalDirectoryPackage(Directory sub) {
+    final pub = File(p.join(sub.path, 'pubspec.yaml'));
+    if (!pub.existsSync()) return null;
+    return (
+      pubspecText: pub.readAsStringSync(),
+      hasApiTxt: File(p.join(sub.path, 'api.txt')).existsSync(),
+      hasApiTest: File(p.join(sub.path, 'test', 'api_test.dart')).existsSync(),
+    );
+  }
+
+  ({String? sdkConstraint, bool isWorkspace}) _parseRootPubspecText(
+    String rootText,
+    _PubspecScanAccumulator acc, {
+    required bool hasRootApiTxt,
+    required bool hasRootApiTest,
+    required RemotePackageBlobInfo? Function(String member) resolveMember,
+  }) {
     try {
-      final doc = loadYaml(pubspecFile.readAsStringSync());
+      final doc = loadYaml(rootText);
       if (doc is! YamlMap) return (sdkConstraint: null, isWorkspace: false);
 
       final env = doc['environment'];
@@ -236,10 +647,16 @@ class RepoAlignScanner {
       final workspace = doc['workspace'];
       final isWorkspace = workspace != null;
 
-      acc.processPackage(dir, isWorkspaceRoot: isWorkspace);
+      acc.processPackageBlob((
+        pubspecText: rootText,
+        hasApiTxt: hasRootApiTxt,
+        hasApiTest: hasRootApiTest,
+      ), isWorkspaceRoot: isWorkspace);
+
       if (workspace is YamlList) {
         for (final member in workspace) {
-          acc.processPackage(Directory(p.join(dir.path, member.toString())));
+          final info = resolveMember(member.toString());
+          if (info != null) acc.processPackageBlob(info);
         }
       }
       return (sdkConstraint: sdkConstraint, isWorkspace: isWorkspace);
@@ -248,90 +665,76 @@ class RepoAlignScanner {
     }
   }
 
-  void _scanPackagesDirectory(Directory dir, _PubspecScanAccumulator acc) {
-    final pkgsDir = Directory(p.join(dir.path, 'packages'));
-    if (!pkgsDir.existsSync()) return;
-    for (final sub in pkgsDir.listSync().whereType<Directory>()) {
-      acc.processPackage(sub);
-    }
-  }
+  _PubspecInfo _emptyPubspecInfo() => (
+    hasPubspec: false,
+    sdkConstraint: null,
+    isWorkspace: false,
+    packageNames: const <String>[],
+    hasPublishToNone: true,
+    hasApiSummaryDevDep: false,
+    hasApiTxt: false,
+    hasAnyApiTxt: false,
+    hasApiTest: false,
+  );
 
-  RepoKind _determineKind(String name, _PubspecInfo pub) {
-    if (_legacyOrIgnoredRepos.contains(name)) {
-      return RepoKind.legacyOrIgnored;
-    }
-    if (name == 'dash_skills' || name == 'kevmoo_skills') {
-      return RepoKind.agentSkills;
-    }
-    if (_publishedPackages.contains(name) ||
-        (pub.hasPubspec && pub.packageNames.any(_publishedPackages.contains))) {
-      return RepoKind.publishedPackage;
-    }
-    if (pub.isWorkspace || name == 'analytica.dart' || name == 'dtt') {
-      return RepoKind.monorepoWorkspace;
-    }
-    if (name == 'scripts.dart' ||
-        name == 'slide_puzzle' ||
-        name == 'kevmoo.com' ||
-        name == 'flutter_web_cache_check' ||
-        name == 'google-messages-hax') {
-      return RepoKind.toolOrApp;
-    }
-    return RepoKind.experimentalOrPrototype;
-  }
-
-  _AnalysisInfo _scanAnalysisOptions(Directory dir) {
+  _AnalysisInfo _scanLocalAnalysisOptions(Directory dir) {
     final analysisFile = File(p.join(dir.path, 'analysis_options.yaml'));
-    if (!analysisFile.existsSync()) {
-      return (
-        hasAnalysisOptions: false,
-        analysisInclude: null,
-        strictCasts: false,
-        strictInference: false,
-        strictRawTypes: false,
-        customLints: <String>[],
-      );
-    }
+    if (!analysisFile.existsSync()) return _emptyAnalysisInfo;
 
+    final content = analysisFile.readAsStringSync();
+    final resolver = AnalysisOptionsResolver.createSync(
+      packageDirectory: dir,
+      fallbackDirectory: Directory(baseDirPath),
+    );
+    return _buildAnalysisInfo(
+      content,
+      resolver.resolveFromFile(analysisFile.path),
+    );
+  }
+
+  _AnalysisInfo _scanRemoteAnalysisOptions(String? content) {
+    if (content == null) return _emptyAnalysisInfo;
+    final resolved = AnalysisOptionsResolver().resolveFromContent(content);
+    return _buildAnalysisInfo(content, resolved);
+  }
+
+  _AnalysisInfo _buildAnalysisInfo(
+    String rawContent,
+    ResolvedAnalysisOptions resolved,
+  ) {
     String? analysisInclude;
     try {
-      final doc = loadYaml(analysisFile.readAsStringSync());
+      final doc = loadYaml(rawContent);
       if (doc is YamlMap && doc['include'] != null) {
         analysisInclude = doc['include'].toString();
       }
     } catch (_) {}
 
-    final resolver = AnalysisOptionsResolver.createSync(
-      packageDirectory: dir,
-      fallbackDirectory: Directory(baseDirPath),
-    );
-    final resolved = resolver.resolveFromFile(analysisFile.path);
-
     final allLang = resolved.allLanguage;
-    final strictCasts = allLang['strict-casts'] == true;
-    final strictInference = allLang['strict-inference'] == true;
-    final strictRawTypes = allLang['strict-raw-types'] == true;
-
     return (
       hasAnalysisOptions: true,
       analysisInclude: analysisInclude,
-      strictCasts: strictCasts,
-      strictInference: strictInference,
-      strictRawTypes: strictRawTypes,
+      strictCasts: allLang['strict-casts'] == true,
+      strictInference: allLang['strict-inference'] == true,
+      strictRawTypes: allLang['strict-raw-types'] == true,
       customLints: resolved.explicitLints.toList()..sort(),
     );
   }
 
-  _MarkdownInfo _scanMarkdownConfig(Directory dir) {
+  static const _emptyAnalysisInfo = (
+    hasAnalysisOptions: false,
+    analysisInclude: null,
+    strictCasts: false,
+    strictInference: false,
+    strictRawTypes: false,
+    customLints: <String>[],
+  );
+
+  _MarkdownInfo _scanLocalMarkdownConfig(Directory dir) {
     final workflows = p.join(dir.path, '.github', 'workflows');
-    // Both extensions, like every other detector here. Missing the `.yaml`
-    // spelling would not just false-report "missing" -- `fix` would then write
-    // a second workflow declaring the same `markdown` job ID, producing two
-    // check runs competing for the context the ruleset matches on.
     final hasMarkdownWorkflow =
         File(p.join(workflows, 'markdown.yml')).existsSync() ||
         File(p.join(workflows, 'markdown.yaml')).existsSync();
-
     return (
       hasPrettierRc: File(p.join(dir.path, '.prettierrc.json')).existsSync(),
       hasMarkdownWorkflow: hasMarkdownWorkflow,
@@ -339,177 +742,34 @@ class RepoAlignScanner {
     );
   }
 
-  _WorkflowsInfo _scanWorkflows(Directory dir) {
+  WorkflowsScanInfo _scanLocalWorkflows(Directory dir) {
     final workflowsDir = Directory(p.join(dir.path, '.github', 'workflows'));
-    if (!workflowsDir.existsSync()) {
-      return (
-        files: <String>[],
-        hasCi: false,
-        hasLowerBound: false,
-        hasCogComp: false,
-        hasAutosubmit: false,
-        hasPublish: false,
-        hasHealth: false,
-        hasPostSummaries: false,
-        hasDeprecatedAnalyticaRef: false,
-        hasNarrowWorkflowsPathFilter: false,
-        expectedCiCheckPrefixes: <String>[],
-      );
-    }
+    if (!workflowsDir.existsSync()) return emptyWorkflowsScanInfo;
 
-    final inspected = workflowsDir
-        .listSync()
-        .whereType<File>()
-        .map(_inspectWorkflowFile)
-        .nonNulls
-        .toList();
-
-    return (
-      files: inspected.map((w) => w.name).toList(),
-      hasCi: inspected.any((w) => w.hasCi),
-      hasLowerBound: inspected.any((w) => w.hasLowerBound),
-      hasCogComp: inspected.any((w) => w.hasCogComp),
-      hasAutosubmit: inspected.any((w) => w.hasAutosubmit),
-      hasPublish: inspected.any((w) => w.hasPublish),
-      hasHealth: inspected.any((w) => w.hasHealth),
-      hasPostSummaries: inspected.any((w) => w.hasPostSummaries),
-      hasDeprecatedAnalyticaRef: inspected.any(
-        (w) => w.hasDeprecatedAnalyticaRef,
-      ),
-      hasNarrowWorkflowsPathFilter: inspected.any(
-        (w) => w.hasNarrowWorkflowsPathFilter,
-      ),
-      expectedCiCheckPrefixes: inspected
-          .expand((w) => w.expectedCiCheckPrefixes)
-          .toList(),
-    );
-  }
-
-  ({
-    String name,
-    bool hasCi,
-    bool hasLowerBound,
-    bool hasCogComp,
-    bool hasAutosubmit,
-    bool hasPublish,
-    bool hasHealth,
-    bool hasPostSummaries,
-    bool hasDeprecatedAnalyticaRef,
-    bool hasNarrowWorkflowsPathFilter,
-    List<String> expectedCiCheckPrefixes,
-  })?
-  _inspectWorkflowFile(File wf) {
-    final isYaml = wf.path.endsWith('.yml') || wf.path.endsWith('.yaml');
-    if (!isYaml) return null;
-
-    final name = p.basename(wf.path);
-    final content = wf.readAsStringSync();
-
-    final hasCi =
-        name.contains('ci') ||
-        name.contains('dart') ||
-        name.contains('test') ||
-        name.contains('validate');
-    final hasLowerBound =
-        content.contains('lower_bound') || content.contains('lower-bound');
-    final hasCogComp =
-        content.contains('cognitive_complexity') ||
-        content.contains('cogcomp') ||
-        content.contains('complexity');
-    final hasAutosubmit =
-        content.contains('autosubmit') || name.contains('autosubmit');
-    final hasPublish =
-        name.contains('publish') ||
-        content.contains(
-          'dart-lang/setup-dart/.github/workflows/publish.yml',
-        ) ||
-        content.contains('dart-lang/ecosystem/.github/workflows/publish.yaml');
-    final hasHealth =
-        name.contains('health') ||
-        content.contains('dart-lang/ecosystem/.github/workflows/health.yaml');
-    final hasPostSummaries =
-        name.contains('post_summaries') ||
-        name.contains('post-summaries') ||
-        content.contains(
-          'dart-lang/ecosystem/.github/workflows/post_summaries.yaml',
-        );
-    final hasDeprecatedAnalyticaRef = RegExp(
-      r'uses:\s*kevmoo/analytica\.dart(?:/packages/lower_bound)?@',
-    ).hasMatch(content);
-    final hasNarrowWorkflowsPathFilter =
-        content.contains('.github/workflows/**') &&
-        !content.contains("'.github/**'") &&
-        !content.contains('".github/**"');
-
-    final isCiWorkflow =
-        hasCi &&
-        !hasAutosubmit &&
-        !hasPublish &&
-        !hasHealth &&
-        !hasPostSummaries;
-    final expectedCiCheckPrefixes = _extractCiCheckPrefixes(
-      content,
-      isCiWorkflow: isCiWorkflow,
-    );
-
-    return (
-      name: name,
-      hasCi: hasCi,
-      hasLowerBound: hasLowerBound,
-      hasCogComp: hasCogComp,
-      hasAutosubmit: hasAutosubmit,
-      hasPublish: hasPublish,
-      hasHealth: hasHealth,
-      hasPostSummaries: hasPostSummaries,
-      hasDeprecatedAnalyticaRef: hasDeprecatedAnalyticaRef,
-      hasNarrowWorkflowsPathFilter: hasNarrowWorkflowsPathFilter,
-      expectedCiCheckPrefixes: expectedCiCheckPrefixes,
-    );
-  }
-
-  List<String> _extractCiCheckPrefixes(
-    String content, {
-    required bool isCiWorkflow,
-  }) {
-    if (!isCiWorkflow) return const [];
-    try {
-      final doc = loadYaml(content);
-      final jobs = doc is YamlMap ? doc['jobs'] : null;
-      if (jobs is! YamlMap) return const [];
-      return jobs.entries
-          .expand((e) => _extractJobPrefixes(e.key, e.value))
-          .toList();
-    } catch (_) {
-      return const [];
-    }
-  }
-
-  List<String> _extractJobPrefixes(Object? jobKey, Object? jobVal) {
-    if (jobVal is YamlMap) {
-      final strategy = jobVal['strategy'];
-      final matrix = strategy is YamlMap ? strategy['matrix'] : null;
-      final matrixPkg = matrix is YamlMap ? matrix['package'] : null;
-      if (matrixPkg is YamlList) {
-        return matrixPkg.map((e) => e.toString()).toList();
-      }
-      final jobName = jobVal['name']?.toString();
-      if (jobName != null && !jobName.contains(r'${{')) {
-        return [jobName];
+    final files = <String, String>{};
+    for (final wf in workflowsDir.listSync().whereType<File>()) {
+      final name = p.basename(wf.path);
+      if (name.endsWith('.yml') || name.endsWith('.yaml')) {
+        files[name] = wf.readAsStringSync();
       }
     }
-    return [jobKey.toString()];
+    return inspectWorkflowContents(files);
   }
 
-  ({bool hasDependabot, bool hasCanonicalDependabot}) _scanDependabot(
-    Directory dir,
-  ) {
+  String? _readLocalDependabot(Directory dir) {
     final d1 = File(p.join(dir.path, '.github', 'dependabot.yml'));
+    if (d1.existsSync()) return d1.readAsStringSync();
     final d2 = File(p.join(dir.path, '.github', 'dependabot.yaml'));
-    final file = d1.existsSync() ? d1 : (d2.existsSync() ? d2 : null);
-    if (file == null) {
+    if (d2.existsSync()) return d2.readAsStringSync();
+    return null;
+  }
+
+  ({bool hasDependabot, bool hasCanonicalDependabot}) _scanDependabotText(
+    String? content,
+  ) {
+    if (content == null) {
       return (hasDependabot: false, hasCanonicalDependabot: false);
     }
-    final content = file.readAsStringSync();
     final hasCanonical =
         content.contains('github-actions') &&
         content.contains('groups:') &&
@@ -517,179 +777,33 @@ class RepoAlignScanner {
     return (hasDependabot: true, hasCanonicalDependabot: hasCanonical);
   }
 
-  _GitHubInfo _defaultGitHubInfo() => (
-    isArchived: false,
-    isFork: false,
-    isPrivate: false,
-    defaultBranch: 'main',
-    autoMergeAllowed: false,
-    hasAutosubmitLabel: true,
-    hasRulesetOrProtection: false,
-    requiredChecks: <String>[],
-    defaultBranchRulesetId: null,
-    defaultBranchRequiredChecks: <String>[],
-  );
-
-  _GitHubInfo _scanGitHubRemote(String name) {
-    var isArchived = false;
-    var isFork = false;
-    var isPrivate = false;
-    var defaultBranch = 'main';
-    var autoMergeAllowed = false;
-    var hasAutosubmitLabel = false;
-    var hasRulesetOrProtection = false;
-    final requiredChecks = <String>[];
-    var defaultBranchRequiredChecks = <String>[];
-    String? defaultBranchRulesetId;
-
-    try {
-      final repoRes = Process.runSync('gh', ['api', 'repos/kevmoo/$name']);
-      if (repoRes.exitCode == 0) {
-        final repoJson =
-            jsonDecode(repoRes.stdout.toString()) as Map<String, dynamic>;
-        isArchived = repoJson['archived'] == true;
-        isFork = repoJson['fork'] == true;
-        isPrivate = repoJson['private'] == true;
-        defaultBranch = repoJson['default_branch']?.toString() ?? 'main';
-        autoMergeAllowed = repoJson['allow_auto_merge'] == true;
-      }
-
-      final labelRes = Process.runSync('gh', [
-        'api',
-        'repos/kevmoo/$name/labels/autosubmit',
-      ]);
-      hasAutosubmitLabel = labelRes.exitCode == 0;
-
-      final rulesets = _scanRulesets(name, defaultBranch);
-      hasRulesetOrProtection = rulesets.found;
-      requiredChecks.addAll(rulesets.allChecks);
-      defaultBranchRulesetId = rulesets.defaultBranchRulesetId;
-      defaultBranchRequiredChecks = rulesets.defaultBranchChecks;
-
-      if (!hasRulesetOrProtection) {
-        // Legacy branch protection has no ruleset id, so it governs the
-        // default branch by definition and cannot be written to by `fix`.
-        final protectionChecks = <String>[];
-        hasRulesetOrProtection = _scanBranchProtection(
-          name,
-          defaultBranch,
-          protectionChecks,
-        );
-        requiredChecks.addAll(protectionChecks);
-        defaultBranchRequiredChecks = protectionChecks;
-      }
-    } catch (_) {}
-
+  _GitHubInfo _gitHubInfoFromSnapshot(RemoteRepoSnapshot? snap) {
+    if (snap == null) {
+      return (
+        isArchived: false,
+        isFork: false,
+        isPrivate: false,
+        defaultBranch: 'main',
+        autoMergeAllowed: false,
+        hasAutosubmitLabel: true,
+        hasRulesetOrProtection: false,
+        requiredChecks: const <String>[],
+        defaultBranchRulesetId: null,
+        defaultBranchRequiredChecks: const <String>[],
+      );
+    }
     return (
-      isArchived: isArchived,
-      isFork: isFork,
-      isPrivate: isPrivate,
-      defaultBranch: defaultBranch,
-      autoMergeAllowed: autoMergeAllowed,
-      hasAutosubmitLabel: hasAutosubmitLabel,
-      hasRulesetOrProtection: hasRulesetOrProtection,
-      requiredChecks: requiredChecks,
-      defaultBranchRulesetId: defaultBranchRulesetId,
-      defaultBranchRequiredChecks: defaultBranchRequiredChecks,
+      isArchived: snap.isArchived,
+      isFork: snap.isFork,
+      isPrivate: snap.isPrivate,
+      defaultBranch: snap.defaultBranch,
+      autoMergeAllowed: snap.autoMergeAllowed,
+      hasAutosubmitLabel: snap.hasAutosubmitLabel,
+      hasRulesetOrProtection: snap.hasRulesetOrProtection,
+      requiredChecks: snap.requiredChecks,
+      defaultBranchRulesetId: snap.defaultBranchRulesetId,
+      defaultBranchRequiredChecks: snap.defaultBranchRequiredChecks,
     );
-  }
-
-  /// Scans every ruleset, and separately identifies the one that actually
-  /// governs [defaultBranch].
-  ///
-  /// The union across all rulesets is what the clamping and primary-CI checks
-  /// want, but anything that *writes* needs to know which ruleset to write to
-  /// and what that specific ruleset already requires.
-  _RulesetScan _scanRulesets(String name, String defaultBranch) {
-    const empty = (
-      found: false,
-      defaultBranchRulesetId: null,
-      allChecks: <String>[],
-      defaultBranchChecks: <String>[],
-    );
-
-    final res = Process.runSync('gh', [
-      'api',
-      'repos/kevmoo/$name/rulesets',
-      '--jq',
-      '.[].id',
-    ]);
-    if (res.exitCode != 0 || res.stdout.toString().trim().isEmpty) return empty;
-
-    final allChecks = <String>[];
-    final defaultBranchChecks = <String>[];
-    String? defaultBranchRulesetId;
-
-    for (final rawId in res.stdout.toString().trim().split('\n')) {
-      final id = rawId.trim();
-      if (id.isEmpty) continue;
-
-      final json = _fetchSingleRuleset(name, id);
-      if (json == null) continue;
-
-      final checks = <String>[];
-      for (final r in json['rules'] as List<dynamic>? ?? const []) {
-        _extractRuleStatusChecks(r, checks);
-      }
-      allChecks.addAll(checks);
-
-      if (defaultBranchRulesetId == null &&
-          rulesetTargetsBranch(json, defaultBranch)) {
-        defaultBranchRulesetId = id;
-        defaultBranchChecks.addAll(checks);
-      }
-    }
-
-    return (
-      found: true,
-      defaultBranchRulesetId: defaultBranchRulesetId,
-      allChecks: allChecks,
-      defaultBranchChecks: defaultBranchChecks,
-    );
-  }
-
-  Map<String, dynamic>? _fetchSingleRuleset(String name, String id) {
-    final detail = Process.runSync('gh', [
-      'api',
-      'repos/kevmoo/$name/rulesets/$id',
-    ]);
-    if (detail.exitCode != 0) return null;
-    final json = jsonDecode(detail.stdout.toString());
-    return json is Map<String, dynamic> ? json : null;
-  }
-
-  void _extractRuleStatusChecks(dynamic r, List<String> requiredChecks) {
-    if (r is! Map || r['type'] != 'required_status_checks') return;
-    final params = r['parameters'] as Map<String, dynamic>?;
-    final scList = params?['required_status_checks'] as List<dynamic>?;
-    if (scList == null) return;
-    for (final sc in scList) {
-      if (sc is Map && sc['context'] != null) {
-        requiredChecks.add(sc['context'].toString());
-      }
-    }
-  }
-
-  bool _scanBranchProtection(
-    String name,
-    String defaultBranch,
-    List<String> requiredChecks,
-  ) {
-    final res = Process.runSync('gh', [
-      'api',
-      'repos/kevmoo/$name/branches/$defaultBranch/protection',
-    ]);
-    if (res.exitCode != 0) return false;
-    final json = jsonDecode(res.stdout.toString());
-    if (json is! Map<String, dynamic>) return false;
-    final rsc = json['required_status_checks'] as Map<String, dynamic>?;
-    final contexts = rsc?['contexts'] as List<dynamic>?;
-    if (contexts != null) {
-      for (final c in contexts) {
-        requiredChecks.add(c.toString());
-      }
-    }
-    return true;
   }
 }
 
@@ -701,6 +815,7 @@ typedef _PubspecInfo = ({
   bool hasPublishToNone,
   bool hasApiSummaryDevDep,
   bool hasApiTxt,
+  bool hasAnyApiTxt,
   bool hasApiTest,
 });
 
@@ -713,31 +828,10 @@ typedef _AnalysisInfo = ({
   List<String> customLints,
 });
 
-typedef _WorkflowsInfo = ({
-  List<String> files,
-  bool hasCi,
-  bool hasLowerBound,
-  bool hasCogComp,
-  bool hasAutosubmit,
-  bool hasPublish,
-  bool hasHealth,
-  bool hasPostSummaries,
-  bool hasDeprecatedAnalyticaRef,
-  bool hasNarrowWorkflowsPathFilter,
-  List<String> expectedCiCheckPrefixes,
-});
-
 typedef _MarkdownInfo = ({
   bool hasPrettierRc,
   bool hasMarkdownWorkflow,
   bool hasPrettierIgnore,
-});
-
-typedef _RulesetScan = ({
-  bool found,
-  String? defaultBranchRulesetId,
-  List<String> allChecks,
-  List<String> defaultBranchChecks,
 });
 
 /// Whether [ruleset] actively governs [defaultBranch].
@@ -781,18 +875,23 @@ class _PubspecScanAccumulator {
   final packageNames = <String>[];
   int publishedCount = 0;
   int apiTxtCount = 0;
+  int anyApiTxtCount = 0;
   int apiTestCount = 0;
   int apiSummaryDevDepCount = 0;
 
-  void processPackage(Directory sub, {bool isWorkspaceRoot = false}) {
-    final subPub = File(p.join(sub.path, 'pubspec.yaml'));
-    if (!subPub.existsSync()) return;
+  void processPackageBlob(
+    RemotePackageBlobInfo? pkg, {
+    bool isWorkspaceRoot = false,
+  }) {
+    final text = pkg?.pubspecText;
+    if (pkg == null || text == null) return;
+    if (pkg.hasApiTxt) anyApiTxtCount++;
     try {
-      final doc = loadYaml(subPub.readAsStringSync());
+      final doc = loadYaml(text);
       if (doc is! YamlMap) return;
       _recordPackageName(doc);
       if (isWorkspaceRoot) return;
-      _recordPublishedPackage(sub, doc);
+      _recordPublishedPackage(pkg, doc);
     } catch (_) {}
   }
 
@@ -803,15 +902,13 @@ class _PubspecScanAccumulator {
     }
   }
 
-  void _recordPublishedPackage(Directory sub, YamlMap doc) {
+  void _recordPublishedPackage(RemotePackageBlobInfo pkg, YamlMap doc) {
     if (doc['publish_to']?.toString() == 'none' || doc['version'] == null) {
       return;
     }
     publishedCount++;
-    if (File(p.join(sub.path, 'api.txt')).existsSync()) apiTxtCount++;
-    if (File(p.join(sub.path, 'test', 'api_test.dart')).existsSync()) {
-      apiTestCount++;
-    }
+    if (pkg.hasApiTxt) apiTxtCount++;
+    if (pkg.hasApiTest) apiTestCount++;
     final devDeps = doc['dev_dependencies'];
     if (devDeps is YamlMap && devDeps.containsKey('api_summary')) {
       apiSummaryDevDepCount++;
@@ -830,6 +927,7 @@ class _PubspecScanAccumulator {
     hasApiSummaryDevDep:
         publishedCount > 0 && apiSummaryDevDepCount == publishedCount,
     hasApiTxt: publishedCount > 0 && apiTxtCount == publishedCount,
+    hasAnyApiTxt: anyApiTxtCount > 0,
     hasApiTest: publishedCount > 0 && apiTestCount == publishedCount,
   );
 }
