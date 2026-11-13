@@ -450,9 +450,11 @@ kscripts repo-align <check|fix|apply> [options]
 ```
 
 Optional portfolio membership can be configured under a top-level `repo-align:`
-section in `~/.config/kscripts/repos.yaml` (`owner`, `baseDir`, `active`, and
-`ignore`), allowing `check` to audit `HEAD` across all `active` repositories via
-batched GitHub GraphQL and flag newly created unclassified repositories.
+section in `~/.config/kscripts/repos.yaml` (`owner`, `baseDir`, `active`,
+`ignore`, and `kinds`), allowing `check` to audit `HEAD` across all `active`
+repositories via batched GitHub GraphQL and flag newly created unclassified
+repositories. `kinds` maps an `active` repository to a `RepoKind` (for example
+`experimentalOrPrototype`) when its contents would classify it more strictly.
 
 ### `tighten`
 

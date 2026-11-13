@@ -672,6 +672,43 @@ workspace:
       check(status.issues).contains('Missing complexity.yml');
     });
 
+    test('repos.yaml kinds override replaces the content-derived kind', () {
+      final tempDir = Directory.systemTemp.createTempSync('repo_align_kinds_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final protoRepo = Directory(p.join(tempDir.path, 'proto_app'))
+        ..createSync();
+      File(p.join(protoRepo.path, '.git')).writeAsStringSync('gitdir: ...');
+      File(p.join(protoRepo.path, 'pubspec.yaml')).writeAsStringSync('''
+name: proto_app
+publish_to: none
+environment:
+  sdk: ^3.12.0
+''');
+
+      final derived = RepoAlignScanner(
+        baseDirPath: tempDir.path,
+        queryGitHubApi: false,
+      ).scanSingleRepo(protoRepo);
+      check(derived.kind).equals(RepoKind.toolOrApp);
+      check(derived.issues).contains('Missing complexity.yml');
+
+      final overridden = RepoAlignScanner(
+        baseDirPath: tempDir.path,
+        queryGitHubApi: false,
+        portfolioConfig: RepoAlignConfig(
+          owner: 'sample-user',
+          baseDir: tempDir.path,
+          active: const ['proto_app'],
+          ignore: const [],
+          kinds: const {'proto_app': RepoKind.experimentalOrPrototype},
+        ),
+      ).scanSingleRepo(protoRepo);
+      check(overridden.kind).equals(RepoKind.experimentalOrPrototype);
+      check(overridden.issues)
+          .not((it) => it.contains('Missing complexity.yml'));
+    });
+
     test('scans uncloned active repos and surfaces unclassified repos via '
         'GraphQL', () {
       final tempDir = Directory.systemTemp.createTempSync('repo_align_gql_');
