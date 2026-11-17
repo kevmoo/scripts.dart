@@ -289,12 +289,19 @@ PrCheckReport runPrCheck({
 }) {
   final repoRoot = _resolveGitTopLevel(directory, processRunner) ?? directory;
   final baseRef = _resolveBaseRef(repoRoot, baseRefOverride, processRunner);
-  final changedFiles = _collectChangedFiles(repoRoot, baseRef, processRunner);
+  final (:changedFiles, :deletedFiles) = _collectChangedFiles(
+    repoRoot,
+    baseRef,
+    processRunner,
+  );
   final runner = _PrCheckRunner(
     repoRoot: repoRoot,
     baseRef: baseRef,
     changedFiles: changedFiles,
-    workflowsText: changedFiles.isEmpty ? '' : _readWorkflowsContent(repoRoot),
+    deletedFiles: deletedFiles,
+    workflowsText: changedFiles.isEmpty && deletedFiles.isEmpty
+        ? ''
+        : _readWorkflowsContent(repoRoot),
     dartBin: _resolveDartBinary(),
     isDartSdk: File(p.join(repoRoot.path, 'tools', 'VERSION')).existsSync(),
     runSync: processRunner,
@@ -312,6 +319,10 @@ final class _PrCheckRunner {
   final Directory repoRoot;
   final String baseRef;
   final List<String> changedFiles;
+
+  /// Files deleted vs [baseRef]. Only the firehose checks see these; the
+  /// format, analyze, prettier, and test steps need files that exist.
+  final List<String> deletedFiles;
   final String workflowsText;
   final String dartBin;
   final bool isDartSdk;
@@ -327,6 +338,7 @@ final class _PrCheckRunner {
     required this.repoRoot,
     required this.baseRef,
     required this.changedFiles,
+    required this.deletedFiles,
     required this.workflowsText,
     required this.dartBin,
     required this.isDartSdk,
@@ -346,7 +358,7 @@ final class _PrCheckRunner {
     if (versionNote != null) warnings.add(versionNote);
 
     _recordSingle('git-status', _checkCleanWorkingTree(repoRoot, runSync));
-    if (changedFiles.isEmpty) {
+    if (changedFiles.isEmpty && deletedFiles.isEmpty) {
       _skip('diff-checks', 'no changed files vs $baseRef');
       return _toReport();
     }
@@ -406,7 +418,7 @@ final class _PrCheckRunner {
       _skip('firehose', 'malformed pubspec.yaml');
       return;
     }
-    final changedSet = changedFiles.toSet();
+    final changedSet = {...changedFiles, ...deletedFiles};
     var checkedAny = false;
     for (final pkg in packages) {
       if (_validateFirehosePackage(
@@ -477,7 +489,7 @@ final class _PrCheckRunner {
       runSync,
     );
     if (requireWip &&
-        pkgChanged.any(_isCodeOrPackageFile) &&
+        pkgChanged.any(_requiresWipBump) &&
         !ver.isPreRelease &&
         (baseVer == null || baseVer == verStr)) {
       final nextWip = '${ver.major}.${ver.minor}.${ver.patch + 1}-wip';
@@ -770,7 +782,8 @@ bool _prefersUpstreamBase(Directory repoRoot, SyncProcessRunner runSync) {
   return ghIdx < 0 || segments.length != ghIdx + 3;
 }
 
-List<String> _collectChangedFiles(
+/// Files touched vs [baseRef], split by whether they still exist on disk.
+({List<String> changedFiles, List<String> deletedFiles}) _collectChangedFiles(
   Directory repoRoot,
   String baseRef,
   SyncProcessRunner runSync,
@@ -778,15 +791,22 @@ List<String> _collectChangedFiles(
   final res = runSync('git', [
     'diff',
     '--name-only',
-    '--diff-filter=ACMR',
+    '--diff-filter=ACMRD',
     '$baseRef...HEAD',
   ], workingDirectory: repoRoot.path);
-  if (res.exitCode != 0) return const [];
-  return (res.stdout as String)
-      .split('\n')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty && File(p.join(repoRoot.path, s)).existsSync())
-      .toList();
+  final changedFiles = <String>[];
+  final deletedFiles = <String>[];
+  if (res.exitCode == 0) {
+    for (final line in (res.stdout as String).split('\n')) {
+      final path = line.trim();
+      if (path.isEmpty) continue;
+      (File(p.join(repoRoot.path, path)).existsSync()
+              ? changedFiles
+              : deletedFiles)
+          .add(path);
+    }
+  }
+  return (changedFiles: changedFiles, deletedFiles: deletedFiles);
 }
 
 String _readWorkflowsContent(Directory repoRoot) {
@@ -822,14 +842,11 @@ List<String> _packageRelativeChanges(String prefix, Set<String> changedFiles) {
   return result;
 }
 
-bool _isCodeOrPackageFile(String relToPkg) =>
-    relToPkg == 'pubspec.yaml' ||
-    relToPkg.startsWith('lib/') ||
-    relToPkg.startsWith('bin/') ||
-    relToPkg.startsWith('test/') ||
-    relToPkg.startsWith('tool/') ||
-    relToPkg.startsWith('hook/') ||
-    relToPkg.startsWith('web/');
+/// Mirrors firehose's Publish validate: any added, modified, or deleted file
+/// in the package requires a `-wip` bump on an already-published version,
+/// except the package's own `CHANGELOG.md` and anything under `.github/`.
+bool _requiresWipBump(String relToPkg) =>
+    relToPkg != 'CHANGELOG.md' && !p.split(relToPkg).contains('.github');
 
 bool _isFirehoseChangelogWatchedFile(String relToPkg) =>
     relToPkg == 'pubspec.yaml' ||
