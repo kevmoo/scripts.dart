@@ -442,7 +442,7 @@ kscripts repo-align <check|fix|apply> [options]
     --json            Output check results in JSON format
     --[no-]lints      Fix/synchronize analysis_options.yaml
     --[no-]api-summary Fix/synchronize api_summary dev_dependency, api.txt, and test/api_test.dart
-    --[no-]ci         Fix/synchronize CI workflows (lower_bound, complexity, autosubmit, dependabot)
+    --[no-]ci         Fix/synchronize CI workflows (lower_bound, complexity, autosubmit, dependabot, markdown, examples)
     --[no-]github     Fix/synchronize GitHub remote settings (auto-merge, rulesets)
     --[no-]spot       Fix/synchronize managed <!-- BEGIN SPOT --> markdown blocks
 -n, --[no-]dry-run    Preview changes without modifying files or remote settings

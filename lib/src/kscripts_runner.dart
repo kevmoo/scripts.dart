@@ -644,7 +644,8 @@ Future<void> runRepoAlignCli(List<String> args) async {
       'ci',
       help:
           'Fix/synchronize CI workflows '
-          '(lower_bound, complexity, autosubmit, dependabot)',
+          '(lower_bound, complexity, autosubmit, dependabot, markdown, '
+          'examples)',
     )
     ..addFlag(
       'github',

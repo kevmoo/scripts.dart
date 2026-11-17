@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:checks/checks.dart';
 import 'package:kevmoo_scripts/src/repo_align/canonical_templates.dart';
+import 'package:kevmoo_scripts/src/repo_align/example_fences.dart';
 import 'package:kevmoo_scripts/src/repo_align/models.dart';
 import 'package:kevmoo_scripts/src/repo_align/repo_align_runner.dart';
 import 'package:kevmoo_scripts/src/repo_align/repo_align_scanner.dart';
@@ -13,6 +14,8 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
 import 'package:yaml/yaml.dart';
+
+import 'test_helpers.dart';
 
 void main() {
   group('RepoAlignmentStatus', () {
@@ -1069,6 +1072,272 @@ jobs:
     });
   });
 
+  group('examples.yml', () {
+    test('hasExampleFence recognizes pkg:example fence openers only', () {
+      check(hasExampleFence('```dart @example example/foo.dart#region\n```\n'))
+          .isTrue();
+      check(hasExampleFence('~~~dart @example example/foo.dart\n~~~\n'))
+          .isTrue();
+      check(hasExampleFence('- item\n\n  ````dart @example a.dart\n')).isTrue();
+      check(hasExampleFence('> ```dart @example a.dart\n')).isTrue();
+
+      check(hasExampleFence(null)).isFalse();
+      check(hasExampleFence('Use `@example` fences.\n')).isFalse();
+      check(hasExampleFence('```dart\n// @example a.dart\n```\n')).isFalse();
+    });
+
+    test('canonical template job id and pin match the required context', () {
+      check(canonicalExamplesWorkflow).contains('\n  examples:\n');
+      check(canonicalExamplesWorkflow).contains(
+        'uses: google/dart-neats/.github/workflows/validate-examples.yml@',
+      );
+      check(canonicalExamplesWorkflow).not((it) => it.contains('\n    paths:'));
+      check(examplesCheckContext).startsWith('examples / ');
+    });
+
+    test('flags missing examples.yml only when markdown has fences', () {
+      for (final kind in [RepoKind.toolOrApp, RepoKind.agentSkills]) {
+        check(
+          because: 'kind $kind',
+          _examplesFixture(kind: kind, hasExampleFences: true).issues,
+        ).contains('Missing examples.yml');
+      }
+      check(_examplesFixture().issues).isEmpty();
+    });
+
+    test('flags examples.yml that runs but does not gate', () {
+      final status = _examplesFixture(
+        hasExamplesWorkflow: true,
+        requiredChecks: ['markdown', 'examples'],
+      );
+      check(status.issues)
+          .deepEquals(['examples.yml present but not a required check']);
+    });
+
+    test(
+      'accepts examples.yml that gates on the reusable-workflow context',
+      () {
+        final status = _examplesFixture(
+          hasExampleFences: true,
+          hasExamplesWorkflow: true,
+          requiredChecks: ['markdown', examplesCheckContext],
+        );
+        check(status.issues).isEmpty();
+      },
+    );
+
+    test('does not flag gating when there is no ruleset at all', () {
+      final status = _examplesFixture(
+        hasExamplesWorkflow: true,
+        hasRulesetOrProtection: false,
+        requiredChecks: [],
+      );
+      check(status.issues).not(
+        (it) => it.contains('examples.yml present but not a required check'),
+      );
+    });
+
+    test('flags template drift', () {
+      final status = _examplesFixture(
+        hasExamplesWorkflow: true,
+        hasCanonicalExamplesWorkflow: false,
+        requiredChecks: ['markdown', examplesCheckContext],
+      );
+      check(status.issues).single.equals(
+        'Non-canonical examples.yml '
+        '(differs from canonical template or pinned SHA)',
+      );
+    });
+
+    test('missingGatingContexts lists only absent contexts', () {
+      check(
+        missingGatingContexts(
+          _examplesFixture(
+            hasExamplesWorkflow: true,
+            requiredChecks: ['markdown'],
+          ),
+        ),
+      ).deepEquals([examplesCheckContext]);
+      check(missingGatingContexts(_examplesFixture(requiredChecks: [])))
+          .deepEquals([markdownCheckContext]);
+    });
+
+    test('local scan detects fences in nested markdown and template drift', () {
+      final tempDir = Directory.systemTemp.createTempSync('repo_align_ex_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      Directory makeRepo(String name) {
+        final dir = Directory(p.join(tempDir.path, name))..createSync();
+        File(p.join(dir.path, '.git')).writeAsStringSync('gitdir: ...');
+        return dir;
+      }
+
+      void write(Directory repo, String rel, String text) {
+        File(p.join(repo.path, rel))
+          ..parent.createSync(recursive: true)
+          ..writeAsStringSync(text);
+      }
+
+      final fenced = makeRepo('fenced');
+      write(
+        fenced,
+        'packages/core/README.md',
+        '# core\n\n```dart @example example/main.dart\n```\n',
+      );
+
+      final ignored = makeRepo('ignored_dirs');
+      write(
+        ignored,
+        'node_modules/x/README.md',
+        '```dart @example example/main.dart\n```\n',
+      );
+      write(ignored, 'README.md', 'Mentions `@example` in prose only.\n');
+
+      final drifted = makeRepo('drifted');
+      write(
+        drifted,
+        '.github/workflows/examples.yml',
+        canonicalExamplesWorkflow.replaceFirst(
+          RegExp('@[0-9a-f]{40}'),
+          '@${'0' * 40}',
+        ),
+      );
+
+      final scanner = RepoAlignScanner(
+        baseDirPath: tempDir.path,
+        queryGitHubApi: false,
+      );
+
+      final fencedStatus = scanner.scanSingleRepo(fenced);
+      check(fencedStatus.hasExampleFences).isTrue();
+      check(fencedStatus.issues).contains('Missing examples.yml');
+
+      final ignoredStatus = scanner.scanSingleRepo(ignored);
+      check(ignoredStatus.hasExampleFences).isFalse();
+      check(ignoredStatus.issues)
+          .not((it) => it.contains('Missing examples.yml'));
+
+      final driftedStatus = scanner.scanSingleRepo(drifted);
+      check(driftedStatus.hasExamplesWorkflow).isTrue();
+      check(driftedStatus.hasCanonicalExamplesWorkflow).isFalse();
+    });
+
+    test('remote snapshot detects fences in root and member READMEs', () {
+      final tempDir = Directory.systemTemp.createTempSync('repo_align_exr_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final queries = <String>[];
+      ProcessResult fakeRunner(
+        String executable,
+        List<String> args, {
+        String? workingDirectory,
+        Map<String, String>? environment,
+      }) {
+        final query = args.firstWhere((a) => a.startsWith('query='));
+        queries.add(query);
+        final Map<String, dynamic> data;
+        if (query.contains('m0:')) {
+          data = {
+            'm0': {
+              'pubspec': {
+                'text':
+                    'name: member\npublish_to: none\n'
+                    'resolution: workspace\n',
+              },
+              'apiTxt': null,
+              'apiTest': null,
+              'readme': {'text': '```dart @example example/a.dart\n```\n'},
+            },
+          };
+        } else {
+          data = {
+            'r0': {
+              'name': 'ws_repo',
+              'defaultBranchRef': {'name': 'main'},
+              'pubspec': {
+                'text':
+                    'name: root\npublish_to: none\nworkspace:\n  - member\n',
+              },
+              'readme': {'text': '# Root\n\nNo fences here.\n'},
+              'workflows': {
+                'entries': [
+                  {
+                    'name': 'examples.yml',
+                    'object': {'text': canonicalExamplesWorkflow},
+                  },
+                ],
+              },
+            },
+          };
+        }
+        return ProcessResult(0, 0, jsonEncode({'data': data}), '');
+      }
+
+      final scanner = RepoAlignScanner(
+        portfolioConfig: RepoAlignConfig(
+          owner: 'sample-user',
+          baseDir: tempDir.path,
+          active: const ['ws_repo'],
+          ignore: const [],
+        ),
+        processRunner: fakeRunner,
+      );
+      final status = scanner.scanPortfolio(targetRepo: 'ws_repo').repos.single;
+
+      check(queries.first).contains('HEAD:README.md');
+      check(queries.last).contains('HEAD:member/README.md');
+      check(status.hasExampleFences).isTrue();
+      check(status.hasExamplesWorkflow).isTrue();
+      check(status.hasCanonicalExamplesWorkflow).isTrue();
+      check(status.issues).not((it) => it.contains('Missing examples.yml'));
+    });
+
+    test('fix --ci creates examples.yml only where fences exist', () async {
+      final tempDir = Directory.systemTemp.createTempSync('repo_align_exf_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      Directory makeRepo(String name, {required bool fenced}) {
+        final dir = Directory(p.join(tempDir.path, name))..createSync();
+        File(p.join(dir.path, '.git')).writeAsStringSync('gitdir: ...');
+        File(p.join(dir.path, 'README.md')).writeAsStringSync(
+          fenced ? '```dart @example example/a.dart\n```\n' : '# plain\n',
+        );
+        return dir;
+      }
+
+      final fenced = makeRepo('fenced', fenced: true);
+      final plain = makeRepo('plain', fenced: false);
+      final runner = RepoAlignRunner(
+        scanner: RepoAlignScanner(
+          baseDirPath: tempDir.path,
+          queryGitHubApi: false,
+        ),
+      );
+
+      File examplesYml(Directory repo) =>
+          File(p.join(repo.path, '.github', 'workflows', 'examples.yml'));
+
+      final dryRunOutput = await capturePrints(
+        () => runner.runFix(targetDir: fenced.path, fixCi: true, dryRun: true),
+      );
+      check(
+        dryRunOutput,
+      ).any((it) => it.contains('Would create .github/workflows/examples.yml'));
+      check(examplesYml(fenced).existsSync()).isFalse();
+
+      await capturePrints(
+        () => runner.runFix(targetDir: fenced.path, fixCi: true),
+      );
+      await capturePrints(
+        () => runner.runFix(targetDir: plain.path, fixCi: true),
+      );
+
+      check(examplesYml(fenced).readAsStringSync())
+          .equals(canonicalExamplesWorkflow);
+      check(examplesYml(plain).existsSync()).isFalse();
+    });
+  });
+
   group('RepoAlignScanner targetDir and worktree support', () {
     test(
       'scans a sibling worktree directory and normalizes canonical repo name',
@@ -1130,6 +1399,50 @@ RepoAlignmentStatus _markdownFixture({
   hasPrettierRc: hasPrettierRc,
   hasMarkdownWorkflow: hasMarkdownWorkflow,
   hasPrettierIgnore: hasPrettierIgnore,
+  autoMergeAllowed: true,
+  hasRulesetOrProtection: hasRulesetOrProtection,
+  requiredChecks: requiredChecks,
+  defaultBranchRulesetId: hasRulesetOrProtection ? '123' : null,
+  defaultBranchRequiredChecks: requiredChecks,
+);
+
+/// A repo aligned on everything except the `examples.yml` settings under test.
+RepoAlignmentStatus _examplesFixture({
+  RepoKind kind = RepoKind.toolOrApp,
+  bool hasExampleFences = false,
+  bool hasExamplesWorkflow = false,
+  bool hasCanonicalExamplesWorkflow = true,
+  bool hasRulesetOrProtection = true,
+  List<String> requiredChecks = const ['markdown'],
+}) => RepoAlignmentStatus(
+  name: 'ex_repo',
+  path: '/tmp/ex_repo',
+  kind: kind,
+  isArchived: false,
+  isFork: false,
+  isPrivate: false,
+  defaultBranch: 'main',
+  hasPubspec: true,
+  sdkConstraint: '^3.0.0',
+  packageNames: ['ex_repo'],
+  hasAnalysisOptions: true,
+  analysisInclude: 'package:dart_flutter_team_lints/analysis_options.yaml',
+  strictCasts: true,
+  strictInference: true,
+  strictRawTypes: true,
+  customLints: [],
+  workflowFiles: ['ci.yml'],
+  hasCi: false,
+  hasLowerBound: true,
+  hasCogComp: true,
+  hasAutosubmit: true,
+  hasDependabot: true,
+  hasPublish: true,
+  hasPrettierRc: true,
+  hasMarkdownWorkflow: true,
+  hasExampleFences: hasExampleFences,
+  hasExamplesWorkflow: hasExamplesWorkflow,
+  hasCanonicalExamplesWorkflow: hasCanonicalExamplesWorkflow,
   autoMergeAllowed: true,
   hasRulesetOrProtection: hasRulesetOrProtection,
   requiredChecks: requiredChecks,

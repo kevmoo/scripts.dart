@@ -186,6 +186,44 @@ jobs:
 /// the job ID, which is what a branch ruleset must require.
 const String markdownCheckContext = 'markdown';
 
+/// The `pkg:example` validation check: fails when a markdown fence whose info
+/// string carries `@example` no longer matches the source it points at.
+///
+/// Byte-for-byte copy of the template in kevmoo/scripts.dart#192. Note that
+/// because the job calls a reusable workflow, GitHub names the check run
+/// `<caller job id> / <callee job name>`, not the bare job ID -- see
+/// [examplesCheckContext].
+const String canonicalExamplesWorkflow = r'''
+name: Examples
+
+# Fails when a ```dart @example ...``` block in markdown no longer matches the
+# source it points at. Run `dart run example@ update` to refresh.
+# Deliberately NO `paths:` filter (see markdown.yml).
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # Job ID is the check-run context name a branch ruleset would match on.
+  examples:
+    uses: google/dart-neats/.github/workflows/validate-examples.yml@e304f7e0ebd0531e832136b2300aded8a14584ba
+''';
+
+/// The check-run context name produced by [canonicalExamplesWorkflow].
+///
+/// The `examples` job delegates to
+/// `google/dart-neats/.github/workflows/validate-examples.yml`, whose inner job
+/// is named `Validate markdown examples`, so the reported context is the pair
+/// joined by ` / `. Requiring the bare job ID (`examples`) would never be
+/// satisfied and would deadlock every PR. The pinned SHA in the template keeps
+/// the inner job name stable.
+const String examplesCheckContext = 'examples / Validate markdown examples';
+
 /// Canonical `test/api_test.dart` for packages tracked with `package:api_summary`.
 const String canonicalApiTest = '''
 @TestOn('vm')
