@@ -381,7 +381,11 @@ Future<ReverseDepNamesLookup?> _buildCliReverseDepNamesLookup({
   if (!runRevDeps || processRunner != defaultSyncProcessRunner) return null;
   final repoRoot = _resolveGitTopLevel(directory, processRunner) ?? directory;
   final baseRef = _resolveBaseRef(repoRoot, baseRefOverride, processRunner);
-  final changedFiles = _collectChangedFiles(repoRoot, baseRef, processRunner);
+  final (:changedFiles, deletedFiles: _) = _collectChangedFiles(
+    repoRoot,
+    baseRef,
+    processRunner,
+  );
   if (changedFiles.isEmpty) return null;
 
   final packages = runZoned(

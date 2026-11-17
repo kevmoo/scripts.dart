@@ -446,31 +446,87 @@ environment:
     },
   );
 
-  test('does not require -wip bump for .github/ or README.md-only changes', () {
-    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+  group('pubspec-wip-bump matches firehose Publish validate', () {
+    void writePackage(String version) {
+      File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
 name: sample_pkg
-version: 1.2.0
+version: $version
 environment:
   sdk: ^3.5.0
 ''');
-    File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
-## 1.2.0
+      File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## $version
 
 - Initial release.
 ''');
-    File(p.join(tempDir.path, 'README.md')).writeAsStringSync('# Docs\n');
+      File(p.join(tempDir.path, 'README.md')).writeAsStringSync('# Docs\n');
+      Directory(p.join(tempDir.path, 'example')).createSync();
+      File(p.join(tempDir.path, 'example', 'example.dart'))
+          .writeAsStringSync('void main() {}\n');
+      Directory(p.join(tempDir.path, '.github', 'workflows'))
+          .createSync(recursive: true);
+      File(p.join(tempDir.path, '.github', 'workflows', 'ci.yml'))
+          .writeAsStringSync('jobs: {}\n');
+    }
 
-    final report = runPrCheck(
+    PrCheckReport runWith(
+      List<String> changedFiles, {
+      List<(String, List<String>, String?)>? recordedCalls,
+    }) => runPrCheck(
       directory: tempDir,
       processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
         exe,
         args,
         workingDirectory: workingDirectory,
-        changedFiles: ['README.md'],
+        changedFiles: changedFiles,
+        recordedCalls: recordedCalls,
       ),
     );
 
-    check(report.passed).isTrue();
+    // `test/readme_test.dart` is never written to disk, so `git diff` reports
+    // it but pr-check treats it as deleted.
+    const cases = {
+      'README.md only': ['README.md'],
+      'example/ only': ['example/example.dart'],
+      'deletion only': ['test/readme_test.dart'],
+    };
+
+    for (final MapEntry(key: label, value: files) in cases.entries) {
+      test('$label in a released package requires a -wip bump', () {
+        writePackage('1.2.0');
+        final report = runWith(files);
+        check(report.passed).isFalse();
+        check(report.violations.map((v) => v.check))
+            .contains('pubspec-wip-bump');
+      });
+
+      test('$label in a -wip package passes', () {
+        writePackage('1.2.1-wip');
+        check(runWith(files).passed).isTrue();
+      });
+    }
+
+    test('CHANGELOG.md or .github/ only does not require a -wip bump', () {
+      writePackage('1.2.0');
+      check(runWith(['CHANGELOG.md', '.github/workflows/ci.yml']).passed)
+          .isTrue();
+    });
+
+    test('deleted files are not passed to format or analyze', () {
+      writePackage('1.2.1-wip');
+      final calls = <(String, List<String>, String?)>[];
+      final report = runWith([
+        'example/example.dart',
+        'test/readme_test.dart',
+      ], recordedCalls: calls);
+      check(report.changedFiles).deepEquals(['example/example.dart']);
+      final toolArgs = calls
+          .where((c) => c.$1 != 'git')
+          .expand((c) => c.$2)
+          .toList();
+      check(toolArgs).contains('example/example.dart');
+      check(toolArgs).not((it) => it.contains('test/readme_test.dart'));
+    });
   });
 
   test('reports dart-format, dart-analyze-fatal-infos, '
