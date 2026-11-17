@@ -8,6 +8,8 @@ import '../repos_config.dart';
 import '../shared/analysis_options_resolver.dart';
 import '../shared/git_cli.dart';
 import '../shared/spot_sync.dart';
+import 'canonical_templates.dart';
+import 'example_fences.dart';
 import 'models.dart';
 import 'repo_align_graphql.dart';
 import 'workflow_matrix.dart';
@@ -371,6 +373,10 @@ class RepoAlignScanner {
     final analysis = _scanLocalAnalysisOptions(dir);
     final dependabot = _scanDependabotText(_readLocalDependabot(dir));
     final markdown = _scanLocalMarkdownConfig(dir);
+    final examples = _examplesInfo(
+      hasExampleFences: hasLocalExampleFences(dir),
+      workflowText: _readLocalExamplesWorkflow(dir),
+    );
     final spotDrift = scanRepoSpotDrift(
       dir,
       canonicalDefs: canonicalSpotDefs,
@@ -386,6 +392,7 @@ class RepoAlignScanner {
       workflows: workflows,
       dependabot: dependabot,
       markdown: markdown,
+      examples: examples,
       spotDrift: spotDrift,
       ghInfo: ghInfo,
     );
@@ -415,6 +422,12 @@ class RepoAlignScanner {
           snap.workflowFiles.containsKey('markdown.yaml'),
       hasPrettierIgnore: snap.hasPrettierIgnore,
     );
+    final examples = _examplesInfo(
+      hasExampleFences: _hasRemoteExampleFences(snap, localDir),
+      workflowText:
+          snap.workflowFiles['examples.yml'] ??
+          snap.workflowFiles['examples.yaml'],
+    );
     final spotDrift = _scanOriginHeadSpotDrift(
       localDir,
       canonicalDefs: canonicalSpotDefs,
@@ -430,6 +443,7 @@ class RepoAlignScanner {
       workflows: workflows,
       dependabot: dependabot,
       markdown: markdown,
+      examples: examples,
       spotDrift: spotDrift,
       ghInfo: ghInfo,
     );
@@ -444,6 +458,7 @@ class RepoAlignScanner {
     required WorkflowsScanInfo workflows,
     required ({bool hasDependabot, bool hasCanonicalDependabot}) dependabot,
     required _MarkdownInfo markdown,
+    required _ExamplesInfo examples,
     required List<String> spotDrift,
     required _GitHubInfo ghInfo,
   }) => RepoAlignmentStatus(
@@ -484,6 +499,9 @@ class RepoAlignScanner {
     hasMarkdownWorkflow: markdown.hasMarkdownWorkflow,
     hasPrettierIgnore: markdown.hasPrettierIgnore,
     spotDriftIssues: spotDrift,
+    hasExampleFences: examples.hasExampleFences,
+    hasExamplesWorkflow: examples.hasExamplesWorkflow,
+    hasCanonicalExamplesWorkflow: examples.hasCanonicalExamplesWorkflow,
     autoMergeAllowed: ghInfo.autoMergeAllowed,
     hasAutosubmitLabel: ghInfo.hasAutosubmitLabel,
     hasRulesetOrProtection: ghInfo.hasRulesetOrProtection,
@@ -520,6 +538,63 @@ class RepoAlignScanner {
     }
     return false;
   }
+
+  /// Remote `pkg:example` fence detection.
+  ///
+  /// The GraphQL snapshot carries only the root and workspace-member/
+  /// `packages/*` `README.md` blobs; fetching every `.md` blob per repo would
+  /// need a recursive tree walk. When a local clone exists, `git grep` over
+  /// `origin/HEAD` covers every tracked `.md` file at no API cost.
+  bool _hasRemoteExampleFences(RemoteRepoSnapshot snap, Directory localDir) =>
+      hasExampleFence(snap.rootReadmeText) ||
+      snap.subPackages.values.any((pkg) => hasExampleFence(pkg.readmeText)) ||
+      _originHeadHasExampleFences(localDir);
+
+  bool _originHeadHasExampleFences(Directory localDir) {
+    if (!localDir.existsSync() || !_hasGitMetadata(localDir)) return false;
+
+    final grepRes = defaultGitCli.runSync(const [
+      'grep',
+      '-I',
+      '-l',
+      '-F',
+      '@example',
+      'origin/HEAD',
+      '--',
+      '*.md',
+    ], workingDirectory: localDir.path);
+    if (grepRes.exitCode != 0) return false;
+
+    for (final rawLine in grepRes.stdout.toString().split('\n')) {
+      final spec = rawLine.trim();
+      if (!spec.startsWith('origin/HEAD:')) continue;
+      final text = defaultGitCli.stdoutOrNullSync([
+        'show',
+        spec,
+      ], workingDirectory: localDir.path);
+      if (hasExampleFence(text)) return true;
+    }
+    return false;
+  }
+
+  static String? _readLocalExamplesWorkflow(Directory dir) {
+    final workflows = p.join(dir.path, '.github', 'workflows');
+    for (final name in const ['examples.yml', 'examples.yaml']) {
+      final file = File(p.join(workflows, name));
+      if (file.existsSync()) return file.readAsStringSync();
+    }
+    return null;
+  }
+
+  static _ExamplesInfo _examplesInfo({
+    required bool hasExampleFences,
+    required String? workflowText,
+  }) => (
+    hasExampleFences: hasExampleFences,
+    hasExamplesWorkflow: workflowText != null,
+    hasCanonicalExamplesWorkflow:
+        workflowText == null || workflowText == canonicalExamplesWorkflow,
+  );
 
   List<String> _scanOriginHeadSpotDrift(
     Directory localDir, {
@@ -626,6 +701,7 @@ class RepoAlignScanner {
       pubspecText: pub.readAsStringSync(),
       hasApiTxt: File(p.join(sub.path, 'api.txt')).existsSync(),
       hasApiTest: File(p.join(sub.path, 'test', 'api_test.dart')).existsSync(),
+      readmeText: null,
     );
   }
 
@@ -651,6 +727,7 @@ class RepoAlignScanner {
         pubspecText: rootText,
         hasApiTxt: hasRootApiTxt,
         hasApiTest: hasRootApiTest,
+        readmeText: null,
       ), isWorkspaceRoot: isWorkspace);
 
       if (workspace is YamlList) {
@@ -832,6 +909,12 @@ typedef _MarkdownInfo = ({
   bool hasPrettierRc,
   bool hasMarkdownWorkflow,
   bool hasPrettierIgnore,
+});
+
+typedef _ExamplesInfo = ({
+  bool hasExampleFences,
+  bool hasExamplesWorkflow,
+  bool hasCanonicalExamplesWorkflow,
 });
 
 /// Whether [ruleset] actively governs [defaultBranch].

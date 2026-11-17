@@ -87,6 +87,7 @@ bool _isYamlWorkflowFilename(String name) =>
 })
 _inspectSingleWorkflow(String name, String content) {
   final isMarkdown = name == 'markdown.yml' || name == 'markdown.yaml';
+  final isExamples = name == 'examples.yml' || name == 'examples.yaml';
   final hasLowerBound =
       content.contains('lower_bound') || content.contains('lower-bound');
   final hasCogComp =
@@ -110,6 +111,7 @@ _inspectSingleWorkflow(String name, String content) {
       );
   final isAuxiliary =
       isMarkdown ||
+      isExamples ||
       hasLowerBound ||
       (hasCogComp && !content.contains('dart test')) ||
       hasAutosubmit ||

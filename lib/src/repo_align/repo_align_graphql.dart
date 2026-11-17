@@ -31,6 +31,10 @@ final class RemoteRepoSnapshot {
   final bool hasRootApiTest;
   final bool hasRootLibOrBin;
   final bool hasSkillsMarkdown;
+
+  /// `HEAD:README.md`, scanned for `pkg:example` fences when no local clone
+  /// is available to `git grep`.
+  final String? rootReadmeText;
   final Map<String, String> workflowFiles;
   final List<String> packageSubdirNames;
   final Map<String, RemotePackageBlobInfo> subPackages;
@@ -56,6 +60,7 @@ final class RemoteRepoSnapshot {
     required this.hasRootApiTest,
     required this.hasRootLibOrBin,
     required this.hasSkillsMarkdown,
+    this.rootReadmeText,
     required this.workflowFiles,
     this.packageSubdirNames = const [],
     required this.subPackages,
@@ -84,6 +89,7 @@ final class RemoteRepoSnapshot {
     hasRootApiTest: hasRootApiTest,
     hasRootLibOrBin: hasRootLibOrBin,
     hasSkillsMarkdown: hasSkillsMarkdown,
+    rootReadmeText: rootReadmeText,
     workflowFiles: workflowFiles,
     packageSubdirNames: packageSubdirNames,
     subPackages: merged,
@@ -95,6 +101,7 @@ typedef RemotePackageBlobInfo = ({
   String? pubspecText,
   bool hasApiTxt,
   bool hasApiTest,
+  String? readmeText,
 });
 
 /// Fetches non-archived, non-fork repository names owned by [owner] via
@@ -371,6 +378,7 @@ void _collectWorkspaceMemberBatch(
       pubspecText: _blobText(node['pubspec']),
       hasApiTxt: node['apiTxt'] != null,
       hasApiTest: node['apiTest'] != null,
+      readmeText: _blobText(node['readme']),
     );
   }
 }
@@ -469,11 +477,13 @@ String _buildWorkspaceMemberBatchQuery(
     final pubExpr = jsonEncode('HEAD:${item.member}/pubspec.yaml');
     final apiExpr = jsonEncode('HEAD:${item.member}/api.txt');
     final testExpr = jsonEncode('HEAD:${item.member}/test/api_test.dart');
+    final readmeExpr = jsonEncode('HEAD:${item.member}/README.md');
     buf.writeln('''
   m$i: repository(owner: $escapedOwner, name: $escapedRepo) {
     pubspec: object(expression: $pubExpr) { ... on Blob { text } }
     apiTxt: object(expression: $apiExpr) { __typename }
     apiTest: object(expression: $testExpr) { __typename }
+    readme: object(expression: $readmeExpr) { ... on Blob { text } }
   }''');
   }
   buf.writeln('}');
@@ -516,6 +526,7 @@ RemoteRepoSnapshot _parseRepoNode(
     hasRootApiTest: node['apiTest'] != null,
     hasRootLibOrBin: node['libDir'] != null || node['binDir'] != null,
     hasSkillsMarkdown: _parseHasSkillsMarkdown(node['skills']),
+    rootReadmeText: _blobText(node['readme']),
     workflowFiles: _parseWorkflowTree(node['workflows']),
     packageSubdirNames: _parsePackageSubdirNames(node['packages']),
     subPackages: const {},
@@ -769,6 +780,7 @@ fragment RepoFields on Repository {
   }
   apiTxt: object(expression: "HEAD:api.txt") { __typename }
   apiTest: object(expression: "HEAD:test/api_test.dart") { __typename }
+  readme: object(expression: "HEAD:README.md") { ... on Blob { text } }
   libDir: object(expression: "HEAD:lib") { __typename }
   binDir: object(expression: "HEAD:bin") { __typename }
   workflows: object(expression: "HEAD:.github/workflows") {

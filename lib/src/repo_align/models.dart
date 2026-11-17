@@ -70,6 +70,13 @@ class RepoAlignmentStatus {
   final bool hasPrettierIgnore;
   final List<String> spotDriftIssues;
 
+  // pkg:example validation
+  /// Whether any markdown file carries a fence whose info string contains
+  /// `@example`.
+  final bool hasExampleFences;
+  final bool hasExamplesWorkflow;
+  final bool hasCanonicalExamplesWorkflow;
+
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
   final bool hasAutosubmitLabel;
@@ -124,6 +131,9 @@ class RepoAlignmentStatus {
     this.hasMarkdownWorkflow = false,
     this.hasPrettierIgnore = false,
     this.spotDriftIssues = const [],
+    this.hasExampleFences = false,
+    this.hasExamplesWorkflow = false,
+    this.hasCanonicalExamplesWorkflow = true,
     required this.autoMergeAllowed,
     this.hasAutosubmitLabel = true,
     required this.hasRulesetOrProtection,
@@ -145,6 +155,7 @@ class RepoAlignmentStatus {
     _checkApiSummaryIssues(result);
     _checkCiIssues(result);
     _checkMarkdownIssues(result);
+    _checkExamplesIssues(result);
     _checkGitHubIssues(result);
     return result;
   }
@@ -273,6 +284,25 @@ class RepoAlignmentStatus {
     result.addAll(spotDriftIssues);
   }
 
+  /// `examples.yml` is required only where markdown actually uses
+  /// `pkg:example` fences, but applies to every repo kind that does.
+  void _checkExamplesIssues(List<String> result) {
+    if (hasExampleFences && !hasExamplesWorkflow) {
+      result.add('Missing examples.yml');
+    }
+    if (!hasExamplesWorkflow) return;
+    if (!hasCanonicalExamplesWorkflow) {
+      result.add(
+        'Non-canonical examples.yml '
+        '(differs from canonical template or pinned SHA)',
+      );
+    }
+    if (hasRulesetOrProtection &&
+        !defaultBranchRequiredChecks.contains(examplesCheckContext)) {
+      result.add('examples.yml present but not a required check');
+    }
+  }
+
   void _checkGitHubIssues(List<String> result) {
     if (!autoMergeAllowed) {
       result.add('Auto-merge not enabled (allow_auto_merge = false)');
@@ -360,6 +390,9 @@ class RepoAlignmentStatus {
     'hasMarkdownWorkflow': hasMarkdownWorkflow,
     'hasPrettierIgnore': hasPrettierIgnore,
     'spotDriftIssues': spotDriftIssues,
+    'hasExampleFences': hasExampleFences,
+    'hasExamplesWorkflow': hasExamplesWorkflow,
+    'hasCanonicalExamplesWorkflow': hasCanonicalExamplesWorkflow,
     'autoMergeAllowed': autoMergeAllowed,
     'hasRulesetOrProtection': hasRulesetOrProtection,
     'requiredChecks': requiredChecks,
