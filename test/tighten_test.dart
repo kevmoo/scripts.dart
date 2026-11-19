@@ -41,7 +41,7 @@ dependencies:
 
     final pathConstraint = (pubspec['dependencies'] as Map)['path'] as String;
     // Should have tightened
-    check(pathConstraint).not((it) => it.equals('any'));
+    check(pathConstraint).not(.it()..equals('any'));
   });
 
   group('workspace', () {
@@ -102,7 +102,7 @@ dependencies:
       await zone.run(() => tighten(cwd: d.path('workspace_root')));
 
       check(prints).any(
-        (e) => e.contains(
+        .it()..contains(
           'WARNING: You are in a workspace but did NOT use the '
           '--workspace flag',
         ),

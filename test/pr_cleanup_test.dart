@@ -23,14 +23,14 @@ void main() {
       final options = PrCleanupOptions.parse(results);
 
       check(options.user).equals('@me');
-      check(options.repo).isNull();
+      check(options.repo).isNull;
       check(options.limit).equals(50);
       check(options.lastNDays).equals(14);
-      check(options.skipGerrit).isFalse();
-      check(options.apply).isFalse();
-      check(options.excludeWorktrees).isEmpty();
-      check(options.markdown).isTrue();
-      check(options.json).isFalse();
+      check(options.skipGerrit).isFalse;
+      check(options.apply).isFalse;
+      check(options.excludeWorktrees).isEmpty;
+      check(options.markdown).isTrue;
+      check(options.json).isFalse;
       check(parser.usage).contains(
         'Execute pruning of ready-to-prune worktrees and branches across '
         'GitHub and Gerrit.',
@@ -70,11 +70,11 @@ void main() {
       check(options.lastNDays).equals(30);
       check(options.localRoot).equals('/custom/root');
       check(options.dartSdkPath).equals('/custom/sdk');
-      check(options.skipGerrit).isTrue();
-      check(options.apply).isTrue();
+      check(options.skipGerrit).isTrue;
+      check(options.apply).isTrue;
       check(options.excludeWorktrees)
           .deepEquals(['/custom/root/_demo-hold', '/custom/root/_demo-second']);
-      check(options.json).isTrue();
+      check(options.json).isTrue;
     });
 
     test('throws UsageException on invalid limit', () {
@@ -102,9 +102,9 @@ void main() {
       final parser = PrCleanupOptions.createArgParser();
       final results = parser.parse(['--last-n-days', '0']);
       final options = PrCleanupOptions.parse(results);
-      check(options.lastNDays).isNull();
-      check(options.wasLastNDaysExplicit).isTrue();
-      check(options.openPrLastNDays).isNull();
+      check(options.lastNDays).isNull;
+      check(options.wasLastNDaysExplicit).isTrue;
+      check(options.openPrLastNDays).isNull;
     });
 
     test('openPrLastNDays is null by default and bounded only when -d is '
@@ -113,12 +113,12 @@ void main() {
 
       final defaults = PrCleanupOptions.parse(parser.parse([]));
       check(defaults.lastNDays).equals(14);
-      check(defaults.wasLastNDaysExplicit).isFalse();
-      check(defaults.openPrLastNDays).isNull();
+      check(defaults.wasLastNDaysExplicit).isFalse;
+      check(defaults.openPrLastNDays).isNull;
 
       final explicit = PrCleanupOptions.parse(parser.parse(['-d', '21']));
       check(explicit.lastNDays).equals(21);
-      check(explicit.wasLastNDaysExplicit).isTrue();
+      check(explicit.wasLastNDaysExplicit).isTrue;
       check(explicit.openPrLastNDays).equals(21);
     });
   });
@@ -155,11 +155,11 @@ void main() {
         ..contains('## 🚫 Active / Hands-Off')
         ..contains('Zero worktrees or branches ready for immediate pruning.')
         ..contains('Zero open PRs or active CLs found.')
-        ..not((it) => it.contains('Bucket A'))
-        ..not((it) => it.contains('Bucket B'))
-        ..not((it) => it.contains('Bucket C'))
-        ..not((it) => it.contains('## 📌 Locked Worktrees'))
-        ..not((it) => it.contains('## ⚠️ Needs Triage'));
+        ..not(.it()..contains('Bucket A'))
+        ..not(.it()..contains('Bucket B'))
+        ..not(.it()..contains('Bucket C'))
+        ..not(.it()..contains('## 📌 Locked Worktrees'))
+        ..not(.it()..contains('## ⚠️ Needs Triage'));
     });
 
     test('renders populated sweep with all sections and locked worktrees', () {
@@ -339,7 +339,7 @@ void main() {
       final decoded = jsonDecode(jsonStr) as Map<String, dynamic>;
 
       check(decoded['applied']).equals(true);
-      check(decoded.containsKey('applyResult')).isFalse();
+      check(decoded.containsKey('applyResult')).isFalse;
       check((decoded['active'] as List).length).equals(1);
       check((decoded['readyToPrune'] as List).length).equals(1);
       check((decoded['lockedWorktrees'] as List).length).equals(1);
@@ -490,7 +490,7 @@ void main() {
       final withoutReason = sweep.lockedWorktrees.firstWhere(
         (w) => w.worktreePath == lockedNoReasonWt.path,
       );
-      check(withoutReason.lockReason).isNull();
+      check(withoutReason.lockReason).isNull;
       check(withoutReason.commitsAhead).equals(0);
       check(withoutReason.updatedAt).isNotNull();
 
@@ -577,8 +577,8 @@ void main() {
       final parsed = parseGerritTimestamp('2026-10-08 02:30:11.000000000');
       check(parsed).isNotNull();
       check(parsed!.toUtc()).equals(DateTime.utc(2026, 10, 8, 2, 30, 11));
-      check(parseGerritTimestamp(null)).isNull();
-      check(parseGerritTimestamp('')).isNull();
+      check(parseGerritTimestamp(null)).isNull;
+      check(parseGerritTimestamp('')).isNull;
     });
   });
 
@@ -711,36 +711,35 @@ void main() {
           },
         );
 
-        check(applyResult.errors).isEmpty();
+        check(applyResult.errors).isEmpty;
         check(applyResult.skippedWorktrees)
             .deepEquals([ghFixture.wtHold, gerritFixture.wtHold]);
         check(applyResult.prunedWorktrees).equals(2);
         check(applyResult.deletedBranches).equals(2);
         check(applyResult.deletedRemoteBranches).equals(1);
 
-        check(Directory(ghFixture.wtHold).existsSync()).isTrue();
-        check(Directory(ghFixture.wtPrune).existsSync()).isFalse();
+        check(Directory(ghFixture.wtHold).existsSync()).isTrue;
+        check(Directory(ghFixture.wtPrune).existsSync()).isFalse;
         check(_gitBranches(ghFixture.repoPath))
           ..contains('feat-hold')
-          ..not((it) => it.contains('feat-prune'));
+          ..not(.it()..contains('feat-prune'));
         check(ghCommands)
           ..any(
-            (it) => it.contains(
-              'DELETE repos/kevmoo/demo/git/refs/heads/feat-prune',
-            ),
+            .it()
+              ..contains('DELETE repos/kevmoo/demo/git/refs/heads/feat-prune'),
           )
-          ..every((it) => it.not((s) => s.contains('feat-hold')));
+          ..every(.it()..not(.it()..contains('feat-hold')));
 
-        check(Directory(gerritFixture.wtHold).existsSync()).isTrue();
-        check(Directory(gerritFixture.wtPrune).existsSync()).isFalse();
+        check(Directory(gerritFixture.wtHold).existsSync()).isTrue;
+        check(Directory(gerritFixture.wtPrune).existsSync()).isFalse;
         check(_gitBranches(gerritFixture.mainSdkPath))
           ..contains('cl-99')
-          ..not((it) => it.contains('cl-100'));
+          ..not(.it()..contains('cl-100'));
         check(_gitConfig(gerritFixture.mainSdkPath, 'branch.cl-99.gerritissue'))
             .equals('99');
         check(
           _gitConfig(gerritFixture.mainSdkPath, 'branch.cl-100.gerritissue'),
-        ).isNull();
+        ).isNull;
       },
     );
 
@@ -807,14 +806,14 @@ void main() {
         },
       );
 
-      check(applyResult.errors).isEmpty();
+      check(applyResult.errors).isEmpty;
       check(applyResult.skippedWorktrees).deepEquals([rootCheckout.repoPath]);
       check(applyResult.prunedWorktrees).equals(1);
       check(applyResult.deletedBranches).equals(1);
 
       check(_gitCurrentBranch(rootCheckout.repoPath)).equals('feat-root');
       check(_gitBranches(rootCheckout.repoPath)).contains('feat-root');
-      check(Directory(ghFixture.wtPrune).existsSync()).isFalse();
+      check(Directory(ghFixture.wtPrune).existsSync()).isFalse;
       check(_gitRevParse(ghFixture.repoPath, 'HEAD')).equals(headBefore);
     });
 
@@ -834,7 +833,7 @@ void main() {
         dartSdkPath: '${tempRoot.path}/missing-dart-sdk',
       );
       check(res.prunedWorktrees).equals(0);
-      check(res.errors).any((it) => it.contains('cl-404'));
+      check(res.errors).any(.it()..contains('cl-404'));
     });
 
     test('runPrCleanup writes applyResult in JSON cache and Markdown summary '
@@ -875,7 +874,7 @@ void main() {
       final dryRunJson =
           jsonDecode(cacheFile.readAsStringSync()) as Map<String, dynamic>;
       check(dryRunJson['applied']).equals(false);
-      check(dryRunJson.containsKey('applyResult')).isFalse();
+      check(dryRunJson.containsKey('applyResult')).isFalse;
 
       await runPrCleanup(
         options: PrCleanupOptions(
@@ -895,8 +894,8 @@ void main() {
       check(applyResult['prunedWorktrees']).equals(0);
       check(applyResult['deletedBranches']).equals(0);
       check(applyResult['deletedRemoteBranches']).equals(0);
-      check(applyResult['skippedWorktrees'] as List).isEmpty();
-      check(applyResult['errors'] as List).isEmpty();
+      check(applyResult['skippedWorktrees'] as List).isEmpty;
+      check(applyResult['errors'] as List).isEmpty;
 
       final mdWithApply = formatMarkdownReport(
         PrSweepResult(
@@ -969,7 +968,7 @@ void main() {
       // Default PrCleanupOptions queries all open PRs (no updated:>= filter)
       // while keeping merged:>= on landed PRs.
       check(openPrSearchQuery).isNotNull();
-      check(openPrSearchQuery!).not((it) => it.contains('updated:>='));
+      check(openPrSearchQuery!).not(.it()..contains('updated:>='));
       check(landedPrSearchQuery).isNotNull();
       check(landedPrSearchQuery!).contains('merged:>=');
 
@@ -1005,8 +1004,8 @@ void main() {
           'branch `wimp-dup-sprint` (remote `kevmoo/flutter:wimp-dup-sprint`)',
         )
         ..contains('`kevmoo/flutter:closed-remote-only`')
-        ..not((it) => it.contains('dependabot'))
-        ..not((it) => it.contains('DO-NOT-DELETE-sprint\n'));
+        ..not(.it()..contains('dependabot'))
+        ..not(.it()..contains('DO-NOT-DELETE-sprint\n'));
 
       // Execute branch-only pruning (including a synthetic unsafe local branch
       // and a protected DO-NOT-DELETE guard check).
@@ -1051,14 +1050,14 @@ void main() {
       // unlinked-spike local branch (unmerged) preserved!
       check(applyRes.deletedBranches).equals(1);
       check(applyRes.errors)
-        ..any((e) => e.contains('Skipped local branch `unlinked-spike`'))
-        ..any((e) => e.contains('Refusing to delete protected remote branch'));
+        ..any(.it()..contains('Skipped local branch `unlinked-spike`'))
+        ..any(.it()..contains('Refusing to delete protected remote branch'));
       check(_gitBranches(forkFixture.repoPath))
-        ..not((it) => it.contains('wimp-dup-sprint'))
+        ..not(.it()..contains('wimp-dup-sprint'))
         ..contains('unlinked-spike')
         ..contains('archive/DO-NOT-DELETE-sprint');
       check(deletedRemoteApis)
-          .not((it) => it.any((s) => s.contains('DO-NOT-DELETE')));
+          .not(.it()..any(.it()..contains('DO-NOT-DELETE')));
     });
   });
 }

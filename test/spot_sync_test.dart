@@ -57,7 +57,7 @@ void main() {
           indentedReflowedLines,
           canonicalDefs: sampleDefs,
         );
-        check(issues).isEmpty();
+        check(issues).isEmpty;
       },
     );
 
@@ -114,7 +114,7 @@ void main() {
           stamped.split('\n'),
           canonicalDefs: sampleDefs,
         ),
-      ).isEmpty();
+      ).isEmpty;
 
       final badTarget = Directory(
         p.join(tempDir.path, '.agents', 'skills', 'pr-review'),

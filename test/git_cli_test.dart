@@ -41,69 +41,69 @@ detached
       check(records).length.equals(5);
 
       check(records[0])
-        ..has((w) => w.path, 'path').equals('/repos/sdk/.bare')
-        ..has((w) => w.branch, 'branch').isEmpty()
-        ..has((w) => w.sha, 'sha').isNull()
-        ..has((w) => w.isBare, 'isBare').isTrue()
-        ..has((w) => w.isDetached, 'isDetached').isFalse()
-        ..has((w) => w.isLocked, 'isLocked').isFalse()
-        ..has((w) => w.lockReason, 'lockReason').isNull();
+        ..has('path', (w) => w.path).equals('/repos/sdk/.bare')
+        ..has('branch', (w) => w.branch).isEmpty
+        ..has('sha', (w) => w.sha).isNull
+        ..has('isBare', (w) => w.isBare).isTrue
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isFalse
+        ..has('lockReason', (w) => w.lockReason).isNull;
 
       check(records[1])
-        ..has((w) => w.path, 'path').equals('/repos/sdk/core/main/sdk')
-        ..has((w) => w.branch, 'branch').equals('main')
-        ..has((w) => w.sha, 'sha').equals('1111aaaa')
-        ..has((w) => w.isBare, 'isBare').isFalse()
-        ..has((w) => w.isDetached, 'isDetached').isFalse()
-        ..has((w) => w.isLocked, 'isLocked').isFalse()
-        ..has((w) => w.lockReason, 'lockReason').isNull();
+        ..has('path', (w) => w.path).equals('/repos/sdk/core/main/sdk')
+        ..has('branch', (w) => w.branch).equals('main')
+        ..has('sha', (w) => w.sha).equals('1111aaaa')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isFalse
+        ..has('lockReason', (w) => w.lockReason).isNull;
 
       check(records[2])
-        ..has((w) => w.path, 'path').equals('/repos/sdk/core/feat/sdk')
-        ..has((w) => w.branch, 'branch').equals('agent/feat-x')
-        ..has((w) => w.sha, 'sha').equals('2222bbbb')
-        ..has((w) => w.isBare, 'isBare').isFalse()
-        ..has((w) => w.isDetached, 'isDetached').isFalse()
-        ..has((w) => w.isLocked, 'isLocked').isTrue()
+        ..has('path', (w) => w.path).equals('/repos/sdk/core/feat/sdk')
+        ..has('branch', (w) => w.branch).equals('agent/feat-x')
+        ..has('sha', (w) => w.sha).equals('2222bbbb')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isTrue
         ..has(
-          (w) => w.lockReason,
           'lockReason',
+          (w) => w.lockReason,
         ).equals('Active local benchmark');
 
       check(records[3])
-        ..has((w) => w.path, 'path').equals('/repos/_repo-plain-lock')
-        ..has((w) => w.branch, 'branch').equals('plain-lock')
-        ..has((w) => w.sha, 'sha').equals('3333cccc')
-        ..has((w) => w.isBare, 'isBare').isFalse()
-        ..has((w) => w.isDetached, 'isDetached').isFalse()
-        ..has((w) => w.isLocked, 'isLocked').isTrue()
-        ..has((w) => w.lockReason, 'lockReason').isNull();
+        ..has('path', (w) => w.path).equals('/repos/_repo-plain-lock')
+        ..has('branch', (w) => w.branch).equals('plain-lock')
+        ..has('sha', (w) => w.sha).equals('3333cccc')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isTrue
+        ..has('lockReason', (w) => w.lockReason).isNull;
 
       check(records[4])
-        ..has((w) => w.path, 'path').equals('/repos/_repo-detached')
-        ..has((w) => w.branch, 'branch').isEmpty()
-        ..has((w) => w.sha, 'sha').equals('4444dddd')
-        ..has((w) => w.isBare, 'isBare').isFalse()
-        ..has((w) => w.isDetached, 'isDetached').isTrue()
-        ..has((w) => w.isLocked, 'isLocked').isFalse()
-        ..has((w) => w.lockReason, 'lockReason').isNull();
+        ..has('path', (w) => w.path).equals('/repos/_repo-detached')
+        ..has('branch', (w) => w.branch).isEmpty
+        ..has('sha', (w) => w.sha).equals('4444dddd')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isTrue
+        ..has('isLocked', (w) => w.isLocked).isFalse
+        ..has('lockReason', (w) => w.lockReason).isNull;
     });
 
     test('handles empty output and stanzas without trailing newline', () {
-      check(WorktreeEntry.fromPorcelain('')).isEmpty();
-      check(WorktreeEntry.fromPorcelain('   \n\n  ')).isEmpty();
+      check(WorktreeEntry.fromPorcelain('')).isEmpty;
+      check(WorktreeEntry.fromPorcelain('   \n\n  ')).isEmpty;
 
       final single = WorktreeEntry.fromPorcelain(
         'worktree /tmp/single\nHEAD abcd1234\nbranch refs/heads/dev',
       );
       check(single).single
-        ..has((w) => w.path, 'path').equals('/tmp/single')
-        ..has((w) => w.branch, 'branch').equals('dev')
-        ..has((w) => w.sha, 'sha').equals('abcd1234')
-        ..has((w) => w.isBare, 'isBare').isFalse()
-        ..has((w) => w.isDetached, 'isDetached').isFalse()
-        ..has((w) => w.isLocked, 'isLocked').isFalse()
-        ..has((w) => w.lockReason, 'lockReason').isNull();
+        ..has('path', (w) => w.path).equals('/tmp/single')
+        ..has('branch', (w) => w.branch).equals('dev')
+        ..has('sha', (w) => w.sha).equals('abcd1234')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isFalse
+        ..has('lockReason', (w) => w.lockReason).isNull;
     });
   });
 
@@ -113,11 +113,11 @@ detached
       check(parseOriginHeadBranchOutput('origin/release/2.x'))
           .equals('release/2.x');
       check(parseOriginHeadBranchOutput('trunk\n')).equals('trunk');
-      check(parseOriginHeadBranchOutput('')).isNull();
-      check(parseOriginHeadBranchOutput('   ')).isNull();
-      check(parseOriginHeadBranchOutput('HEAD\n')).isNull();
-      check(parseOriginHeadBranchOutput('origin/HEAD\n')).isNull();
-      check(parseOriginHeadBranchOutput('origin/')).isNull();
+      check(parseOriginHeadBranchOutput('')).isNull;
+      check(parseOriginHeadBranchOutput('   ')).isNull;
+      check(parseOriginHeadBranchOutput('HEAD\n')).isNull;
+      check(parseOriginHeadBranchOutput('origin/HEAD\n')).isNull;
+      check(parseOriginHeadBranchOutput('origin/')).isNull;
     });
   });
 
@@ -215,7 +215,7 @@ detached
             'nonexistent.key',
             workingDirectory: clonePath,
           ),
-        ).isNull();
+        ).isNull;
 
         // 1. origin/HEAD set -> resolves 'master'
         check(defaultGitCli.defaultBranchSync(clonePath)).equals('master');
@@ -239,8 +239,8 @@ detached
           '--detach',
           'HEAD',
         ], workingDirectory: clonePath);
-        check(defaultGitCli.currentBranchSync(clonePath)).isNull();
-        check(await defaultGitCli.currentBranch(clonePath)).isNull();
+        check(defaultGitCli.currentBranchSync(clonePath)).isNull;
+        check(await defaultGitCli.currentBranch(clonePath)).isNull;
 
         // 5. Worktrees & dirty state
         final wtPath = p.join(d.sandbox, '_clone_repo-feat');
@@ -263,18 +263,17 @@ detached
         final worktrees = defaultGitCli.listWorktreesSync(clonePath);
         check(worktrees).length.equals(2);
         final primaryWt = worktrees.firstWhere((w) => w.isDetached);
-        check(primaryWt.branch).isEmpty();
+        check(primaryWt.branch).isEmpty;
         final linkedWt = worktrees.firstWhere((w) => w.branch == 'feat');
-        check(linkedWt.isLocked).isTrue();
+        check(linkedWt.isLocked).isTrue;
         check(linkedWt.lockReason).equals('Keep me');
 
-        check(defaultGitCli.isDirtySync(wtPath)).isFalse();
+        check(defaultGitCli.isDirtySync(wtPath)).isFalse;
         File(p.join(wtPath, 'untracked.txt')).writeAsStringSync('scratch');
-        check(defaultGitCli.isDirtySync(wtPath)).isFalse();
-        check(defaultGitCli.isDirtySync(wtPath, includeUntracked: true))
-            .isTrue();
+        check(defaultGitCli.isDirtySync(wtPath)).isFalse;
+        check(defaultGitCli.isDirtySync(wtPath, includeUntracked: true)).isTrue;
         check(await defaultGitCli.isDirty(wtPath, includeUntracked: true))
-            .isTrue();
+            .isTrue;
       },
     );
 
@@ -303,12 +302,12 @@ detached
           .equals('hello-sync');
       check(await fakeCli.stdoutOrNull(const ['rev-parse', 'HEAD']))
           .equals('hello-async');
-      check(fakeCli.stdoutOrNullSync(const ['boom'])).isNull();
-      check(await fakeCli.stdoutOrNull(const ['boom'])).isNull();
-      check(fakeCli.checkSync(const ['boom'])).isFalse();
-      check(await fakeCli.check(const ['boom'])).isFalse();
+      check(fakeCli.stdoutOrNullSync(const ['boom'])).isNull;
+      check(await fakeCli.stdoutOrNull(const ['boom'])).isNull;
+      check(fakeCli.checkSync(const ['boom'])).isFalse;
+      check(await fakeCli.check(const ['boom'])).isFalse;
       check(fakeCli.isDirtySync('/fake', failClosedOnProcessError: true))
-          .isTrue();
+          .isTrue;
       check(recorded).length.equals(7);
     });
   });

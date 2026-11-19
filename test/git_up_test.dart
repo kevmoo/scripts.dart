@@ -73,7 +73,7 @@ void main() {
       ..contains('Running post-command: echo hook_run>hook_out.txt');
 
     final file = File(p.join(localPath, 'hook_out.txt'));
-    check(file.existsSync()).isTrue();
+    check(file.existsSync()).isTrue;
     check(file.readAsStringSync().trim()).equals('hook_run');
   });
 
@@ -84,11 +84,11 @@ void main() {
     final prints = await capturePrints(() async {
       await check(wrappedForTesting(() => gitUp(workingDirectory: localPath)))
           .throws<GitUpException>(
-            (it) => it
-              ..has((e) => e.exitCode, 'exitCode').equals(42)
+            .it()
+              ..has('exitCode', (e) => e.exitCode).equals(42)
               ..has(
-                (e) => e.message,
                 'message',
+                (e) => e.message,
               ).contains('Post-command failed with exit code 42: exit 42'),
           );
     });
@@ -120,7 +120,7 @@ void main() {
       ..contains('Successfully updated $defaultBranch.');
 
     final file = File(p.join(localPath, 'before_out.txt'));
-    check(file.existsSync()).isTrue();
+    check(file.existsSync()).isTrue;
     check(file.readAsStringSync().trim()).equals('before_run');
   });
 
@@ -130,19 +130,19 @@ void main() {
     final prints = await capturePrints(() async {
       await check(wrappedForTesting(() => gitUp(workingDirectory: localPath)))
           .throws<GitUpException>(
-            (it) => it
-              ..has((e) => e.exitCode, 'exitCode').equals(42)
+            .it()
+              ..has('exitCode', (e) => e.exitCode).equals(42)
               ..has(
-                (e) => e.message,
                 'message',
+                (e) => e.message,
               ).contains('Before-command failed with exit code 42: exit 42'),
           );
     });
 
     check(prints.join('\n'))
       ..contains('Running before-command: exit 42')
-      ..not((it) => it.contains('Default branch:'))
-      ..not((it) => it.contains('Successfully updated'));
+      ..not(.it()..contains('Default branch:'))
+      ..not(.it()..contains('Successfully updated'));
   });
 
   test('getDefaultBranch fails when origin/HEAD is missing', () async {
@@ -152,8 +152,8 @@ void main() {
     final prints = await capturePrints(() async {
       await check(wrappedForTesting(() => getDefaultBranch(localGitDir)))
           .throws<GitUpException>(
-            (it) => it
-              ..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code),
+            .it()
+              ..has('exitCode', (e) => e.exitCode).equals(ExitCode.config.code),
           );
     });
 
@@ -171,8 +171,7 @@ void main() {
       await check(
         wrappedForTesting(() => verifyAlignment(localGitDir, defaultBranch)),
       ).throws<GitUpException>(
-        (it) =>
-            it..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code),
+        .it()..has('exitCode', (e) => e.exitCode).equals(ExitCode.config.code),
       );
     });
 
@@ -204,8 +203,8 @@ void main() {
         await check(
           wrappedForTesting(() => verifyAlignment(localGitDir, defaultBranch)),
         ).throws<GitUpException>(
-          (it) => it
-            ..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code),
+          .it()
+            ..has('exitCode', (e) => e.exitCode).equals(ExitCode.config.code),
         );
       });
 
@@ -227,8 +226,8 @@ void main() {
       await check(
         wrappedForTesting(() => gitUp(workingDirectory: localPath)),
       ).throws<GitUpException>(
-        (it) => it
-          ..has((e) => e.message, 'message').contains('Working tree is dirty.'),
+        .it()
+          ..has('message', (e) => e.message).contains('Working tree is dirty.'),
       );
     });
 
@@ -261,7 +260,7 @@ void main() {
     // Verify it was deleted
     final branches = await localGitDir.branches();
     check(branches.map((b) => b.branchName))
-        .not((it) => it.contains('feature-merged'));
+        .not(.it()..contains('feature-merged'));
   });
 
   test('gitUp does NOT delete unmerged gone branches', () async {
@@ -341,7 +340,7 @@ void main() {
     // Verify it was deleted
     final branches = await localGitDir.branches();
     check(branches.map((b) => b.branchName))
-        .not((it) => it.contains('feature-squash'));
+        .not(.it()..contains('feature-squash'));
   });
 
   test(
@@ -417,7 +416,7 @@ void main() {
       // Verify it was deleted
       final branches = await localGitDir.branches();
       check(branches.map((b) => b.branchName))
-          .not((it) => it.contains('feature-squash-progressed'));
+          .not(.it()..contains('feature-squash-progressed'));
     },
   );
 
@@ -455,22 +454,22 @@ void main() {
 
       final noUpstream = status['branch-no-upstream'];
       check(noUpstream).isNotNull()
-        ..has((b) => b.upstream, 'upstream').isEmpty()
-        ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
+        ..has('upstream', (b) => b.upstream).isEmpty
+        ..has('isUpstreamGone', (b) => b.isUpstreamGone).isFalse;
 
       final withUpstream = status['branch-with-upstream'];
       check(withUpstream).isNotNull()
         ..has(
-          (b) => b.upstream,
           'upstream',
+          (b) => b.upstream,
         ).contains('refs/remotes/origin/branch-with-upstream')
-        ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
+        ..has('isUpstreamGone', (b) => b.isUpstreamGone).isFalse;
 
       final goneUpstream = status['branch-gone-upstream'];
       check(goneUpstream)
           .isNotNull()
-          .has((b) => b.isUpstreamGone, 'isUpstreamGone')
-          .isTrue();
+          .has('isUpstreamGone', (b) => b.isUpstreamGone)
+          .isTrue;
     },
   );
 
@@ -486,10 +485,10 @@ void main() {
       final branchStatus = status[branchName];
       check(branchStatus).isNotNull()
         ..has(
-          (b) => b.upstream,
           'upstream',
+          (b) => b.upstream,
         ).contains('refs/remotes/origin/$branchName')
-        ..has((b) => b.isUpstreamGone, 'isUpstreamGone').isFalse();
+        ..has('isUpstreamGone', (b) => b.isUpstreamGone).isFalse;
     },
   );
 
@@ -640,8 +639,7 @@ void main() {
       );
 
       check(prints.join('\n')).not(
-        (it) =>
-            it.contains('PR #123 for branch "feature-check-deleted" is closed'),
+        .it()..contains('PR #123 for branch "feature-check-deleted" is closed'),
       );
     },
   );
@@ -691,7 +689,7 @@ void main() {
     // Verify it was deleted
     final branches = await localGitDir.branches();
     check(branches.map((b) => b.branchName))
-        .not((it) => it.contains('feature-merged-active'));
+        .not(.it()..contains('feature-merged-active'));
   });
 
   test(
@@ -776,13 +774,13 @@ void main() {
       // Verify it was deleted
       final branches = await localGitDir.branches();
       check(branches.map((b) => b.branchName))
-          .not((it) => it.contains('feature-merged-non-default'));
+          .not(.it()..contains('feature-merged-non-default'));
     },
   );
 
   test('resolveLookups returns empty set when branchName is empty', () async {
     final refs = await localGitDir.resolveLookups('');
-    check(refs).isEmpty();
+    check(refs).isEmpty;
   });
 
   test(
@@ -852,7 +850,7 @@ void main() {
       // Verify it was deleted
       final branches = await localGitDir.branches();
       check(branches.map((b) => b.branchName))
-          .not((it) => it.contains('feature-empty-base'));
+          .not(.it()..contains('feature-empty-base'));
     },
   );
 
@@ -917,7 +915,7 @@ void main() {
     // Verify it was deleted
     final branches = await localGitDir.branches();
     check(branches.map((b) => b.branchName))
-        .not((it) => it.contains('feature-no-upstream-merged'));
+        .not(.it()..contains('feature-no-upstream-merged'));
   });
 
   test('worktrees returns active worktrees', () async {
@@ -931,11 +929,11 @@ void main() {
     ]);
 
     final worktrees = await localGitDir.worktrees();
-    check(worktrees.any((wt) => wt.branch == 'wt-branch')).isTrue();
+    check(worktrees.any((wt) => wt.branch == 'wt-branch')).isTrue;
 
     await localGitDir.removeWorktree(worktreeDir, force: true);
     final updatedWorktrees = await localGitDir.worktrees();
-    check(updatedWorktrees.any((wt) => wt.branch == 'wt-branch')).isFalse();
+    check(updatedWorktrees.any((wt) => wt.branch == 'wt-branch')).isFalse;
   });
 
   test('gitUp removes clean worktree when deleting merged branch', () async {
@@ -982,14 +980,14 @@ void main() {
     // Verify branch was deleted
     final branches = await localGitDir.branches();
     check(branches.map((b) => b.branchName))
-        .not((it) => it.contains('feature-wt-merged'));
+        .not(.it()..contains('feature-wt-merged'));
   });
 
   test(
     'getMainWorktreePath and isSecondaryWorktree identify worktree roles',
     () async {
       check(await localGitDir.getMainWorktreePath()).equals(localPath);
-      check(await localGitDir.isSecondaryWorktree()).isFalse();
+      check(await localGitDir.isSecondaryWorktree()).isFalse;
 
       final worktreePath = p.join(d.sandbox, 'wt-check');
       await localGitDir.runCommand([
@@ -1002,7 +1000,7 @@ void main() {
 
       final wtGitDir = await GitDir.fromExisting(worktreePath);
       check(await wtGitDir.getMainWorktreePath()).equals(localPath);
-      check(await wtGitDir.isSecondaryWorktree()).isTrue();
+      check(await wtGitDir.isSecondaryWorktree()).isTrue;
     },
   );
 
@@ -1022,11 +1020,11 @@ void main() {
         await check(
           wrappedForTesting(() => gitUp(workingDirectory: worktreePath)),
         ).throws<GitUpException>(
-          (it) => it
-            ..has((e) => e.exitCode, 'exitCode').equals(1)
+          .it()
+            ..has('exitCode', (e) => e.exitCode).equals(1)
             ..has(
-              (e) => e.message,
               'message',
+              (e) => e.message,
             ).contains('Cannot run git-up from inside a secondary worktree.'),
         );
       });
@@ -1059,7 +1057,7 @@ void main() {
     final subPath = p.join(parentPath, 'sub');
     final subGitDir = await GitDir.fromExisting(subPath);
 
-    check(await subGitDir.isSecondaryWorktree()).isFalse();
+    check(await subGitDir.isSecondaryWorktree()).isFalse;
   });
 
   test('getMainWorktreePath skips bare repository entries', () async {
@@ -1210,7 +1208,7 @@ void main() {
     check(prints.join('\n'))
       ..contains('Default branch: core-main')
       ..contains('Successfully updated core-main.')
-      ..not((it) => it.contains('Fetching and pruning...'));
+      ..not(.it()..contains('Fetching and pruning...'));
     check(File(p.join(coreWt, 'CORE.md')).readAsStringSync()).equals('core v2');
     check(File(p.join(coreWt, 'before.txt')).readAsStringSync().trim())
         .equals('bare_before');
@@ -1224,9 +1222,11 @@ void main() {
           () => gitUp(workingDirectory: agentWt, homeDirectory: d.sandbox),
         ),
       ).throws<GitUpException>(
-        (it) => it
-            .has((e) => e.message, 'message')
-            .contains('Cannot run git-up from inside a secondary worktree.'),
+        .it()
+          ..has(
+            'message',
+            (e) => e.message,
+          ).contains('Cannot run git-up from inside a secondary worktree.'),
       );
     });
   });
@@ -1264,7 +1264,7 @@ void main() {
           '--check skipped: repos.yaml sets override for this checkout.',
         )
         ..contains('Running override-command: echo custom_sync>>order.txt')
-        ..not((it) => it.contains('Default branch:'));
+        ..not(.it()..contains('Default branch:'));
       check(
         File(p.join(localPath, 'order.txt'))
             .readAsLinesSync()

@@ -101,7 +101,7 @@ void main() {
       ),
     );
 
-    check(report.passed).isFalse();
+    check(report.passed).isFalse;
     check(report.violations.map((v) => v.check)).contains('git-status');
   });
 
@@ -135,7 +135,7 @@ environment:
       ),
     );
 
-    check(report.passed).isFalse();
+    check(report.passed).isFalse;
     final checks = report.violations.map((v) => v.check).toList();
     check(checks).contains('firehose-changelog');
     check(checks).contains('version-dart-sync');
@@ -178,7 +178,7 @@ void main() {}
         ),
       );
 
-      check(report.passed).isFalse();
+      check(report.passed).isFalse;
       check(report.violations.map((v) => v.check))
           .contains('browser-test-on-vm');
     },
@@ -210,9 +210,9 @@ environment:
       ),
     );
 
-    check(report.passed).isTrue();
-    check(report.violations).isEmpty();
-    check(report.warnings).isEmpty();
+    check(report.passed).isTrue;
+    check(report.violations).isEmpty;
+    check(report.warnings).isEmpty;
     check(report.passedChecks).contains('git-status');
     check(report.passedChecks).contains('firehose:sample_pkg');
     check(report.passedChecks).contains('dart-format');
@@ -249,7 +249,7 @@ environment:
       ),
     );
 
-    check(report.passed).isTrue();
+    check(report.passed).isTrue;
     check(report.warnings).length.equals(1);
     check(report.warnings.single)
       ..contains('skip-changelog-check')
@@ -289,7 +289,7 @@ jobs:
       ),
     );
 
-    check(failReport.passed).isFalse();
+    check(failReport.passed).isFalse;
     check(failReport.violations.map((v) => v.check))
         .contains('cognitive-complexity');
     check(
@@ -299,16 +299,16 @@ jobs:
             c.$2[0] == 'run' &&
             c.$2[1] == cognitiveComplexityPackageSpec,
       ),
-    ).isTrue();
+    ).isTrue;
   });
 
   test('checkCognitiveComplexityVersionNote emits FYI only when a newer '
       'stable version exists', () {
-    check(checkCognitiveComplexityVersionNote(null)).isNull();
+    check(checkCognitiveComplexityVersionNote(null)).isNull;
     check(checkCognitiveComplexityVersionNote(cognitiveComplexityPinnedVersion))
-        .isNull();
-    check(checkCognitiveComplexityVersionNote('0.1.0')).isNull();
-    check(checkCognitiveComplexityVersionNote('99.0.0-wip')).isNull();
+        .isNull;
+    check(checkCognitiveComplexityVersionNote('0.1.0')).isNull;
+    check(checkCognitiveComplexityVersionNote('99.0.0-wip')).isNull;
     check(checkCognitiveComplexityVersionNote('99.0.0'))
         .isNotNull()
         .contains('package:cognitive_complexity 99.0.0 is available');
@@ -350,7 +350,7 @@ publish_to: none
         ),
       );
 
-      check(passReport.passed).isTrue();
+      check(passReport.passed).isTrue;
       check(passReport.passedChecks).contains('dart-test:pkgs/pkg_a');
       final testDirsRun = calls
           .where((c) => c.$2.length == 1 && c.$2.single == 'test')
@@ -369,7 +369,7 @@ publish_to: none
           testExit: 1,
         ),
       );
-      check(failReport.passed).isFalse();
+      check(failReport.passed).isFalse;
       check(failReport.violations.map((v) => v.check)).contains('dart-test');
     },
   );
@@ -441,7 +441,7 @@ environment:
         ),
       );
 
-      check(report.passed).isFalse();
+      check(report.passed).isFalse;
       check(report.violations.map((v) => v.check)).contains('pubspec-wip-bump');
     },
   );
@@ -495,21 +495,21 @@ environment:
       test('$label in a released package requires a -wip bump', () {
         writePackage('1.2.0');
         final report = runWith(files);
-        check(report.passed).isFalse();
+        check(report.passed).isFalse;
         check(report.violations.map((v) => v.check))
             .contains('pubspec-wip-bump');
       });
 
       test('$label in a -wip package passes', () {
         writePackage('1.2.1-wip');
-        check(runWith(files).passed).isTrue();
+        check(runWith(files).passed).isTrue;
       });
     }
 
     test('CHANGELOG.md or .github/ only does not require a -wip bump', () {
       writePackage('1.2.0');
       check(runWith(['CHANGELOG.md', '.github/workflows/ci.yml']).passed)
-          .isTrue();
+          .isTrue;
     });
 
     test('deleted files are not passed to format or analyze', () {
@@ -525,7 +525,7 @@ environment:
           .expand((c) => c.$2)
           .toList();
       check(toolArgs).contains('example/example.dart');
-      check(toolArgs).not((it) => it.contains('test/readme_test.dart'));
+      check(toolArgs).not(.it()..contains('test/readme_test.dart'));
     });
   });
 
@@ -555,7 +555,7 @@ environment:
       ),
     );
 
-    check(report.passed).isFalse();
+    check(report.passed).isFalse;
     final checks = report.violations.map((v) => v.check).toList();
     check(checks).contains('dart-format');
     check(checks).contains('dart-analyze-fatal-infos');
@@ -589,7 +589,7 @@ environment:
       missingConfigCalls.any(
         (c) => c.$2.length == 2 && c.$2[0] == 'pub' && c.$2[1] == 'get',
       ),
-    ).isTrue();
+    ).isTrue;
 
     final dartToolDir = Directory(p.join(tempDir.path, '.dart_tool'))
       ..createSync();
@@ -614,7 +614,7 @@ environment:
       freshConfigCalls.any(
         (c) => c.$2.length == 2 && c.$2[0] == 'pub' && c.$2[1] == 'get',
       ),
-    ).isFalse();
+    ).isFalse;
 
     pubspecFile.setLastModifiedSync(now.add(const Duration(seconds: 10)));
     final staleConfigCalls = <(String, List<String>, String?)>[];
@@ -632,7 +632,7 @@ environment:
       staleConfigCalls.any(
         (c) => c.$2.length == 2 && c.$2[0] == 'pub' && c.$2[1] == 'get',
       ),
-    ).isTrue();
+    ).isTrue;
   });
 
   test(
@@ -742,7 +742,7 @@ $paddedBody
       ),
     );
 
-    check(report.passed).isFalse();
+    check(report.passed).isFalse;
     final checks = report.violations.map((v) => v.check).toList();
     check(checks)
       ..contains('agent-doc-char-budget')
@@ -778,13 +778,13 @@ dev_dependencies:
     );
 
     check(File(p.join(consumerDir.path, 'analysis_options.yaml')).existsSync())
-        .isFalse();
+        .isFalse;
     final sanitizedPubspec = File(p.join(consumerDir.path, 'pubspec.yaml'))
         .readAsStringSync();
     check(sanitizedPubspec)
-      ..not((it) => it.contains('resolution:'))
-      ..not((it) => it.contains('workspace:'))
-      ..not((it) => it.contains('dev_dependencies:'))
+      ..not(.it()..contains('resolution:'))
+      ..not(.it()..contains('workspace:'))
+      ..not(.it()..contains('dev_dependencies:'))
       ..contains('source_helper: ^1.3.4');
 
     final overrides = File(p.join(consumerDir.path, 'pubspec_overrides.yaml'))
@@ -854,7 +854,7 @@ List<Object> createSortedFieldSet(Object cls) => [];
         },
       ),
     );
-    check(defaultReport.passed).isTrue();
+    check(defaultReport.passed).isTrue;
     check(defaultReport.skippedChecks.map((s) => s.toString()).toList())
         .contains('rev-deps:source_helper (pass --rev-deps to run)');
 
@@ -908,7 +908,7 @@ dependencies:
       },
     );
 
-    check(optInFailReport.passed).isFalse();
+    check(optInFailReport.passed).isFalse;
     check(optInFailReport.violations.map((v) => v.check)).contains('rev-deps');
     check(optInFailReport.violations.single.message)
       ..contains('json_serializable-6.15.0')
@@ -944,7 +944,7 @@ environment:
         },
       ),
     );
-    check(majorReport.passed).isTrue();
+    check(majorReport.passed).isTrue;
   });
 
   test('passes --git-diff and --fail-on-increase to cognitive_complexity when '
@@ -981,7 +981,7 @@ jobs:
         recordedCalls: diffCalls,
       ),
     );
-    check(report.passed).isTrue();
+    check(report.passed).isTrue;
     final ccCall = diffCalls.singleWhere(
       (c) => c.$2.contains(cognitiveComplexityPackageSpec),
     );
@@ -1041,10 +1041,10 @@ jobs:
         changedFiles: ['lib/foo.dart'],
       ),
     );
-    check(malformedReport.passed).isTrue();
+    check(malformedReport.passed).isTrue;
     check(malformedReport.skippedChecks.map((s) => s.toString()))
         .contains('firehose (malformed pubspec.yaml)');
-    check(malformedReport.warnings).isNotEmpty();
+    check(malformedReport.warnings).isNotEmpty;
 
     // Dart SDK repo (tools/VERSION present) skips firehose immediately.
     Directory(p.join(tempDir.path, 'tools')).createSync();
@@ -1058,10 +1058,10 @@ jobs:
         changedFiles: ['lib/foo.dart'],
       ),
     );
-    check(sdkReport.passed).isTrue();
+    check(sdkReport.passed).isTrue;
     check(sdkReport.skippedChecks.map((s) => s.toString()))
         .contains('firehose (Dart SDK repo)');
-    check(sdkReport.warnings).isEmpty();
+    check(sdkReport.warnings).isEmpty;
   });
 
   test('prefers upstream/HEAD on external forks while keeping origin/HEAD on '

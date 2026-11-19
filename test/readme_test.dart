@@ -27,7 +27,7 @@ void main() {
         .where((line) => line.contains('| `bin/') && line.trim().endsWith('|'))
         .toList();
 
-    check(tableLines, because: 'Should find table rows in README').isNotEmpty();
+    check(tableLines, because: 'Should find table rows in README').isNotEmpty;
 
     // Every subcommand in kscriptSubcommands (plus `kscripts` itself) must be
     // documented in the README table.
@@ -88,7 +88,7 @@ void main() {
       check(
         because: 'Help output for $binCol should not be empty',
         helpLines,
-      ).isNotEmpty();
+      ).isNotEmpty;
 
       final description = helpLines.first.trim();
       check(

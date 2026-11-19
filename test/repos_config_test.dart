@@ -16,8 +16,8 @@ void main() {
   test('returns null when repos.yaml is missing or empty', () {
     check(
       loadGitUpRepoConfig(p.join(d.sandbox, 'repo'), homeDirectory: d.sandbox),
-    ).isNull();
-    check(loadRepoAlignConfig(homeDirectory: d.sandbox)).isNull();
+    ).isNull;
+    check(loadRepoAlignConfig(homeDirectory: d.sandbox)).isNull;
 
     File(p.join(d.sandbox, '.config', 'kscripts', 'repos.yaml'))
       ..createSync(recursive: true)
@@ -25,8 +25,8 @@ void main() {
 
     check(
       loadGitUpRepoConfig(p.join(d.sandbox, 'repo'), homeDirectory: d.sandbox),
-    ).isNull();
-    check(loadRepoAlignConfig(homeDirectory: d.sandbox)).isNull();
+    ).isNull;
+    check(loadRepoAlignConfig(homeDirectory: d.sandbox)).isNull;
   });
 
   test(
@@ -66,30 +66,30 @@ repo-align:
 
       final config = loadGitUpRepoConfig(linkSdk, homeDirectory: d.sandbox);
       check(config).isNotNull()
-        ..has((c) => c.allowWorktree, 'allowWorktree').isTrue()
-        ..has((c) => c.branch, 'branch').equals('core-main')
-        ..has((c) => c.upstream, 'upstream').equals('upstream-sdk/main')
-        ..has((c) => c.cleanBranches, 'cleanBranches').isFalse()
-        ..has((c) => c.before, 'before').equals('')
-        ..has((c) => c.post, 'post').equals('echo synced')
-        ..has((c) => c.override, 'override').isNull();
+        ..has('allowWorktree', (c) => c.allowWorktree).isTrue
+        ..has('branch', (c) => c.branch).equals('core-main')
+        ..has('upstream', (c) => c.upstream).equals('upstream-sdk/main')
+        ..has('cleanBranches', (c) => c.cleanBranches).isFalse
+        ..has('before', (c) => c.before).equals('')
+        ..has('post', (c) => c.post).equals('echo synced')
+        ..has('override', (c) => c.override).isNull;
 
       final alignConfig = loadRepoAlignConfig(homeDirectory: d.sandbox);
       check(alignConfig).isNotNull()
-        ..has((c) => c.owner, 'owner').equals('example-user')
+        ..has('owner', (c) => c.owner).equals('example-user')
         ..has(
-          (c) => c.baseDir,
           'baseDir',
+          (c) => c.baseDir,
         ).equals(p.canonicalize(p.join(d.sandbox, 'github', 'example-user')))
-        ..has((c) => c.active, 'active').deepEquals(['alpha_pkg', 'beta_tool'])
-        ..has((c) => c.ignore, 'ignore').deepEquals(['old_archive']);
+        ..has('active', (c) => c.active).deepEquals(['alpha_pkg', 'beta_tool'])
+        ..has('ignore', (c) => c.ignore).deepEquals(['old_archive']);
 
       check(
         loadGitUpRepoConfig(
           p.join(d.sandbox, 'other', 'repo'),
           homeDirectory: d.sandbox,
         ),
-      ).isNull();
+      ).isNull;
     },
   );
 
@@ -107,13 +107,13 @@ repo-align:
       homeDirectory: d.sandbox,
     );
     check(config).isNotNull()
-      ..has((c) => c.owner, 'owner').equals('sample-owner')
+      ..has('owner', (c) => c.owner).equals('sample-owner')
       ..has(
-        (c) => c.baseDir,
         'baseDir',
+        (c) => c.baseDir,
       ).equals(p.canonicalize(p.join(d.sandbox, 'github', 'sample-owner')))
-      ..has((c) => c.active, 'active').deepEquals(['pkg_one'])
-      ..has((c) => c.ignore, 'ignore').isEmpty();
+      ..has('active', (c) => c.active).deepEquals(['pkg_one'])
+      ..has('ignore', (c) => c.ignore).isEmpty;
   });
 
   test('parses repo-align kinds overrides for active repos', () {
@@ -134,7 +134,7 @@ repo-align:
     );
     check(config)
         .isNotNull()
-        .has((c) => c.kinds, 'kinds')
+        .has('kinds', (c) => c.kinds)
         .deepEquals({'proto_app': RepoKind.experimentalOrPrototype});
   });
 
@@ -151,14 +151,14 @@ repo-align:
       )?.cleanBranches;
     }
 
-    check(cleanBranchesFor('    branch: main\n')).isNotNull().isTrue();
-    check(cleanBranchesFor('    allowWorktree: true\n')).isNotNull().isFalse();
+    check(cleanBranchesFor('    branch: main\n')).isNotNull().isTrue;
+    check(cleanBranchesFor('    allowWorktree: true\n')).isNotNull().isFalse;
     check(
       cleanBranchesFor('    allowWorktree: true\n    cleanBranches: true\n'),
-    ).isNotNull().isTrue();
+    ).isNotNull().isTrue;
     check(
       cleanBranchesFor('    allowWorktree: false\n    cleanBranches: false\n'),
-    ).isNotNull().isFalse();
+    ).isNotNull().isFalse;
   });
 
   test('rejects unknown keys, bad types, empty branch, duplicates', () async {
@@ -254,9 +254,9 @@ repo-align:
             );
           }),
         ).throws<GitUpException>(
-          (it) => it
-            ..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code)
-            ..has((e) => e.message, 'message').contains(testCase.expectedError),
+          .it()
+            ..has('exitCode', (e) => e.exitCode).equals(ExitCode.config.code)
+            ..has('message', (e) => e.message).contains(testCase.expectedError),
         );
       });
     }

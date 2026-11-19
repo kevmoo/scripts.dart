@@ -13,14 +13,14 @@ void main() {
     final readmeContent = File('README.md').readAsStringSync();
 
     test('skills directory exists and contains skill folders', () {
-      check(skillsDir.existsSync()).isTrue();
+      check(skillsDir.existsSync()).isTrue;
       final subdirs = skillsDir.listSync().whereType<Directory>().toList();
-      check(subdirs).isNotEmpty();
+      check(subdirs).isNotEmpty;
     });
 
     test('skills.sh.json groups all co-located skills', () {
       final configFile = File('skills.sh.json');
-      check(configFile.existsSync()).isTrue();
+      check(configFile.existsSync()).isTrue;
 
       final decoded =
           jsonDecode(configFile.readAsStringSync()) as Map<String, Object?>;
@@ -30,24 +30,24 @@ void main() {
 
       final groupings = (decoded['groupings'] as List<Object?>)
           .cast<Map<String, Object?>>();
-      check(groupings).isNotEmpty();
+      check(groupings).isNotEmpty;
 
       final groupedSkills = <String>{};
       for (final group in groupings) {
         final title = group['title'] as String?;
-        check(title).isNotNull().isNotEmpty();
+        check(title).isNotNull().isNotEmpty;
         check(
           because: 'Group title "$title" should be 1-3 words',
           title!.trim().split(RegExp(r'\s+')).length,
         ).isLessOrEqual(3);
-        check(group['description']).isA<String>().isNotEmpty();
+        check(group['description']).isA<String>().isNotEmpty;
         final skills = (group['skills'] as List<Object?>).cast<String>();
-        check(skills).isNotEmpty();
+        check(skills).isNotEmpty;
         for (final skill in skills) {
           check(
             because: 'Duplicate skill "$skill" in skills.sh.json',
             groupedSkills.add(skill),
-          ).isTrue();
+          ).isTrue;
         }
       }
 
@@ -72,7 +72,7 @@ void main() {
         check(
           because: 'skills/$folderName/SKILL.md must exist',
           skillFile.existsSync(),
-        ).isTrue();
+        ).isTrue;
 
         final text = skillFile.readAsStringSync();
         final lines = skillFile.readAsLinesSync();
@@ -120,7 +120,7 @@ void main() {
         check(
           because: 'description must not contain < or > brackets',
           desc.contains('<') || desc.contains('>'),
-        ).isFalse();
+        ).isFalse;
 
         // Positive and negative trigger clauses required
         check(
@@ -131,14 +131,14 @@ void main() {
           because:
               'description must include "Don\'t use for" negative triggers',
           desc.contains("Don't use for") || desc.contains('Do not use for'),
-        ).isTrue();
+        ).isTrue;
 
         // Progressive disclosure: no CLI command invocations in frontmatter
         check(
           because:
               'Frontmatter description must not leak CLI invocation syntax',
           desc.contains('`kscripts') || desc.contains('using `'),
-        ).isFalse();
+        ).isFalse;
 
         // Body must include a Quick Start section
         final body = lines.sublist(closingIdx + 1).join('\n');
@@ -157,7 +157,7 @@ void main() {
               'skills/$folderName/SKILL.md must follow GitHub Markdown '
               'conventions: ${mdViolations.map((v) => v.message).join('; ')}',
           mdViolations,
-        ).isEmpty();
+        ).isEmpty;
 
         final agentDocViolations = checkSingleAgentDocFile(
           Directory.current,
@@ -168,7 +168,7 @@ void main() {
               'skills/$folderName/SKILL.md must satisfy agent-doc checks: '
               '${agentDocViolations.map((v) => v.message).join('; ')}',
           agentDocViolations,
-        ).isEmpty();
+        ).isEmpty;
 
         // README.md must list every co-located skill
         check(

@@ -131,7 +131,7 @@ void main() {
     test('inspect returns null for non-existent PID', () async {
       final inspector = ProcFsProcessInspector(procPath: procRoot);
       final info = await inspector.inspect(99999);
-      check(info).isNull();
+      check(info).isNull;
     });
 
     test('ancestry builds full process tree up to root', () async {
@@ -201,17 +201,17 @@ void main() {
       final inspector = ProcFsProcessInspector(procPath: procRoot);
 
       // PID 1 is always a reaper
-      check(await inspector.isReaper(1)).isTrue();
-      check(await inspector.isReaper(0)).isTrue();
+      check(await inspector.isReaper(1)).isTrue;
+      check(await inspector.isReaper(0)).isTrue;
 
       // systemd --user is a reaper
-      check(await inspector.isReaper(2217)).isTrue();
+      check(await inspector.isReaper(2217)).isTrue;
 
       // bash is NOT a reaper
-      check(await inspector.isReaper(5000)).isFalse();
+      check(await inspector.isReaper(5000)).isFalse;
 
       // Non-existent PID (dead parent) is treated as a reaper
-      check(await inspector.isReaper(8888)).isTrue();
+      check(await inspector.isReaper(8888)).isTrue;
     });
   });
 }
