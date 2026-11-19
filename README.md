@@ -52,6 +52,7 @@ checkout even when the binary is already at that commit.
 | [`pr-check`](#pr-check)           | `bin/pr_check.dart`      | Validate local CI parity before running gh pr create.                    |
 | [`pr-cleanup`](#pr-cleanup)       | `bin/pr_cleanup.dart`    | Unified multi-repo GitHub and Gerrit PR, CL, and worktree cleanup sweep. |
 | [`pr-triage`](#pr-triage)         | `bin/pr_triage.dart`     | Triage open PR comments, reviews, and CI check failures.                 |
+| [`prose-check`](#prose-check)     | `bin/prose_check.dart`   | Scan Markdown and text documents for prose readability smells.           |
 | [`puppy`](#puppy)                 | `bin/puppy.dart`         | Run a command in all package directories.                                |
 | [`relay-whoami`](#relay-whoami)   | `bin/relay_whoami.dart`  | Cross-machine agent relay identity, envelope, and sync status checker.   |
 | [`repo-align`](#repo-align)       | `bin/repo_align.dart`    | Personal GitHub Repositories Alignment & Audit Tool                      |
@@ -69,6 +70,9 @@ Co-located agent skills that orchestrate `kscripts` subcommands:
 - [`skills/pr-triage`](skills/pr-triage/SKILL.md): Interactive GitHub pull
   request comment, review thread, merge conflict, and CI failure triage
   (`kscripts pr-triage`).
+- [`skills/prose-review`](skills/prose-review/SKILL.md): Markdown and plain-text
+  readability smell triage, fresh-context blind reader audit, and causal-English
+  remediation (`kscripts prose-check`).
 - [`skills/repo-align`](skills/repo-align/SKILL.md): Personal GitHub repository
   CI workflow, markdown, lint, and branch ruleset alignment
   (`kscripts repo-align`, `kscripts lint-cleanup`, `kscripts tighten`).
@@ -400,6 +404,26 @@ kscripts pr-triage resolve <thread_id> [<comment_id> "<body_text>"]
 -p, --pr      PR number or GitHub PR URL
 -C, --dir     Path to target git repository directory
 -h, --help    Print this usage information.
+```
+
+### `prose-check`
+
+Scan Markdown and text documents for prose readability smells.
+
+**Usage:**
+
+```shell
+kscripts prose-check [options] <paths|->
+
+-p, --profile           Profile threshold preset.
+                        [auto (default), readme, technical, spec, narrative]
+-f, --format            Syntax mode (.txt defaults to text).
+                        [auto (default), markdown, text]
+-t, --top               Max hotspots (0=all).
+                        (defaults to "15")
+    --json              Emit compact JSON output.
+    --fail-on-smells    Exit 1 on high smells.
+-h, --help              Print usage info.
 ```
 
 ### `puppy`
