@@ -105,7 +105,7 @@ void main() {
     });
 
     test('returns null for non-github URLs', () {
-      check(normalizeRepoName('https://gitlab.com/foo/bar')).isNull();
+      check(normalizeRepoName('https://gitlab.com/foo/bar')).isNull;
     });
   });
 
@@ -147,7 +147,7 @@ void main() {
       check(pr.ciStatus).equals(CiStatus.failure);
       check(pr.mergeable).equals(MergeableState.mergeable);
       check(pr.mergeStateStatus).equals(MergeStateStatus.unknown);
-      check(pr.isDraft).isFalse();
+      check(pr.isDraft).isFalse;
     });
 
     test('detects tree-status failure for flutter/flutter as TREE_BROKEN', () {
@@ -391,9 +391,9 @@ void main() {
           ),
         ];
 
-        check(prs[1].isBlockedByProtection).isFalse();
+        check(prs[1].isBlockedByProtection).isFalse;
         final cat = categorizePullRequests(prs);
-        check(cat.readyToMerge).isEmpty();
+        check(cat.readyToMerge).isEmpty;
         check(cat.actionNeeded.map((p) => p.number))
             .deepEquals([10, 11, 12, 13]);
         check(cat.inReview.map((p) => p.number)).deepEquals([14]);
@@ -766,7 +766,7 @@ void main() {
       );
 
       check(pr.unrequestedActiveReviewers).deepEquals(['harryterkelsen']);
-      check(pr.needsReviewReRequest).isTrue();
+      check(pr.needsReviewReRequest).isTrue;
       final categorized = categorizePullRequests([pr]);
       check(categorized.actionNeeded.map((p) => p.number)).deepEquals([193187]);
 
@@ -920,8 +920,8 @@ void main() {
       ];
       final md = renderMarkdownReport(prs, currentTime: now);
       check(md)
-        ..not((it) => it.contains('## 🚀 1. Ready to Merge'))
-        ..not((it) => it.contains('Blocked by ruleset/branch protection'))
+        ..not(.it()..contains('## 🚀 1. Ready to Merge'))
+        ..not(.it()..contains('Blocked by ruleset/branch protection'))
         ..contains('Review:&nbsp;🟠&nbsp;Approved&nbsp;(2&nbsp;unresolved)')
         ..contains('❌ **Address 2 unresolved comment(s)**')
         ..contains('Review:&nbsp;❌&nbsp;Unresolved&nbsp;Comments&nbsp;(5)')
@@ -931,7 +931,7 @@ void main() {
           '(1&nbsp;unresolved)',
         )
         ..contains('⏳ **Awaiting @Lyokone**')
-        ..not((it) => it.contains('🔔 **Ping Reviewer** (@Lyokone)'));
+        ..not(.it()..contains('🔔 **Ping Reviewer** (@Lyokone)'));
 
       final term = renderTerminalReport(prs, currentTime: now);
       check(term)
@@ -1115,7 +1115,7 @@ void main() {
 
       final output = prints.join('\n');
       check(output).contains('dart-lang/build#101');
-      check(output).not((c) => c.contains('dart-lang/build#102'));
+      check(output).not(.it()..contains('dart-lang/build#102'));
     });
 
     test('throws GhViewException when gh command fails', () async {
@@ -1295,7 +1295,7 @@ void main() {
         prs: [pr],
         enricherRunner: (cmd, payload) async => null,
       );
-      check(result).isEmpty();
+      check(result).isEmpty;
     });
 
     test('handles malformed JSON gracefully', () async {
@@ -1304,7 +1304,7 @@ void main() {
         prs: [pr],
         enricherRunner: (cmd, payload) async => 'invalid json',
       );
-      check(result).isEmpty();
+      check(result).isEmpty;
     });
   });
 
@@ -1377,7 +1377,7 @@ void main() {
         );
         final output = renderMarkdownReport([prWithPipe], currentTime: now);
         check(output).contains('Project: Foo / Bar');
-        check(output).not((c) => c.contains('Project: Foo | Bar'));
+        check(output).not(.it()..contains('Project: Foo | Bar'));
       });
     },
   );
@@ -1396,7 +1396,7 @@ void main() {
 
       final status = extractCiStatus('example-org/example-repo', commitNode);
       check(status).equals(CiStatus.actionRequired);
-      check(status.isPassing).isFalse();
+      check(status.isPassing).isFalse;
     });
 
     test(
@@ -1747,7 +1747,7 @@ void main() {
 
       final pr = parsePrNode(node)!;
       check(pr.author).equals('kevmoo');
-      check(pr.isAlreadyPinged).isTrue();
+      check(pr.isAlreadyPinged).isTrue;
       check(pr.activeReviewers).deepEquals(['liamappelbe', 'natebosch']);
       check(pr.targetReviewers).deepEquals(['liamappelbe', 'natebosch']);
     });
@@ -1821,16 +1821,16 @@ void main() {
       check(unaddressedPr.approvedReviewers).deepEquals(['alice']);
       check(unaddressedPr.activeReviewers).deepEquals(['alice', 'bob']);
       check(unaddressedPr.unrequestedActiveReviewers).deepEquals(['bob']);
-      check(unaddressedPr.hasAuthorRespondedSinceLastReview).isFalse();
-      check(unaddressedPr.needsReviewReRequest).isFalse();
+      check(unaddressedPr.hasAuthorRespondedSinceLastReview).isFalse;
+      check(unaddressedPr.needsReviewReRequest).isFalse;
 
       // After author pushes a new commit after bob's CHANGES_REQUESTED:
       final addressedPr = parsePrNode(
         buildNode(committedDate: '2026-09-14T04:00:00Z'),
       )!;
       check(addressedPr.unrequestedActiveReviewers).deepEquals(['bob']);
-      check(addressedPr.hasAuthorRespondedSinceLastReview).isTrue();
-      check(addressedPr.needsReviewReRequest).isTrue();
+      check(addressedPr.hasAuthorRespondedSinceLastReview).isTrue;
+      check(addressedPr.needsReviewReRequest).isTrue;
     });
 
     test('keeps Changes Requested when reviewer submitted top-level '
@@ -1888,13 +1888,13 @@ void main() {
       };
 
       final pr = parsePrNode(node)!;
-      check(pr.needsReviewReRequest).isFalse();
+      check(pr.needsReviewReRequest).isFalse;
       final md = renderMarkdownReport([pr], currentTime: now);
       check(md).contains(
         'Review:&nbsp;🔴&nbsp;Changes&nbsp;Requested&nbsp;(@flutter-zl)',
       );
       check(md).contains('🔴 **Changes Requested** (@flutter-zl)');
-      check(md).not((it) => it.contains('Re-request Review'));
+      check(md).not(.it()..contains('Re-request Review'));
     });
 
     test('does not flag issue-comment-only or mentioned users as dropped '
@@ -1947,7 +1947,7 @@ void main() {
       final pr = parsePrNode(node)!;
       check(pr.reviewAuthors).isNotNull().deepEquals(const <String>[]);
       check(pr.unrequestedActiveReviewers).deepEquals(const <String>[]);
-      check(pr.needsReviewReRequest).isFalse();
+      check(pr.needsReviewReRequest).isFalse;
     });
 
     test('preserves top-level issue comment mentions and isAlreadyPinged even '
@@ -2001,10 +2001,10 @@ void main() {
 
       final pr = parsePrNode(node)!;
       check(pr.activeReviewers).deepEquals(['alice', 'bob']);
-      check(pr.isAlreadyPinged).isTrue();
+      check(pr.isAlreadyPinged).isTrue;
       check(pr.lastAuthorReviewAt)
           .equals(DateTime.parse('2026-09-24T03:00:00Z'));
-      check(pr.hasAuthorRespondedSinceLastReview).isTrue();
+      check(pr.hasAuthorRespondedSinceLastReview).isTrue;
     });
 
     test(
@@ -2080,8 +2080,8 @@ void main() {
         check(pr.changesRequestedReviewers).deepEquals(['bob']);
         // Fix 2: author committed at 02:00 (after bob's 01:00 review), even
         // though alice approved at 03:00 and bystander commented at 04:00.
-        check(pr.hasAuthorRespondedSinceLastReview).isTrue();
-        check(pr.needsReviewReRequest).isTrue();
+        check(pr.hasAuthorRespondedSinceLastReview).isTrue;
+        check(pr.needsReviewReRequest).isTrue;
       },
     );
 
@@ -2127,7 +2127,7 @@ void main() {
 
         check(extractCiStatus('dart-lang/tools', commits))
             .equals(CiStatus.success);
-        check(extractCiDetail(commits)).isNull();
+        check(extractCiDetail(commits)).isNull;
       },
     );
 
@@ -2162,7 +2162,7 @@ void main() {
 
       check(extractCiStatus('dart-lang/tools', commits))
           .equals(CiStatus.pending);
-      check(extractCiDetail(commits)).isNull();
+      check(extractCiDetail(commits)).isNull;
     });
 
     test('attributes unresolved threads by last speaker and ignores Bot '
@@ -2267,7 +2267,7 @@ void main() {
         botOnlyPr,
       ], currentTime: DateTime.parse('2026-10-23T17:00:00Z'));
       check(md).contains('⏳ **Awaiting @jakemac53**');
-      check(md).not((it) => it.contains('Ping Reviewer'));
+      check(md).not(.it()..contains('Ping Reviewer'));
     });
 
     test('infers effectiveReviewDecision from reviews when GraphQL returns '
@@ -2342,7 +2342,7 @@ void main() {
       check(approvedWithUnresolved.reviewDecision).equals(ReviewDecision.none);
       check(approvedWithUnresolved.effectiveReviewDecision)
           .equals(ReviewDecision.approved);
-      check(approvedWithUnresolved.isApproved).isTrue();
+      check(approvedWithUnresolved.isApproved).isTrue;
 
       final approvedClean = parsePrNode(
         unprotectedNode(

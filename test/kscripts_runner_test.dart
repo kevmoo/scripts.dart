@@ -126,7 +126,7 @@ void main() {
           ..contains('invoked as "relay-whoami-from-the-future"')
           ..contains('newer than the installed binary')
           ..contains("dart install 'kevmoo_scripts@{git:")
-          ..not((it) => it.contains('Usage: kscripts'));
+          ..not(.it()..contains('Usage: kscripts'));
       },
     );
 
@@ -161,14 +161,14 @@ void main() {
     test('the Dart VM executable names never count as an invoked name', () {
       for (final exe in ['/usr/bin/dart', '/opt/dart-sdk/bin/dartaotruntime']) {
         check(resolveInvokedSubcommand(invokedAsEnv: '', executablePath: exe))
-            .isNull();
+            .isNull;
       }
       check(
         resolveInvokedSubcommand(
           invokedAsEnv: '',
           executablePath: '/x/kscripts',
         ),
-      ).isNull();
+      ).isNull;
     });
 
     test('resolveEffectiveKScriptsArgs handles multicall env and argv[0]', () {
@@ -214,7 +214,7 @@ void main() {
           executableFile: exeFile,
           onStderr: unresolvedMessages.add,
         );
-        check(unresolvedMessages).isEmpty();
+        check(unresolvedMessages).isEmpty;
 
         // 2. Repo exists and `main` moved before the binary was built ->
         // emits nothing. Uses a real repo: the check must ask `git` rather
@@ -233,7 +233,7 @@ void main() {
           executableFile: exeFile,
           onStderr: freshMessages.add,
         );
-        check(freshMessages).isEmpty();
+        check(freshMessages).isEmpty;
 
         // 3. Binary predates the last `main` update -> emits warning.
         exeFile.setLastModifiedSync(now.subtract(const Duration(hours: 1)));
@@ -300,7 +300,7 @@ packages:
         } finally {
           Directory.current = priorCwd;
         }
-        check(gitInstallMessages).isEmpty();
+        check(gitInstallMessages).isEmpty;
       },
     );
   });

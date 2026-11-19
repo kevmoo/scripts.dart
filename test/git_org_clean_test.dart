@@ -12,25 +12,25 @@ void main() {
     test('missing org parameter throws UsageException', () {
       check(() => parseCleanArgs([]))
           .throws<UsageException>()
-          .has((e) => e.message, 'message')
+          .has('message', (e) => e.message)
           .contains('Missing target GitHub organization!');
     });
 
     test('help flag does not require org parameter', () {
       final args = parseCleanArgs(['--help']);
-      check(args.help).isTrue();
-      check(args.org).isNull();
+      check(args.help).isTrue;
+      check(args.org).isNull;
     });
 
     test('valid org parameter parses correctly', () {
       final args = parseCleanArgs(['--org', 'my-org']);
-      check(args.help).isFalse();
+      check(args.help).isFalse;
       check(args.org).equals('my-org');
     });
 
     test('valid org parameter using short flag parses correctly', () {
       final args = parseCleanArgs(['-o', 'another-org']);
-      check(args.help).isFalse();
+      check(args.help).isFalse;
       check(args.org).equals('another-org');
     });
   });

@@ -35,7 +35,7 @@ void main() {
     });
 
     test('parseCoreFields returns null when required fields are missing', () {
-      check(GhPrRef.parseCoreFields({'number': 42})).isNull();
+      check(GhPrRef.parseCoreFields({'number': 42})).isNull;
       check(
         GhPrRef.parseCoreFields({
           'number': 42,
@@ -43,7 +43,7 @@ void main() {
           'url': 'https://example.com',
           'repository': {'nameWithOwner': ''},
         }),
-      ).isNull();
+      ).isNull;
     });
 
     test(
@@ -117,7 +117,7 @@ void main() {
         check(openLoc).isNotNull();
         check(openLoc!.repoPath)
             .equals('/workspace/_scripts.dart-feature-worktree');
-        check(openLoc.isWorktree).isTrue();
+        check(openLoc.isWorktree).isTrue;
 
         final landedWt = findMatchingWorktreeForPr(localRepo, landedPr);
         check(landedWt).isNotNull();

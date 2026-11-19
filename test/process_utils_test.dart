@@ -188,9 +188,9 @@ void main() {
         await d.dir('proc', [d.dir('4242')]).create();
         final procRoot = p.join(d.sandbox, 'proc');
 
-        check(await isProcessRunning(4242, procPath: procRoot)).isTrue();
-        check(await isProcessRunning(4242, procPath: '$procRoot/')).isTrue();
-        check(await isProcessRunning(9999, procPath: procRoot)).isFalse();
+        check(await isProcessRunning(4242, procPath: procRoot)).isTrue;
+        check(await isProcessRunning(4242, procPath: '$procRoot/')).isTrue;
+        check(await isProcessRunning(9999, procPath: procRoot)).isFalse;
       },
       skip: !Platform.isLinux ? 'Procfs check only applies on Linux' : null,
     );

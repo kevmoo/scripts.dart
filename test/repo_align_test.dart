@@ -68,9 +68,9 @@ void main() {
         ],
       );
 
-      check(status.isAligned).isTrue();
-      check(status.issues).isEmpty();
-      check(status.hasFullStrictMode).isTrue();
+      check(status.isAligned).isTrue;
+      check(status.issues).isEmpty;
+      check(status.hasFullStrictMode).isTrue;
     });
 
     test('flags missing workflows on published package', () {
@@ -104,7 +104,7 @@ void main() {
         requiredChecks: [],
       );
 
-      check(status.isAligned).isFalse();
+      check(status.isAligned).isFalse;
       check(status.issues).contains(
         'Incomplete strict mode (missing: strict-inference, strict-raw-types)',
       );
@@ -148,7 +148,7 @@ void main() {
         requiredChecks: [],
       );
 
-      check(status.isAligned).isFalse();
+      check(status.isAligned).isFalse;
       check(status.issues).contains(
         'CRITICAL: Auto-merge enabled with 0 required status checks '
         '(ungated merging!)',
@@ -187,7 +187,7 @@ void main() {
         requiredChecks: ['some-random-non-ci-check'],
       );
 
-      check(status.isAligned).isFalse();
+      check(status.isAligned).isFalse;
       check(status.issues).contains(
         'Branch ruleset missing primary CI check '
         '(expected: analyze/test)',
@@ -287,10 +287,10 @@ void main() {
         defaultBranchRequiredChecks: ['markdown'],
       );
 
-      check(aligned.issues).isEmpty();
+      check(aligned.issues).isEmpty;
       check(noLints.issues).contains('Missing analysis_options.yaml');
-      check(noLints.issues).not((it) => it.contains('Missing lower_bound.yml'));
-      check(noLints.issues).not((it) => it.contains('Missing complexity.yml'));
+      check(noLints.issues).not(.it()..contains('Missing lower_bound.yml'));
+      check(noLints.issues).not(.it()..contains('Missing complexity.yml'));
     });
 
     test('does not flag gating when there is no ruleset at all', () {
@@ -301,17 +301,17 @@ void main() {
         requiredChecks: [],
       );
 
-      check(status.issues).not(
-        (it) => it.contains('markdown.yml present but not a required check'),
-      );
+      check(
+        status.issues,
+      ).not(.it()..contains('markdown.yml present but not a required check'));
     });
 
     test('does not flag gating when markdown.yml is absent', () {
       final status = _markdownFixture(requiredChecks: ['analyze (dev)']);
 
-      check(status.issues).not(
-        (it) => it.contains('markdown.yml present but not a required check'),
-      );
+      check(
+        status.issues,
+      ).not(.it()..contains('markdown.yml present but not a required check'));
     });
 
     test('flags non-canonical dependabot, deprecated analytica ref, narrow '
@@ -423,7 +423,7 @@ void main() {
         defaultBranchRequiredChecks: ['analyze (dev)', 'markdown'],
       );
 
-      check(status.isAligned).isFalse();
+      check(status.isAligned).isFalse;
       check(status.issues).contains('Missing api_summary dev_dependency');
       check(status.issues).contains('Missing api.txt');
       check(status.issues).contains('Missing test/api_test.dart');
@@ -473,8 +473,8 @@ void main() {
         defaultBranchRequiredChecks: ['analyze (dev)', 'markdown'],
       );
 
-      check(status.isAligned).isTrue();
-      check(status.issues).isEmpty();
+      check(status.isAligned).isTrue;
+      check(status.issues).isEmpty;
     });
   });
 
@@ -484,7 +484,7 @@ void main() {
     });
 
     test('markdown workflow has no paths filter', () {
-      check(canonicalMarkdownWorkflow).not((it) => it.contains('\n    paths:'));
+      check(canonicalMarkdownWorkflow).not(.it()..contains('\n    paths:'));
     });
 
     test('renderCanonicalAnalysisOptions preserves analyzer excludes', () {
@@ -618,18 +618,18 @@ environment:
 
       final pubStatus = scanner.scanSingleRepo(pubRepo);
       check(pubStatus.kind).equals(RepoKind.publishedPackage);
-      check(pubStatus.requiresLowerBound).isTrue();
-      check(pubStatus.requiresApiSummary).isTrue();
+      check(pubStatus.requiresLowerBound).isTrue;
+      check(pubStatus.requiresApiSummary).isTrue;
 
       final toolStatus = scanner.scanSingleRepo(toolRepo);
       check(toolStatus.kind).equals(RepoKind.toolOrApp);
-      check(toolStatus.requiresLowerBound).isFalse();
-      check(toolStatus.requiresApiSummary).isFalse();
+      check(toolStatus.requiresLowerBound).isFalse;
+      check(toolStatus.requiresApiSummary).isFalse;
 
       final skillsStatus = scanner.scanSingleRepo(skillsRepo);
       check(skillsStatus.kind).equals(RepoKind.agentSkills);
-      check(skillsStatus.requiresLowerBound).isFalse();
-      check(skillsStatus.requiresStandardCiWorkflows).isFalse();
+      check(skillsStatus.requiresLowerBound).isFalse;
+      check(skillsStatus.requiresStandardCiWorkflows).isFalse;
 
       final hybridStatus = scanner.scanSingleRepo(hybridPkg);
       check(hybridStatus.kind).equals(RepoKind.publishedPackage);
@@ -708,8 +708,7 @@ environment:
         ),
       ).scanSingleRepo(protoRepo);
       check(overridden.kind).equals(RepoKind.experimentalOrPrototype);
-      check(overridden.issues)
-          .not((it) => it.contains('Missing complexity.yml'));
+      check(overridden.issues).not(.it()..contains('Missing complexity.yml'));
     });
 
     test('scans uncloned active repos and surfaces unclassified repos via '
@@ -875,8 +874,8 @@ environment:
       final pkg = report.repos.single;
       check(pkg.name).equals('uncloned_pkg');
       check(pkg.kind).equals(RepoKind.publishedPackage);
-      check(pkg.isAligned).isTrue();
-      check(pkg.issues).isEmpty();
+      check(pkg.isAligned).isTrue;
+      check(pkg.issues).isEmpty;
       check(report.unclassifiedRepos).deepEquals(['brand_new_repo']);
     });
 
@@ -905,9 +904,9 @@ environment:
         );
         final status = scanner.scanSingleRepo(mixedRepo);
 
-        check(status.hasPubspec).isFalse();
+        check(status.hasPubspec).isFalse;
         check(status.issues)
-            .not((it) => it.contains('Missing analysis_options.yaml'));
+            .not(.it()..contains('Missing analysis_options.yaml'));
       },
     );
 
@@ -939,7 +938,7 @@ jobs:
       );
       final status = scanner.scanSingleRepo(repoDir);
 
-      check(status.hasDeprecatedAnalyticaRef).isTrue();
+      check(status.hasDeprecatedAnalyticaRef).isTrue;
       check(status.issues).contains(
         'Deprecated root action uses: kevmoo/analytica.dart@... '
         '(use packages/cognitive_complexity or kevmoo/lower_bound.dart)',
@@ -1015,7 +1014,7 @@ jobs:
       final ruleset = sampleRuleset()..remove('bypass_actors');
       check(appendRequiredCheck(ruleset, 'markdown')!['bypass_actors'])
           .isA<List<dynamic>>()
-          .isEmpty();
+          .isEmpty;
     });
 
     test('returns null when there is no status-check rule', () {
@@ -1023,12 +1022,12 @@ jobs:
         ..['rules'] = [
           {'type': 'deletion'},
         ];
-      check(appendRequiredCheck(ruleset, 'markdown')).isNull();
+      check(appendRequiredCheck(ruleset, 'markdown')).isNull;
     });
 
     test('rulesetRequiresContext detects an existing context', () {
-      check(rulesetRequiresContext(sampleRuleset(), 'analyze (dev)')).isTrue();
-      check(rulesetRequiresContext(sampleRuleset(), 'markdown')).isFalse();
+      check(rulesetRequiresContext(sampleRuleset(), 'analyze (dev)')).isTrue;
+      check(rulesetRequiresContext(sampleRuleset(), 'markdown')).isFalse;
     });
   });
 
@@ -1047,10 +1046,10 @@ jobs:
     };
 
     test('matches the default branch by alias, glob, and explicit ref', () {
-      check(rulesetTargetsBranch(ruleset(), 'main')).isTrue();
-      check(rulesetTargetsBranch(ruleset(include: ['~ALL']), 'main')).isTrue();
+      check(rulesetTargetsBranch(ruleset(), 'main')).isTrue;
+      check(rulesetTargetsBranch(ruleset(include: ['~ALL']), 'main')).isTrue;
       check(rulesetTargetsBranch(ruleset(include: ['refs/heads/main']), 'main'))
-          .isTrue();
+          .isTrue;
     });
 
     test('rejects rulesets that do not govern the default branch', () {
@@ -1059,31 +1058,30 @@ jobs:
           ruleset(include: ['refs/heads/release/*']),
           'main',
         ),
-      ).isFalse();
-      check(rulesetTargetsBranch(ruleset(target: 'tag'), 'main')).isFalse();
+      ).isFalse;
+      check(rulesetTargetsBranch(ruleset(target: 'tag'), 'main')).isFalse;
       check(rulesetTargetsBranch(ruleset(enforcement: 'disabled'), 'main'))
-          .isFalse();
+          .isFalse;
       check(
         rulesetTargetsBranch(
           ruleset(include: ['~ALL'], exclude: ['refs/heads/main']),
           'main',
         ),
-      ).isFalse();
+      ).isFalse;
     });
   });
 
   group('examples.yml', () {
     test('hasExampleFence recognizes pkg:example fence openers only', () {
       check(hasExampleFence('```dart @example example/foo.dart#region\n```\n'))
-          .isTrue();
-      check(hasExampleFence('~~~dart @example example/foo.dart\n~~~\n'))
-          .isTrue();
-      check(hasExampleFence('- item\n\n  ````dart @example a.dart\n')).isTrue();
-      check(hasExampleFence('> ```dart @example a.dart\n')).isTrue();
+          .isTrue;
+      check(hasExampleFence('~~~dart @example example/foo.dart\n~~~\n')).isTrue;
+      check(hasExampleFence('- item\n\n  ````dart @example a.dart\n')).isTrue;
+      check(hasExampleFence('> ```dart @example a.dart\n')).isTrue;
 
-      check(hasExampleFence(null)).isFalse();
-      check(hasExampleFence('Use `@example` fences.\n')).isFalse();
-      check(hasExampleFence('```dart\n// @example a.dart\n```\n')).isFalse();
+      check(hasExampleFence(null)).isFalse;
+      check(hasExampleFence('Use `@example` fences.\n')).isFalse;
+      check(hasExampleFence('```dart\n// @example a.dart\n```\n')).isFalse;
     });
 
     test('canonical template job id and pin match the required context', () {
@@ -1091,7 +1089,7 @@ jobs:
       check(canonicalExamplesWorkflow).contains(
         'uses: google/dart-neats/.github/workflows/validate-examples.yml@',
       );
-      check(canonicalExamplesWorkflow).not((it) => it.contains('\n    paths:'));
+      check(canonicalExamplesWorkflow).not(.it()..contains('\n    paths:'));
       check(examplesCheckContext).startsWith('examples / ');
     });
 
@@ -1102,7 +1100,7 @@ jobs:
           _examplesFixture(kind: kind, hasExampleFences: true).issues,
         ).contains('Missing examples.yml');
       }
-      check(_examplesFixture().issues).isEmpty();
+      check(_examplesFixture().issues).isEmpty;
     });
 
     test('flags examples.yml that runs but does not gate', () {
@@ -1122,7 +1120,7 @@ jobs:
           hasExamplesWorkflow: true,
           requiredChecks: ['markdown', examplesCheckContext],
         );
-        check(status.issues).isEmpty();
+        check(status.issues).isEmpty;
       },
     );
 
@@ -1132,9 +1130,9 @@ jobs:
         hasRulesetOrProtection: false,
         requiredChecks: [],
       );
-      check(status.issues).not(
-        (it) => it.contains('examples.yml present but not a required check'),
-      );
+      check(
+        status.issues,
+      ).not(.it()..contains('examples.yml present but not a required check'));
     });
 
     test('flags template drift', () {
@@ -1209,17 +1207,16 @@ jobs:
       );
 
       final fencedStatus = scanner.scanSingleRepo(fenced);
-      check(fencedStatus.hasExampleFences).isTrue();
+      check(fencedStatus.hasExampleFences).isTrue;
       check(fencedStatus.issues).contains('Missing examples.yml');
 
       final ignoredStatus = scanner.scanSingleRepo(ignored);
-      check(ignoredStatus.hasExampleFences).isFalse();
-      check(ignoredStatus.issues)
-          .not((it) => it.contains('Missing examples.yml'));
+      check(ignoredStatus.hasExampleFences).isFalse;
+      check(ignoredStatus.issues).not(.it()..contains('Missing examples.yml'));
 
       final driftedStatus = scanner.scanSingleRepo(drifted);
-      check(driftedStatus.hasExamplesWorkflow).isTrue();
-      check(driftedStatus.hasCanonicalExamplesWorkflow).isFalse();
+      check(driftedStatus.hasExamplesWorkflow).isTrue;
+      check(driftedStatus.hasCanonicalExamplesWorkflow).isFalse;
     });
 
     test('remote snapshot detects fences in root and member READMEs', () {
@@ -1286,10 +1283,10 @@ jobs:
 
       check(queries.first).contains('HEAD:README.md');
       check(queries.last).contains('HEAD:member/README.md');
-      check(status.hasExampleFences).isTrue();
-      check(status.hasExamplesWorkflow).isTrue();
-      check(status.hasCanonicalExamplesWorkflow).isTrue();
-      check(status.issues).not((it) => it.contains('Missing examples.yml'));
+      check(status.hasExampleFences).isTrue;
+      check(status.hasExamplesWorkflow).isTrue;
+      check(status.hasCanonicalExamplesWorkflow).isTrue;
+      check(status.issues).not(.it()..contains('Missing examples.yml'));
     });
 
     test('fix --ci creates examples.yml only where fences exist', () async {
@@ -1320,10 +1317,9 @@ jobs:
       final dryRunOutput = await capturePrints(
         () => runner.runFix(targetDir: fenced.path, fixCi: true, dryRun: true),
       );
-      check(
-        dryRunOutput,
-      ).any((it) => it.contains('Would create .github/workflows/examples.yml'));
-      check(examplesYml(fenced).existsSync()).isFalse();
+      check(dryRunOutput)
+          .any(.it()..contains('Would create .github/workflows/examples.yml'));
+      check(examplesYml(fenced).existsSync()).isFalse;
 
       await capturePrints(
         () => runner.runFix(targetDir: fenced.path, fixCi: true),
@@ -1334,7 +1330,7 @@ jobs:
 
       check(examplesYml(fenced).readAsStringSync())
           .equals(canonicalExamplesWorkflow);
-      check(examplesYml(plain).existsSync()).isFalse();
+      check(examplesYml(plain).existsSync()).isFalse;
     });
   });
 

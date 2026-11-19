@@ -9,7 +9,7 @@ import 'test_helpers.dart';
 void main() {
   test('printError hits null assertion line in RuntimeState', () async {
     final prints = await capturePrints(() => printError(''));
-    check(prints).isEmpty();
+    check(prints).isEmpty;
   });
 
   test('setError sets exitCode in RuntimeState', () {

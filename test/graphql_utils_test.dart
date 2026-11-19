@@ -8,12 +8,12 @@ import 'package:test/test.dart';
 void main() {
   group('isBotLogin', () {
     test('detects [bot], -bot, and known bot accounts', () {
-      check(isBotLogin('dependabot[bot]')).isTrue();
-      check(isBotLogin('codecov-commenter')).isTrue();
-      check(isBotLogin('flutter-dashboard')).isTrue();
-      check(isBotLogin('custom-bot')).isTrue();
-      check(isBotLogin('kevmoo')).isFalse();
-      check(isBotLogin('natebosch')).isFalse();
+      check(isBotLogin('dependabot[bot]')).isTrue;
+      check(isBotLogin('codecov-commenter')).isTrue;
+      check(isBotLogin('flutter-dashboard')).isTrue;
+      check(isBotLogin('custom-bot')).isTrue;
+      check(isBotLogin('kevmoo')).isFalse;
+      check(isBotLogin('natebosch')).isFalse;
     });
   });
 
@@ -180,14 +180,10 @@ void main() {
 
   group('isTransientGhError', () {
     test('identifies HTTP 502, 503, 504 and stream errors', () {
-      check(isTransientGhError(ProcessResult(0, 1, '', 'gh: HTTP 502')))
-          .isTrue();
-      check(isTransientGhError(ProcessResult(0, 1, '', 'gh: HTTP 503')))
-          .isTrue();
-      check(isTransientGhError(ProcessResult(0, 1, '', 'gh: HTTP 504')))
-          .isTrue();
-      check(isTransientGhError(ProcessResult(0, 1, '', 'Bad Gateway')))
-          .isTrue();
+      check(isTransientGhError(ProcessResult(0, 1, '', 'gh: HTTP 502'))).isTrue;
+      check(isTransientGhError(ProcessResult(0, 1, '', 'gh: HTTP 503'))).isTrue;
+      check(isTransientGhError(ProcessResult(0, 1, '', 'gh: HTTP 504'))).isTrue;
+      check(isTransientGhError(ProcessResult(0, 1, '', 'Bad Gateway'))).isTrue;
       check(
         isTransientGhError(
           ProcessResult(
@@ -197,14 +193,14 @@ void main() {
             'Something went wrong while executing your query',
           ),
         ),
-      ).isTrue();
+      ).isTrue;
       check(
         isTransientGhError(
           ProcessResult(0, 1, '', 'stream error: INTERNAL_ERROR'),
         ),
-      ).isTrue();
-      check(isTransientGhError(ProcessResult(0, 0, '{}', ''))).isFalse();
-      check(isTransientGhError(ProcessResult(0, 1, '', 'HTTP 404'))).isFalse();
+      ).isTrue;
+      check(isTransientGhError(ProcessResult(0, 0, '{}', ''))).isFalse;
+      check(isTransientGhError(ProcessResult(0, 1, '', 'HTTP 404'))).isFalse;
     });
   });
 }
