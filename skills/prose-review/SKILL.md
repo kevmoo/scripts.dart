@@ -58,8 +58,7 @@ cat /path/to/draft.md | kscripts prose-check --json -
    - Because rich-text Markdown exporters often drop embedded raster diagrams or
      inline images silently, list or check document images alongside export, and
      on **multi-tab documents**, pull all companion tabs and verify cross-tab
-     heading titles, `Updated` dates, cross-tab link labels, and
-     work-vs-personal author handles in header metadata.
+     heading titles and link labels.
 2. **Classify Profile & Audience**:
    - Read the opening ~30 lines (frontmatter, title, headings) to confirm or
      override `--profile` (`--profile=auto` inspects filename keywords plus
@@ -71,12 +70,12 @@ cat /path/to/draft.md | kscripts prose-check --json -
      - `narrative`: Executive strategy memos, theses, and analytical readouts.
      - `technical`: Developer guides, walkthroughs, and operational runbooks.
 3. **Classify Ownership Tier**:
-   - **Tier 1 (Owned Local Draft)**: Author's own local `.md`/`.txt` file,
-     feature branch, or scratch draft without active multi-author inline review
-     threads. Eligible for bounded 2-pass in-place remediation on approval.
-   - **Tier 2 (Shared Collaborative Doc or External Repo)**: Document with
-     active review threads, peer-owned PR branch, or external repository. Keep
-     target files read-only until confirmed and stage **comment-anchor-safe
+   - **Tier 1 (Owned Draft)**: Author's own draft or branch without active
+     inline review threads. Eligible for bounded 2-pass in-place remediation on
+     approval.
+   - **Tier 2 (Shared Doc With Active Threads or External Repo)**: Document with
+     active inline review threads, peer-owned PR branch, or external repository.
+     Keep target files read-only until confirmed and stage **comment-anchor-safe
      per-paragraph replacement snippets** rather than full-section rewrites.
 4. **Run Token-Efficient CLI Core (`kscripts prose-check --json`)**:
    ```bash
@@ -153,9 +152,9 @@ the file before synthesizing Step 2.)_
 
 The blind reader audits **five semantic failure modes** regexes miss:
 
-1. **30-Second Reader Ask, Decision Owners & Deadline Clarity** (without
-   alarmist or fait-accompli framing; on `readme`/`technical`, clear tool
-   purpose and quick-start usage).
+1. **30-Second Purpose & Reader Ask** (clear problem, proposal, or requested
+   feedback above the fold without alarmist framing; on `readme`/`technical`,
+   clear tool purpose and quick-start usage).
 2. **Minimum-Decision-Context Summary & Multi-Cohort Completeness** (zero
    low-level config/symbol weeds above the fold, and naming **both** active and
    pending/uninstrumented cohorts covered in the body).
@@ -202,11 +201,10 @@ Every kept finding carries **both** an Urgency tier and a Certainty level:
     if zero `P0` or `P1` findings exist!**
 - **Certainty**:
   - `High`: Backed by `prose-check` metrics verified in context, exact
-    conflicting line quotes (`L28` vs. `L67`), or an objectively absent ask /
-    undefined coined term. Prose/mechanical `High` items rewrite directly on
-    approval; **author-fact gaps** (such as a missing deadline or approver list)
-    must prompt the author or insert an explicit `TODO(<owner / YYYY-MM-DD>)`
-    placeholder rather than inventing facts.
+    conflicting line quotes (`L28` vs. `L67`), or an objectively absent purpose
+    / undefined coined term. Prose/mechanical `High` items rewrite directly on
+    approval; **author-fact gaps** must ask the author rather than inventing
+    unstated facts.
   - `Medium`: Structural or comprehension signal where author intent could go
     two ways. **Surface as a concrete question or 2-way choice; never silently
     rewrite!**
@@ -224,7 +222,7 @@ Every kept finding carries **both** an Urgency tier and a Certainty level:
 
 - **[P0 | Certainty: High]** `L1-L45`: **<Declarative takeaway>**
   - **Evidence**: <Exact quote, conflicting line pair, or `prose-check` metric.>
-  - **Fix / Choice**: <Plain causal-English rewrite, `TODO(<owner/date>)` prompt for missing author facts, or 2-way choice for `Medium`.>
+  - **Fix / Choice**: <Plain causal-English rewrite, author question for missing facts, or 2-way choice for `Medium`.>
 ```
 
 ### Step 5: Approval Gate & Bounded 2-Pass Remediation
@@ -233,11 +231,11 @@ When zero `P0` and zero `P1` findings exist (`P2` suppressed), report `✅ Clean
 and leave the file untouched. Otherwise, gate via `ask_question` (when
 available):
 
-- **Tier 1 (Owned Local Draft)**:
+- **Tier 1 (Owned Draft)**:
   1. `"(Recommended) Apply High-certainty P0/P1 fixes in-place (2-pass rewrite) and confirm Medium/author-fact choices"`
   2. `"Preview replacement diffs without editing"`
   3. `"Keep audit report only"`
-- **Tier 2 (Shared Collaborative Doc with Active Threads or External Repo)**:
+- **Tier 2 (Shared Doc With Active Threads or External Repo)**:
   1. `"(Recommended) Stage comment-anchor-safe per-paragraph replacement snippets"`
   2. `"Keep audit report only (strictly read-only)"`
 
@@ -247,10 +245,9 @@ available):
    `kscripts prose-check --json --profile=<profile> --top=0 <path>` first so
    every hotspot is visible. Apply approved `High` `P0`/`P1` prose fixes in
    plain causal English with explicit subjects and active verbs: never compress
-   into telegraphic noun stacks, never invent missing deadlines or approvers
-   (use `TODO(<approver / YYYY-MM-DD>)` unless supplied by the author), and
-   never delete `Medium`-certainty sections like a PRD `Technical Architecture`
-   section without confirmation. **Anti-Whack-a-Mole Rule**: Never trade deleted
+   into telegraphic noun stacks, never invent unstated facts, and never delete
+   `Medium`-certainty sections like a PRD `Technical Architecture` section
+   without confirmation. **Anti-Whack-a-Mole Rule**: Never trade deleted
    parentheses `(aside)` into paired em-dashes (`paired-em-dash`) or semicolon
    chains; rewrite mid-sentence examples or acronyms as a separate sentence or a
    plain `such as ...` / `including ...` clause. Flatten `- **Label**:` bullet
