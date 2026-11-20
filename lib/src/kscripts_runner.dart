@@ -21,6 +21,7 @@ import 'lint_cleanup.dart';
 import 'pr_check.dart';
 import 'pr_cleanup.dart';
 import 'pr_triage.dart';
+import 'prose_check.dart';
 import 'puppy.dart';
 import 'relay_whoami.dart';
 import 'repo_align/repo_align_runner.dart';
@@ -106,6 +107,11 @@ const kscriptSubcommands = <KScriptSubcommand>[
     run: runPrTriageCli,
   ),
   KScriptSubcommand(
+    name: 'prose-check',
+    description: proseCheckDescription,
+    run: runProseCheckCli,
+  ),
+  KScriptSubcommand(
     name: 'puppy',
     description: 'Run a command in all package directories.',
     run: runPuppyCli,
@@ -154,6 +160,10 @@ const commonKScriptMistakes = <String, String>{
   'preflight': 'pr-check',
   'gh-preflight': 'pr-check',
   'check': 'pr-check',
+  'prose': 'prose-check',
+  'prose-review': 'prose-check',
+  'doc-audit': 'prose-check',
+  'doc-smells': 'prose-check',
   'relay': 'relay-whoami',
   'whoami': 'relay-whoami',
 };
