@@ -13,25 +13,24 @@ description: >-
 
 # Prose & Document Clarity Reviewer (`/prose-review`)
 
-Audits multi-section Markdown and plain-text documents by pairing deterministic
-prose smell metrics (`kscripts prose-check --json`) with an Inquisitor
-false-positive filter and an isolated fresh-context blind reader. Findings map
-onto an orthogonal **2D `Urgency x Certainty` matrix** so benign CLI/API idioms
-are dismissed, real decision and clarity blockers surface first, and approved
-rewrites use plain causal English rather than telegraphic shorthand.
+Audits Markdown and plain-text documents by pairing deterministic prose smell
+metrics (`kscripts prose-check --json`) with an Inquisitor false-positive filter
+and an isolated fresh-context blind reader. Findings map onto an orthogonal **2D
+`Urgency x Certainty` matrix** so benign CLI/API idioms are dismissed, real
+decision blockers surface first, and approved rewrites use plain causal English.
 
 ## Quick Start
 
 ```bash
-# Scan a Markdown document for vitality ratios and top hotspot spans (exits 0):
+# Scan Markdown for vitality ratios and top hotspot spans (exits 0):
 kscripts prose-check --json --profile=auto /path/to/document.md
 
-# Pass an explicit profile when auditing neutral scratch filenames:
+# Pass an explicit profile on neutral scratch filenames:
 kscripts prose-check --json --profile=spec /path/to/prd_draft.md
 kscripts prose-check --json --profile=narrative /path/to/strategy_memo.md
 kscripts prose-check --json --profile=readme /path/to/README.md
 
-# Scan plain text (4-space indented prose analyzed rather than masked as code):
+# Scan plain text or stdin:
 kscripts prose-check --json --format=text /path/to/notes.txt
 cat /path/to/draft.md | kscripts prose-check --json -
 ```
@@ -39,10 +38,9 @@ cat /path/to/draft.md | kscripts prose-check --json -
 > [!IMPORTANT]
 >
 > **Advisory Default (`exit 0`) & Anti-Theater Rule**: `kscripts prose-check`
-> exits `0` on valid input even when smells exist (`--fail-on-smells` is
-> opt-in). Every regex or ratio hit is a **smell signal**, not a compiler error.
-> Never mangle clear CLI/API reference prose or compress natural English into
-> cryptic noun-phrase shorthand just to chase a zero-smell score.
+> exits `0` by default (`--fail-on-smells` is opt-in). Every hit is a **smell
+> signal**, not a compiler error. Never mangle clear CLI/API reference prose or
+> compress English into cryptic noun-phrase shorthand to chase zero smells.
 
 ---
 
@@ -106,8 +104,7 @@ rather than trusting regex hits blindly. Drop false smells using three
 - **`[DISMISSED: LOW_CERTAINTY_OPINION]`**: Pure subjective word-choice
   preferences where existing prose is already clear and concise.
 
-Record the dismissed count and filter breakdown in the report summary so the
-user sees explicit signal-to-noise discipline.
+Record the dismissed count and filter breakdown in the report summary.
 
 ### Step 3: Fresh-Context Blind Reader Pass
 
@@ -138,9 +135,12 @@ The blind reader audits **five semantic failure modes** regexes miss:
    `"Because counts track requests rather than unique people, they show what tools fetch rather than why browser views fell"`,
    undefined labels like `"SDK Seam"`, `"PRD design stance"`, or
    `"spatial workbenches"`, and uncited `~10%-15%` guesses).
-4. **Cross-Section Metric Repetition (`4x+`) & Altitude Whiplash** (repeating
-   stats `4x+`, TDD internals inside a PRD, bundling unrelated workflows into
-   one user journey, or 80-word repo/owner bullets that belong in a table).
+4. **Cross-Section Metric Repetition (`4x+`) & Altitude Whiplash**: Repeating
+   stats `4x+`, dedicated `Technical Architecture` / subsystem-design sections
+   or TDD internals inside a `spec` PRD that may belong in a companion TDD or
+   separate tab (`[P1 | Certainty: Medium]` 2-way question), bundling unrelated
+   workflows into one user journey, or 80-word repo/owner bullets that belong in
+   a table.
 5. **Internal Contradictions Across Sections or Tabs** (`Draft` vs. `Aligned`,
    `Committed` vs. `Unvalidated`, or component counts that fail to sum).
 
@@ -200,18 +200,24 @@ available):
 
 **Bounded 2-Pass Rewrite Ceiling (Never Exceed 2 Passes)**:
 
-1. **Pass 1 (Structural & Causal-English Pass)**: If Step 1 had
-   `truncatedSmells > 0`, run
+1. **Pass 1 (Structural & Causal-English Pass)**: If `truncatedSmells > 0`, run
    `kscripts prose-check --json --profile=<profile> --top=0 <path>` first so
-   every genuine hotspot across the file is visible. Apply approved `High`
-   `P0`/`P1` fixes in plain causal English with explicit subjects and active
-   verbs (never compress into telegraphic noun stacks). Flatten `- **Label**:`
-   bullet walls into 2-to-4 sentence paragraphs, convert 80-word owner/repo
-   bullets into a table, flatten `<= 2x2` micro-tables into plain bullets, and
-   preserve Tier 2 comment anchors via scoped per-paragraph edits.
+   every hotspot is visible. Apply approved `High` `P0`/`P1` fixes in plain
+   causal English with explicit subjects and active verbs (never compress into
+   telegraphic noun stacks, and never delete `Medium`-certainty sections like a
+   PRD `Technical Architecture` section without author confirmation).
+   **Anti-Whack-a-Mole Rule**: Never trade deleted parentheses `(aside)` into
+   paired em-dashes (`paired-em-dash`) or semicolon chains; rewrite mid-sentence
+   examples or acronyms as a separate sentence or a plain `such as ...` /
+   `including ...` clause. Flatten `- **Label**:` bullet walls into 2-to-4
+   sentence paragraphs, move 80-word owner/repo bullets into a table, flatten
+   `<= 2x2` micro-tables, and preserve Tier 2 comment anchors via per-paragraph
+   edits.
 2. **Pass 2 (`prose-check` & Fact-Preservation Delta Pass)**: Re-run
-   `kscripts prose-check --json --profile=<profile> --top=0 <path>` to confirm
-   vitality improvement (and touch up any remaining non-dismissed `high` smell
-   in-pass), while verifying **zero lost facts, citations, numbers, or modal
+   `kscripts prose-check --json --profile=<profile> --top=0 <path>`. Require
+   **`0` newly introduced `high` smells** (`paired-em-dash`, `nested-parens`,
+   `prose-semicolon-chain`) and fix **every** remaining non-dismissed `high`
+   smell (leaving only irreducible `[DISMISSED: REFERENCE_IDIOM]` CLI/code
+   spans), while confirming **zero lost facts, links, numbers, or modal
    qualifiers** (`proposed` vs. `shipped`, `projected` vs. `committed`). Stop
    after Pass 2.

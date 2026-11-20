@@ -73,10 +73,13 @@ Evaluate the text against these five failure modes that syntax regexes miss:
    - Flag visual outline monotony where nearly every bullet opens with a bold
      label and flat prose paragraphs disappear, or where inline-code pills
      clutter narrative prose.
-   - Flag altitude mismatches and bucket-stuffing: low-level Technical Design
-     Document class wiring inside a PRD, unrelated user workflows bundled into a
-     single catch-all user journey, or 80-word semicolon-chained prose bullets
-     listing repositories and owners instead of a `Task | Owner` table.
+   - Flag altitude mismatches and bucket-stuffing. On a `spec` PRD, flag both
+     low-level class wiring and dedicated `Technical Architecture` or subsystem
+     design sections that may belong in a companion TDD or separate tab, tagging
+     that section-boundary question as `"P1"` with `"Medium"` certainty. Also
+     flag unrelated user workflows bundled into one catch-all user journey, or
+     80-word semicolon-chained prose bullets listing repositories and owners
+     instead of a `Task | Owner` table.
 5. **Internal Contradictions Across Sections or Companion Tabs**:
    - Flag conflicting status, scope, or architecture claims across the document.
      Examples include a `Draft` header paired with an `Aligned` body, committing
