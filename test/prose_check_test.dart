@@ -596,4 +596,63 @@ Modern command-line tools benefit from fast deterministic feedback loops (especi
       },
     );
   });
+
+  group(
+    'Round-2 exported callouts, escapes, link slugs, and readme tuples',
+    () {
+      test('extracts prose and smells inside 1-column callout pipe boxes', () {
+        final report = assertProseSmells(
+          '| Callout with ⟦nested-parens: (outer (inner))⟧ parens. |\n'
+          '| :--- |\n',
+        );
+        check(report.stats.proseWords).equals(5);
+        check(report.stats.tableCount).equals(0);
+      });
+
+      test(
+        'unescapes exported build\\_runner and C\\# without splitting words',
+        () {
+          final escaped = assertProseSmells(
+            'Run build\\_runner and C\\# tools cleanly.\n',
+          );
+          final plain = scanProseDocument(
+            'Run build_runner and C# tools cleanly.\n',
+          );
+          check(escaped.stats.proseWords).equals(plain.stats.proseWords);
+          check(escaped.stats.proseWords).equals(6);
+        },
+      );
+
+      test(
+        'exempts HTML/CSS/SVG/JS and single-token link-label slash slugs',
+        () {
+          assertProseSmells(
+            'Render HTML/CSS/SVG/JS widgets across '
+            '[org/repo](https://example.com/a), '
+            '[alpha/beta/gamma](https://example.com/b), and '
+            '[core/sdk](https://example.com/c) while catching '
+            '⟦slash-jargon-chain: layout/vector/shader⟧ in prose.\n',
+          );
+        },
+      );
+
+      test('exempts readme type/default config tuples with semicolons', () {
+        final readmeRep = assertProseSmells(
+          '- `cleanBranches` (`bool`, default `true`; `false` when '
+          '`allowWorktree: true`): Skip branch cleanup.\n',
+          path: 'README.md',
+        );
+        check(readmeRep.profile).equals(ProseProfile.readme);
+        check(readmeRep.smells).isEmpty;
+
+        final specRep = scanProseDocument(
+          '- `cleanBranches` (`bool`, default `true`; `false` when '
+          '`allowWorktree: true`): Skip branch cleanup.\n',
+          path: 'design_spec.md',
+        );
+        check(specRep.totalSmellCountsById.keys)
+            .contains('compound-citation-paren');
+      });
+    },
+  );
 }

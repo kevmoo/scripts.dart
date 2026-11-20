@@ -3,36 +3,36 @@ part of '../prose_check.dart';
 final _nestedParenRegex = RegExp(
   r'\([^()]*\([^()]*\)[^()]*\)|\u2014[^\u2014]*\([^()]*\)[^\u2014]*\u2014',
 );
-final _parenGroupRegex = RegExp(r'\(([^()]*)\)');
 final _seeParenRegex = RegExp(
   r'^\(\s*(?:see|cf\.?)\b([^()]*)\)$',
   caseSensitive: false,
 );
-final _subordinateOpenRegex = RegExp(
-  r'\b(?:which|where|while|because|although|unless|whereas)\b',
-  caseSensitive: false,
-);
-final _clauseVerbRegex = RegExp(
-  r'\b(?:is|are|was|were|has|have|had|does|did|can|could|will|would|should|'
-  r'must|fell|grew|dropped|inflated|revealed|preventing|excluding|requiring|'
-  r'keeping|causing|succeeding|resolving|overriding|meaning|forcing|leaving|'
-  r'declares|requires|allows|ensures|tracks|writes|reads|produces|causes)\b',
-  caseSensitive: false,
-);
-final _domainOrRepoPathRegex = RegExp(
-  r'\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/[A-Za-z0-9_./#-]+|(?:^|(?<=[\s(]))'
-  r'(?://|(?:lib|bin|test|tool|pkg|packages|docs|skills|scripts|web|example|'
-  r'src|references)/)[A-Za-z0-9_./-]+|\b[A-Za-z0-9_-]+(?:/[A-Za-z0-9_.-]+)+\.'
-  r'(?:dart|py|go|js|ts|md|txt|yaml|yml|json|cc|h|sh|sql)\b|\b[a-z]{2,10}/'
-  r'[A-Za-z0-9_./#-]*\d[A-Za-z0-9_./#-]*',
-);
+final _subordinateOpenWords =
+    'which,where,while,because,although,unless,whereas'.split(',').toSet();
+final _clauseVerbWords =
+    'is,are,was,were,has,have,had,does,did,can,could,will,would,should,must,'
+            'fell,grew,dropped,inflated,revealed,preventing,excluding,'
+            'requiring,keeping,causing,succeeding,resolving,overriding,'
+            'meaning,forcing,leaving,declares,requires,allows,ensures,tracks,'
+            'writes,reads,produces,causes'
+        .split(',')
+        .toSet();
+final _repoRootDirs =
+    'lib,bin,test,tool,pkg,packages,docs,skills,scripts,web,example,src,'
+            'references'
+        .split(',')
+        .toSet();
+final _filePathExts = 'dart,py,go,js,ts,md,txt,yaml,yml,json,cc,h,sh,sql'
+    .split(',')
+    .toSet();
+final _linkSlugLabelRegex = RegExp(r'\uE001[^\s,;:()]+');
 final _codeSlashChainRegex = RegExp(r'\uE000(?:\s*/\s*\uE000)+');
 final _slash3ChainRegex = RegExp(
-  r'\b[A-Za-z0-9+#_-]{2,}/[A-Za-z0-9+#_.-]{2,}/[A-Za-z0-9+#_.-]{2,}'
-  r'(?:/[A-Za-z0-9+#_.-]{2,})*\b',
+  r'\b[A-Za-z0-9+#_\uE002-]{2,}/[A-Za-z0-9+#_.\uE002-]{2,}/'
+  r'[A-Za-z0-9+#_.\uE002-]{2,}(?:/[A-Za-z0-9+#_.\uE002-]{2,})*\b',
 );
 final _slashPairRegex = RegExp(
-  r'\b[A-Za-z0-9+#_.-]{2,}\s*/\s*[A-Za-z0-9+#_.-]{2,}\b',
+  r'\b[A-Za-z0-9+#_.\uE002-]{2,}\s*/\s*[A-Za-z0-9+#_.\uE002-]{2,}\b',
 );
 final _tildePctRangeRegex = RegExp(
   r'(?:\b(?:illustrative|hypothetical|rough|guessed)\s+)?'
@@ -41,9 +41,10 @@ final _tildePctRangeRegex = RegExp(
   caseSensitive: false,
 );
 final _htmlEntityRegex = RegExp(r'&[A-Za-z0-9#]+;');
-final _allowedSlash3 = 'html/css/js,ci/cd/ct,r/w/x,yyyy/mm/dd,mm/dd/yyyy'
-    .split(',')
-    .toSet();
+final _allowedSlash3 =
+    'html/css/js,html/css/svg/js,ci/cd/ct,r/w/x,yyyy/mm/dd,mm/dd/yyyy'
+        .split(',')
+        .toSet();
 
 ProseCheckReport _evaluateSmells(
   _ExtractedDoc doc, {
@@ -91,7 +92,7 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
   ];
   final (labeled, maxRun) = _countBoldLeads(proseBlocks);
   final (sentWords, parenW, pills, sentSmells) = _scanBlockSentences(
-    doc.mask,
+    doc,
     proseBlocks,
   );
   final sorted = List.of(sentWords)..sort();
@@ -119,16 +120,18 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
 }
 
 (List<int>, int, int, List<ProseSmell>) _scanBlockSentences(
-  _MaskedDoc mask,
+  _ExtractedDoc doc,
   List<_ProseBlock> blocks,
 ) {
   final words = <int>[], smells = <ProseSmell>[];
   var parenW = 0, pills = 0;
   for (final blk in blocks) {
-    pills += _codeSentinelChar.allMatches(blk.maskedSlice).length;
+    if (blk.maskedSlice.contains(_codeSentinelChar)) {
+      pills += _codeSentinelChar.allMatches(blk.maskedSlice).length;
+    }
     for (final s in blk.sentences) {
       words.add(s.$3);
-      final (pw, sm) = _analyzeSentence(mask, s);
+      final (pw, sm) = _analyzeSentence(doc, s);
       parenW += pw;
       smells.addAll(sm);
     }
@@ -161,28 +164,43 @@ List<ProseSmell> _checkBlockAndHeadingSmells(_ExtractedDoc doc) {
   ];
 }
 
+List<(int, int, String)> _innermostParens(String s) {
+  final out = <(int, int, String)>[];
+  var open = -1;
+  for (var i = 0; i < s.length; i++) {
+    final c = s.codeUnitAt(i);
+    if (c == 0x28) {
+      open = i;
+    } else if (c == 0x29 && open >= 0) {
+      out.add((open, i + 1, s.substring(open + 1, i)));
+      open = -1;
+    }
+  }
+  return out;
+}
+
 List<ProseSmell> _headingSmells(
   _LineIndex idx,
   _ProseBlock b,
   SmellSeverity em,
 ) {
   final out = _emDashSmells(idx, b.startOffset, b.maskedSlice, em);
-  if (b.headingLevel < 2) return out;
-  final p = _parenGroupRegex.allMatches(b.maskedSlice).toList();
+  if (b.headingLevel < 2 || !b.maskedSlice.contains('(')) return out;
+  final p = _innermostParens(b.maskedSlice);
   if (p.length >= 2) {
     return [
       ...out,
       idx.hi(
-        b.startOffset + p.first.start,
+        b.startOffset + p.first.$1,
         'multi-paren-sentence: ${p.length} parens in heading',
       ),
     ];
   }
-  if (p.length == 1 && _countWords(p.first[1]!) > 6) {
+  if (p.length == 1 && _countWords(p.first.$3) > 6) {
     return [
       ...out,
       idx.sm(
-        b.startOffset + p.first.start,
+        b.startOffset + p.first.$1,
         'long-or-clause-paren: Heading paren >6w',
       ),
     ];
@@ -200,6 +218,27 @@ List<ProseSmell> _blockSmells(_LineIndex idx, _ProseBlock b, SmellSeverity em) {
       b.maskedSlice.substring(b.bodyRelOffset),
       em,
     ),
+  ];
+  if (!b.maskedSlice.contains('(')) return out;
+  out.addAll(_nestedSmells(idx, b));
+  final p = _innermostParens(b.maskedSlice);
+  if (p.length >= 3) {
+    out.add(
+      idx.by(
+        b.startOffset + p[2].$1,
+        p.length >= 4,
+        'block-paren-pileup: ${p.length} parens in block',
+      ),
+    );
+  }
+  return out;
+}
+
+List<ProseSmell> _nestedSmells(_LineIndex idx, _ProseBlock b) {
+  if (!b.maskedSlice.contains('\u2014') && !_hasNestedParen(b.maskedSlice)) {
+    return const [];
+  }
+  return [
     for (final m in _nestedParenRegex.allMatches(b.maskedSlice))
       idx.hi(
         b.startOffset + m.start,
@@ -207,17 +246,16 @@ List<ProseSmell> _blockSmells(_LineIndex idx, _ProseBlock b, SmellSeverity em) {
         idx.spanEx(b.startOffset + m.start, m.end - m.start),
       ),
   ];
-  final p = _parenGroupRegex.allMatches(b.maskedSlice).toList();
-  if (p.length >= 3) {
-    out.add(
-      idx.by(
-        b.startOffset + p[2].start,
-        p.length >= 4,
-        'block-paren-pileup: ${p.length} parens in block',
-      ),
-    );
+}
+
+bool _hasNestedParen(String s) {
+  var d = 0;
+  for (var i = 0; i < s.length; i++) {
+    final c = s.codeUnitAt(i);
+    if (c == 0x28 && ++d >= 2) return true;
+    if (c == 0x29 && d > 0) d--;
   }
-  return out;
+  return false;
 }
 
 List<ProseSmell> _emDashSmells(
@@ -235,11 +273,11 @@ List<ProseSmell> _emDashSmells(
 }
 
 (int, List<ProseSmell>) _analyzeSentence(
-  _MaskedDoc m,
+  _ExtractedDoc doc,
   (int, String, int, int, bool) s,
 ) {
-  final idx = m.lineIndex;
-  final (pw, pSm) = _checkSentenceParens(idx, s);
+  final idx = doc.mask.lineIndex;
+  final (pw, pSm) = _checkSentenceParens(doc, s);
   return (
     pw,
     [
@@ -263,9 +301,14 @@ List<ProseSmell> _checkFlow(_LineIndex idx, (int, String, int, int, bool) s) {
 }
 
 ProseSmell? _semiSmell(_LineIndex idx, int off, String txt, int words) {
+  if (!txt.contains(';')) return null;
   final u = Uint16List.fromList(txt.codeUnits);
-  _maskRegexMatches(u, _htmlEntityRegex);
-  _maskRegexMatches(u, _parenGroupRegex);
+  if (txt.contains('&')) _maskRegexMatches(u, _htmlEntityRegex);
+  if (txt.contains('(')) {
+    for (final (ps, pe, _) in _innermostParens(txt)) {
+      _fillSpaces(u, ps, pe);
+    }
+  }
   final clean = String.fromCharCodes(u);
   final f = clean.indexOf(';');
   if (f < 0) return null;
@@ -279,55 +322,150 @@ ProseSmell? _semiSmell(_LineIndex idx, int off, String txt, int words) {
 }
 
 List<ProseSmell> _slashSmells(_LineIndex idx, (int, String, int, int, bool) s) {
+  final firstSlash = s.$2.indexOf('/');
+  if (firstSlash < 0 || firstSlash == s.$2.lastIndexOf('/')) return const [];
   final u = Uint16List.fromList(s.$2.codeUnits);
-  _maskRegexMatches(u, _domainOrRepoPathRegex);
-  _maskRegexMatches(u, _codeSlashChainRegex);
-  final clean = String.fromCharCodes(u), out = <ProseSmell>[];
-  for (final m in _slash3ChainRegex.allMatches(clean)) {
-    final t = m[0]!;
-    if (!_allowedSlash3.contains(t.toLowerCase()) &&
-        !t.contains(_codeSentinelChar)) {
-      out.add(
-        idx.hi(s.$1 + m.start, 'slash-jargon-chain: 3+ term slash chain', t),
-      );
-    }
-  }
+  if (s.$5) _maskRegexMatches(u, _linkSlugLabelRegex);
+  _maskDomainOrRepoPaths(u);
+  if (s.$4 >= 2) _maskRegexMatches(u, _codeSlashChainRegex);
+  final rem = String.fromCharCodes(u), f2 = rem.indexOf('/');
+  if (f2 < 0 || f2 == rem.lastIndexOf('/')) return const [];
+  return [
+    ..._collectSlash3Smells(idx, u, rem, s.$1),
+    ?_slashPairSmell(idx, String.fromCharCodes(u), s.$1),
+  ];
+}
+
+ProseSmell? _slashPairSmell(_LineIndex idx, String clean, int base) {
+  if (!clean.contains('/')) return null;
   final pairs = [
     for (final m in _slashPairRegex.allMatches(clean))
       if (!m[0]!.contains(_codeSentinelChar)) m,
   ];
-  if (pairs.length >= 3) {
-    out.add(
-      idx.sm(
-        s.$1 + pairs.first.start,
-        'slash-jargon-chain: ${pairs.length} slash pairs',
-        pairs.first[0]!,
-      ),
-    );
+  if (pairs.length < 3) return null;
+  return idx.sm(
+    base + pairs.first.start,
+    'slash-jargon-chain: ${pairs.length} slash pairs',
+    pairs.first[0]!.replaceAll('\uE002', ''),
+  );
+}
+
+void _maskDomainOrRepoPaths(Uint16List u) {
+  final s = String.fromCharCodes(u);
+  for (var i = 0; i < s.length;) {
+    if (!_isSlashTokenChar(s.codeUnitAt(i))) {
+      i++;
+      continue;
+    }
+    final end = _slashTokenEnd(s, i), te = _trimTrailingDots(s, i, end);
+    if (_isDomainOrRepoSpan(s, i, te)) _fillSpaces(u, i, te);
+    i = end;
+  }
+}
+
+bool _hasDomainOrRepoPath(String s) {
+  for (var i = 0; i < s.length;) {
+    if (!_isSlashTokenChar(s.codeUnitAt(i))) {
+      i++;
+      continue;
+    }
+    final end = _slashTokenEnd(s, i);
+    if (_isDomainOrRepoSpan(s, i, _trimTrailingDots(s, i, end))) return true;
+    i = end;
+  }
+  return false;
+}
+
+bool _isSlashTokenChar(int c) =>
+    _isWord(c) || c == 0x2E || c == 0x2F || c == 0x23 || c == 0x2D;
+
+int _slashTokenEnd(String s, int i) {
+  while (i < s.length && _isSlashTokenChar(s.codeUnitAt(i))) {
+    i++;
+  }
+  return i;
+}
+
+int _trimTrailingDots(String s, int start, int end) {
+  while (end > start && s.codeUnitAt(end - 1) == 0x2E) {
+    end--;
+  }
+  return end;
+}
+
+bool _isDomainOrRepoSpan(String s, int ts, int te) {
+  final tok = s.substring(ts, te);
+  final okPre =
+      ts == 0 || s.codeUnitAt(ts - 1) <= 0x20 || s.codeUnitAt(ts - 1) == 0x28;
+  if (tok.startsWith('//')) return okPre && tok.length > 2;
+  final slash = tok.indexOf('/');
+  if (slash <= 0 || slash >= tok.length - 1) return false;
+  final head = tok.substring(0, slash), tail = tok.substring(slash + 1);
+  return _isDomainHost(head) ||
+      (okPre && _repoRootDirs.contains(head)) ||
+      _hasKnownFileExt(tok, slash) ||
+      (_isLowerAlpha2To10(head) && _hasAsciiDigit(tail));
+}
+
+bool _isDomainHost(String h) =>
+    h.length >= 4 && h.contains('.') && !h.startsWith('.') && !h.endsWith('.');
+
+bool _hasKnownFileExt(String tok, int slash) {
+  final dot = tok.lastIndexOf('.');
+  return dot > slash && _filePathExts.contains(tok.substring(dot + 1));
+}
+
+bool _isLowerAlpha2To10(String h) {
+  if (h.length < 2 || h.length > 10) return false;
+  for (var i = 0; i < h.length; i++) {
+    final c = h.codeUnitAt(i);
+    if (c < 0x61 || c > 0x7A) return false;
+  }
+  return true;
+}
+
+List<ProseSmell> _collectSlash3Smells(
+  _LineIndex idx,
+  Uint16List u,
+  String rem,
+  int base,
+) {
+  final out = <ProseSmell>[];
+  for (final m in _slash3ChainRegex.allMatches(rem)) {
+    final t = m[0]!.replaceAll('\uE002', '');
+    if (!_allowedSlash3.contains(t.toLowerCase()) &&
+        !t.contains(_codeSentinelChar)) {
+      out.add(
+        idx.hi(base + m.start, 'slash-jargon-chain: 3+ term slash chain', t),
+      );
+    }
+    _fillSpaces(u, m.start, m.end);
   }
   return out;
 }
 
-List<ProseSmell> _tildeSmells(
-  _LineIndex idx,
-  (int, String, int, int, bool) s,
-) => [
-  for (final m in _tildePctRangeRegex.allMatches(s.$2))
-    idx.by(
-      s.$1 + m.start,
-      !s.$5,
-      'uncited-tilde-range: Tilde range',
-      idx.spanEx(s.$1 + m.start, m.end - m.start),
-    ),
-];
+List<ProseSmell> _tildeSmells(_LineIndex idx, (int, String, int, int, bool) s) {
+  if (!s.$2.contains('~')) return const [];
+  return [
+    for (final m in _tildePctRangeRegex.allMatches(s.$2))
+      idx.by(
+        s.$1 + m.start,
+        !s.$5,
+        'uncited-tilde-range: Tilde range',
+        idx.spanEx(s.$1 + m.start, m.end - m.start),
+      ),
+  ];
+}
 
 (int, List<ProseSmell>) _checkSentenceParens(
-  _LineIndex idx,
+  _ExtractedDoc doc,
   (int, String, int, int, bool) s,
 ) {
+  if (!s.$2.contains('(')) return (0, const []);
+  final idx = doc.mask.lineIndex;
   final (target, base) = _unwrapStandaloneParen(s.$2, s.$1);
-  final ms = _parenGroupRegex.allMatches(target).toList();
-  final ws = [for (final m in ms) _countWords(m[1]!)];
+  final ms = _innermostParens(target);
+  final ws = [for (final m in ms) _countWords(m.$3)];
   final sum = ws.fold<int>(0, (a, b) => a + b), out = <ProseSmell>[];
   if (ms.length >= 3 || (ms.length == 2 && sum >= 6)) {
     out.add(
@@ -339,33 +477,49 @@ List<ProseSmell> _tildeSmells(
     );
   }
   for (var i = 0; i < ms.length; i++) {
-    final m = ms[i],
-        off = base + m.start,
-        ex = idx.spanEx(off, m.end - m.start);
+    final m = ms[i], off = base + m.$1, ex = idx.spanEx(off, m.$2 - m.$1);
     out
-      ..addAll(_citeParenSmells(idx, off, (m[1]!, ws[i], ex)))
-      ..addAll(_clauseParenSmells(idx, off, (m[1]!, ws[i], ex)));
+      ..addAll(_citeParenSmells(doc, off, (m.$3, ws[i], ex)))
+      ..addAll(_clauseParenSmells(idx, off, (m.$3, ws[i], ex)));
   }
   return (sum, out);
 }
 
 List<ProseSmell> _citeParenSmells(
-  _LineIndex idx,
+  _ExtractedDoc doc,
   int off,
   (String, int, String) p,
 ) {
+  final idx = doc.mask.lineIndex;
   final (txt, pw, ex) = p;
-  final links = _linkSentinelChar.allMatches(txt).length;
-  if (txt.contains(';') ||
-      links >= 2 ||
-      (','.allMatches(txt).length >= 3 && pw > 6)) {
+  final links = txt.contains(_linkSentinelChar)
+      ? _linkSentinelChar.allMatches(txt).length
+      : 0;
+  final readmeTuple =
+      doc.profile == ProseProfile.readme &&
+      txt.contains(_codeSentinelChar) &&
+      txt.contains('default');
+  if (!readmeTuple && _isCompoundParen(txt, links, pw)) {
     return [idx.hi(off, 'compound-citation-paren: Compound paren', ex)];
   }
+  if (!_startsSeeOrCf(txt)) return const [];
   final sm = _seeParenRegex.firstMatch('($txt)');
   if (sm == null) return const [];
-  final hi = links > 0 || _domainOrRepoPathRegex.hasMatch(sm[1]!) || pw > 4;
+  final hi = links > 0 || _hasDomainOrRepoPath(sm[1]!) || pw > 4;
   return [idx.by(off, hi, 'compound-citation-paren: "(see ...)" crutch', ex)];
 }
+
+bool _startsSeeOrCf(String txt) {
+  final t = txt.trimLeft();
+  if (t.length < 2) return false;
+  final c0 = t.codeUnitAt(0) | 0x20, c1 = t.codeUnitAt(1) | 0x20;
+  return (c0 == 0x73 && c1 == 0x65) || (c0 == 0x63 && c1 == 0x66);
+}
+
+bool _isCompoundParen(String txt, int links, int pw) =>
+    txt.contains(';') ||
+    links >= 2 ||
+    (pw > 6 && txt.contains(',') && ','.allMatches(txt).length >= 3);
 
 List<ProseSmell> _clauseParenSmells(
   _LineIndex idx,
@@ -373,15 +527,37 @@ List<ProseSmell> _clauseParenSmells(
   (String, int, String) p,
 ) {
   final (txt, pw, ex) = p;
-  final cl =
-      (pw >= 6 && _subordinateOpenRegex.hasMatch(txt)) ||
-      (pw > 6 && _clauseVerbRegex.hasMatch(txt));
-  if (pw > 10 || cl) {
+  if (pw < 6) return const [];
+  if (pw > 10 || _hasClauseWord(txt, pw > 6)) {
     return [idx.hi(off, 'long-or-clause-paren: Clause in paren (${pw}w)', ex)];
   }
   return pw >= 8
       ? [idx.sm(off, 'long-or-clause-paren: Long paren (${pw}w)', ex)]
       : const [];
+}
+
+bool _hasClauseWord(String txt, bool checkVerbs) {
+  final lc = txt.toLowerCase();
+  for (var i = 0; i < lc.length;) {
+    if (!_isLower(lc.codeUnitAt(i))) {
+      i++;
+      continue;
+    }
+    final end = _lowerRunEnd(lc, i), w = lc.substring(i, end);
+    if (_subordinateOpenWords.contains(w) ||
+        (checkVerbs && _clauseVerbWords.contains(w))) {
+      return true;
+    }
+    i = end;
+  }
+  return false;
+}
+
+int _lowerRunEnd(String s, int i) {
+  while (i < s.length && _isLower(s.codeUnitAt(i))) {
+    i++;
+  }
+  return i;
 }
 
 (String, int) _unwrapStandaloneParen(String text, int start) {

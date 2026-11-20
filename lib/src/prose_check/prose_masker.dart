@@ -1,6 +1,6 @@
 part of '../prose_check.dart';
 
-const _codeSentinel = 0xE000, _linkSentinel = 0xE001;
+const _codeSentinel = 0xE000, _linkSentinel = 0xE001, _escapeJoiner = 0xE002;
 const _codeSentinelChar = '\uE000', _linkSentinelChar = '\uE001';
 
 final _yamlFrontmatterRegex = RegExp(
@@ -11,30 +11,40 @@ final _spotBlockRegex = RegExp(
   r'<!--\s*BEGIN SPOT:[^>]*-->[\s\S]*?<!--\s*END SPOT:[^>]*-->',
   caseSensitive: false,
 );
-final _detailsOrPreRegex = RegExp(
-  r'<(?:details|pre|script|style)\b[^>]*>[\s\S]*?</(?:details|pre|script|style)>',
+final _sectionTagRegex = RegExp(r'</?section\b[^>]*>', caseSensitive: false);
+final _attrBlockRegex = RegExp(r'\{[.#][A-Za-z0-9_-]+\}');
+final _inlineDataUriRegex = RegExp(
+  r'<data:image/[^>\s]+>',
   caseSensitive: false,
 );
-final _commentOrAttrRegex = RegExp(
-  r'<!--[\s\S]*?-->|</?section\b[^>]*>|\{[.#][A-Za-z0-9_-]+\}',
-  caseSensitive: false,
-);
-final _refDefOrDataLineRegex = RegExp(
-  r'^[ ]{0,3}\[[^\]]+\]:\s*\S+|<data:image/[^>\s]+>',
-  caseSensitive: false,
-);
+final _refDefPrefixRegex = RegExp(r'^[ ]{0,3}\[[^\]]+\]:\s*\S+');
 final _autolinkRegex = RegExp(r'<https?://[^>\s]+>');
 final _mdInlineLinkRegex = RegExp(
-  r'!?\[([^\[\]]*)\]\(((?:[^()\s]+|\([^()\s]*\))+)'
+  r'\[([^\[\]]{0,500})\]\(((?:[^()\s]|\([^()\s]*\))+)'
   r'(?:\s+(?:"[^"]*"|\x27[^\x27]*\x27))?\)',
 );
-final _mdRefLinkRegex = RegExp(r'!?\[(?!\^)([^\[\]\n]+)\]\[([^\[\]\n]*)\]');
-final _exportedEscapedPunctRegex = RegExp(r'(?<!\w)\\(?=[~#+.!-])');
+final _mdRefLinkRegex = RegExp(r'\[(?!\^)([^\[\]\n]+)\]\[([^\[\]\n]*)\]');
 final _listItemIndentRegex = RegExp(r'^(\s*)(?:[-*+]|\d+[.)])\s+');
 
 String _clipEx(String raw, [int maxLen = 48]) {
-  final one = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+  final one = _collapsePrefix(raw, maxLen + 1);
   return one.length <= maxLen ? one : '${one.substring(0, maxLen)}...';
+}
+
+String _collapsePrefix(String raw, int limit) {
+  final sb = StringBuffer();
+  var inWs = true;
+  for (var i = 0; i < raw.length && sb.length < limit; i++) {
+    final c = raw.codeUnitAt(i);
+    if (c <= 0x20) {
+      inWs = true;
+    } else {
+      if (inWs && sb.isNotEmpty) sb.writeCharCode(0x20);
+      sb.writeCharCode(c);
+      inWs = false;
+    }
+  }
+  return sb.toString();
 }
 
 final class _LineIndex {
@@ -96,10 +106,18 @@ final class _LineIndex {
 
 final class _MaskedDoc {
   final String raw, masked;
+  final int activeEnd;
   final _LineIndex lineIndex;
   final List<(int offset, String content, bool plural)> codeSpans;
   final List<(int offset, String destination)> links;
-  const new(this.raw, this.masked, this.lineIndex, this.codeSpans, this.links);
+  const new(
+    this.raw,
+    this.masked,
+    this.activeEnd,
+    this.lineIndex,
+    this.codeSpans,
+    this.links,
+  );
 }
 
 void _fillSpaces(Uint16List u, int s, int e) {
@@ -108,10 +126,19 @@ void _fillSpaces(Uint16List u, int s, int e) {
   }
 }
 
-void _maskRegexMatches(Uint16List u, RegExp re) {
-  for (final m in re.allMatches(String.fromCharCodes(u))) {
+void _maskRegexMatches(Uint16List u, RegExp re, [int? limit]) {
+  final s = String.fromCharCodes(u, 0, limit ?? u.length);
+  for (final m in re.allMatches(s)) {
     _fillSpaces(u, m.start, m.end);
   }
+}
+
+int _activeEnd(Uint16List u) {
+  var end = u.length;
+  while (end > 0 && u[end - 1] <= 0x20) {
+    end--;
+  }
+  return end;
 }
 
 /// Returns the 1:1 newline-preserving masked Markdown buffer for tests.
@@ -122,37 +149,106 @@ String debugMaskMarkdown(String raw) =>
 _MaskedDoc _maskDocument(String raw, {required ProseFormat format}) {
   final idx = _LineIndex(raw);
   if (format == ProseFormat.text) {
-    return _MaskedDoc(raw, raw, idx, const [], const []);
+    return _MaskedDoc(raw, raw, raw.length, idx, const [], const []);
   }
   final u = Uint16List.fromList(raw.codeUnits);
-  if (_yamlFrontmatterRegex.firstMatch(raw) case final fm?) {
-    _fillSpaces(u, 0, fm.end);
+  if (raw.startsWith('---')) {
+    if (_yamlFrontmatterRegex.firstMatch(raw) case final fm?) {
+      _fillSpaces(u, 0, fm.end);
+    }
   }
-  _maskFencedCodeBlocks(u, idx);
-  _maskRegexMatches(u, _spotBlockRegex);
-  _maskRegexMatches(u, _detailsOrPreRegex);
-  _maskRegexMatches(u, _commentOrAttrRegex);
+  if (raw.contains('```') || raw.contains('~~~')) {
+    _maskFencedCodeBlocks(u, idx);
+  }
   _maskLineDefsAndIndentedCode(u, idx);
-  final codes = _maskInlineCodeSpans(u), links = _maskLinksInsideOut(u);
-  _maskRegexMatches(u, _exportedEscapedPunctRegex);
-  return _MaskedDoc(raw, String.fromCharCodes(u), idx, codes, links);
+  final lim = _activeEnd(u);
+  _maskHtmlAndSpotBlocks(u, lim);
+  final codes = _maskInlineCodeSpans(u, lim);
+  final links = _maskLinksInsideOut(u, lim);
+  _maskExportedEscapes(u, lim);
+  return _MaskedDoc(raw, String.fromCharCodes(u), lim, idx, codes, links);
 }
 
+void _maskHtmlAndSpotBlocks(Uint16List u, int lim) {
+  final lc = String.fromCharCodes(u, 0, lim).toLowerCase();
+  if (lc.contains('<data:image/')) {
+    _maskRegexMatches(u, _inlineDataUriRegex, lim);
+  }
+  if (lc.contains('begin spot:')) _maskRegexMatches(u, _spotBlockRegex, lim);
+  _maskRawHtmlTags(u, lc);
+  if (lc.contains('<!--')) _maskHtmlComments(u, lc);
+  if (lc.contains('<section')) _maskRegexMatches(u, _sectionTagRegex, lim);
+  if (lc.contains('{.') || lc.contains('{#')) {
+    _maskRegexMatches(u, _attrBlockRegex, lim);
+  }
+}
+
+void _maskRawHtmlTags(Uint16List u, String lc) {
+  for (final tag in const ['details', 'pre', 'script', 'style']) {
+    if (lc.contains('<$tag')) _maskTagBlocks(u, lc, tag);
+  }
+}
+
+void _maskTagBlocks(Uint16List u, String lc, String tag) {
+  final open = '<$tag', close = '</$tag';
+  for (var s = lc.indexOf(open); s >= 0;) {
+    final boundary = s + open.length;
+    if (boundary < lc.length && _isAlpha(lc.codeUnitAt(boundary))) {
+      s = lc.indexOf(open, boundary);
+      continue;
+    }
+    final c = lc.indexOf(close, boundary);
+    if (c < 0) return;
+    final gt = lc.indexOf('>', c + close.length);
+    final end = gt < 0 ? lc.length : gt + 1;
+    _fillSpaces(u, s, end);
+    s = lc.indexOf(open, end);
+  }
+}
+
+void _maskHtmlComments(Uint16List u, String lc) {
+  for (var s = lc.indexOf('<!--'); s >= 0;) {
+    final c = lc.indexOf('-->', s + 4);
+    final end = c < 0 ? lc.length : c + 3;
+    _fillSpaces(u, s, end);
+    s = lc.indexOf('<!--', end);
+  }
+}
+
+void _maskExportedEscapes(Uint16List u, int lim) {
+  for (var i = 0; i + 1 < lim; i++) {
+    if (u[i] != 0x5C) continue;
+    final nx = u[i + 1];
+    if (nx == 0x5F || nx == 0x23) {
+      u[i] = _escapeJoiner;
+    } else if (_isEscapableSpacePunct(nx)) {
+      u[i] = 0x20;
+    }
+  }
+}
+
+bool _isEscapableSpacePunct(int c) =>
+    c == 0x7E || c == 0x2B || c == 0x2E || c == 0x21 || c == 0x2D;
+
 void _maskFencedCodeBlocks(Uint16List u, _LineIndex idx) {
-  final cur = String.fromCharCodes(u);
   var st = (0, 0);
   for (var ln = 1; ln <= idx.lineCount; ln++) {
     final (s, e) = idx.lineRange(ln);
-    final (next, mask) = _nextFence(
-      st,
-      cur.substring(s, e).replaceAll('\r', ''),
-    );
+    final head = String.fromCharCodes(
+      u,
+      s,
+      math.min(e, s + 160),
+    ).replaceAll('\r', '');
+    final (next, mask) = _nextFence(st, head);
     st = next;
     if (mask) _fillSpaces(u, s, e);
   }
 }
 
 ((int, int), bool) _nextFence((int, int) active, String line) {
+  if (!line.contains('```') && !line.contains('~~~')) {
+    return (active, active.$1 != 0);
+  }
   final m = _fenceLineRegex.firstMatch(line);
   if (m == null) return (active, active.$1 != 0);
   final d = m[1]!;
@@ -165,22 +261,26 @@ void _maskFencedCodeBlocks(Uint16List u, _LineIndex idx) {
 }
 
 void _maskLineDefsAndIndentedCode(Uint16List u, _LineIndex idx) {
-  final cur = String.fromCharCodes(u);
   var listInd = 0, prevBlank = true, inCode = false;
   for (var ln = 1; ln <= idx.lineCount; ln++) {
     final (s, e) = idx.lineRange(ln);
-    final line = cur.substring(s, e).replaceAll('\r', ''), trim = line.trim();
+    final head = String.fromCharCodes(
+      u,
+      s,
+      math.min(e, s + 200),
+    ).replaceAll('\r', '');
+    final trim = head.trim();
     if (trim.isEmpty ||
         trim == '&nbsp;' ||
-        _refDefOrDataLineRegex.hasMatch(line)) {
+        (trim.startsWith('[') && _refDefPrefixRegex.hasMatch(head))) {
       _fillSpaces(u, s, e);
       prevBlank = true;
-    } else if (_isIndentedCode(line, trim, listInd, prevBlank || inCode)) {
+    } else if (_isIndentedCode(head, trim, listInd, prevBlank || inCode)) {
       _fillSpaces(u, s, e);
       inCode = true;
     } else {
       inCode = prevBlank = false;
-      listInd = _nextListIndent(line, trim, listInd);
+      listInd = _nextListIndent(head, trim, listInd);
     }
   }
 }
@@ -189,14 +289,20 @@ bool _isIndentedCode(String l, String t, int ind, bool ok) =>
     ok && (l.length - l.trimLeft().length) >= ind + 4 && !_isBlockStart(l, t);
 
 int _nextListIndent(String l, String t, int cur) =>
-    _listItemIndentRegex.firstMatch(l)?.end ??
+    (_mayStartList(t) ? _listItemIndentRegex.firstMatch(l)?.end : null) ??
     ((t.startsWith('#') || t.startsWith('|')) ? 0 : cur);
 
 bool _isBlockStart(String l, String t) =>
-    _listItemIndentRegex.hasMatch(l) ||
+    (_mayStartList(t) && _listItemIndentRegex.hasMatch(l)) ||
     t.startsWith('|') ||
     t.startsWith('#') ||
     t.startsWith('>');
+
+bool _mayStartList(String t) {
+  if (t.isEmpty) return false;
+  final c = t.codeUnitAt(0);
+  return c == 0x2D || c == 0x2A || c == 0x2B || (c ^ 0x30) <= 9;
+}
 
 int _tickRunEnd(String t, int i) {
   while (i < t.length && t.codeUnitAt(i) == 0x60) {
@@ -205,17 +311,16 @@ int _tickRunEnd(String t, int i) {
   return i;
 }
 
-List<(int, String, bool)> _maskInlineCodeSpans(Uint16List u) {
-  final cur = String.fromCharCodes(u), out = <(int, String, bool)>[];
-  for (var i = 0; i < cur.length;) {
-    if (cur.codeUnitAt(i) != 0x60) {
-      i++;
-      continue;
-    }
+List<(int, String, bool)> _maskInlineCodeSpans(Uint16List u, int lim) {
+  final cur = String.fromCharCodes(u, 0, lim);
+  var i = cur.indexOf('`');
+  if (i < 0) return const [];
+  final out = <(int, String, bool)>[];
+  while (i >= 0 && i < cur.length) {
     final openEnd = _tickRunEnd(cur, i), k = openEnd - i;
     final closeS = _findClosingBackticks(cur, openEnd, k);
     if (closeS < 0) {
-      i = openEnd;
+      i = cur.indexOf('`', openEnd);
       continue;
     }
     final closeE = closeS + k, plural = _hasPluralS(cur, closeE);
@@ -223,7 +328,7 @@ List<(int, String, bool)> _maskInlineCodeSpans(Uint16List u) {
     u[i] = _codeSentinel;
     final end = plural ? closeE + 1 : closeE;
     _fillSpaces(u, i + 1, end);
-    i = end;
+    i = cur.indexOf('`', end);
   }
   return out;
 }
@@ -256,40 +361,52 @@ bool _isWord(int c) =>
     ((c | 0x20) >= 0x61 && (c | 0x20) <= 0x7A) ||
     c == 0x5F;
 
-List<(int, String)> _maskLinksInsideOut(Uint16List u) {
+List<(int, String)> _maskLinksInsideOut(Uint16List u, int lim) {
   final links = <(int, String)>[];
-  for (final m in _autolinkRegex.allMatches(String.fromCharCodes(u))) {
-    links.add((m.start, m[0]!.substring(1, m[0]!.length - 1)));
-    u[m.start] = _linkSentinel;
-    _fillSpaces(u, m.start + 1, m.end);
+  final cur0 = String.fromCharCodes(u, 0, lim);
+  if (cur0.contains('<http')) {
+    for (final m in _autolinkRegex.allMatches(cur0)) {
+      links.add((m.start, m[0]!.substring(1, m[0]!.length - 1)));
+      u[m.start] = _linkSentinel;
+      _fillSpaces(u, m.start + 1, m.end);
+    }
   }
-  while (_peelLinkLayer(u, links)) {}
-  for (final m in _mdRefLinkRegex.allMatches(String.fromCharCodes(u))) {
-    final bang = m[0]!.startsWith('!'), br = m.start + (bang ? 1 : 0);
-    if (bang) u[m.start] = 0x20;
-    u[br] = bang ? 0x20 : _linkSentinel;
-    _fillSpaces(u, br + 1 + m[1]!.length, m.end);
+  final mayNest = cur0.contains('[![');
+  if (_peelLinkLayer(u, lim, links) && mayNest) {
+    while (_peelLinkLayer(u, lim, links)) {}
   }
+  final curRef = String.fromCharCodes(u, 0, lim);
+  if (curRef.contains('][')) _maskRefLinkTokens(u, curRef);
   return links;
 }
 
-bool _peelLinkLayer(Uint16List u, List<(int, String)> links) {
-  final cur = String.fromCharCodes(u);
+void _maskRefLinkTokens(Uint16List u, String cur) {
+  for (final m in _mdRefLinkRegex.allMatches(cur)) {
+    final bang = m.start > 0 && u[m.start - 1] == 0x21;
+    if (bang) u[m.start - 1] = 0x20;
+    u[m.start] = bang ? 0x20 : _linkSentinel;
+    _fillSpaces(u, m.start + 1 + m[1]!.length, m.end);
+  }
+}
+
+bool _peelLinkLayer(Uint16List u, int lim, List<(int, String)> links) {
+  final cur = String.fromCharCodes(u, 0, lim);
+  if (!cur.contains('](')) return false;
   final ms = _mdInlineLinkRegex.allMatches(cur).toList();
   for (final m in ms) {
-    links.add((m.start, m[2]!.trim()));
-    _scrubMatchedLink(u, cur.codeUnitAt(m.start) == 0x21, m);
+    final bang = m.start > 0 && u[m.start - 1] == 0x21;
+    links.add((bang ? m.start - 1 : m.start, m[2]!.trim()));
+    _scrubMatchedLink(u, bang, m);
   }
   return ms.isNotEmpty;
 }
 
 void _scrubMatchedLink(Uint16List u, bool bang, RegExpMatch m) {
-  final br = bang ? m.start + 1 : m.start;
   final lbl = m[1]!, t = lbl.trim();
-  if (bang) u[m.start] = 0x20;
-  u[br] = bang ? 0x20 : _linkSentinel;
+  if (bang) u[m.start - 1] = 0x20;
+  u[m.start] = bang ? 0x20 : _linkSentinel;
   final hide = t.startsWith('http://') || t.startsWith('https://');
-  _fillSpaces(u, hide ? br + 1 : br + 1 + lbl.length, m.end);
+  _fillSpaces(u, hide ? m.start + 1 : m.start + 1 + lbl.length, m.end);
 }
 
 final _numericPillRegex = RegExp(
@@ -339,17 +456,36 @@ bool _isRelTarget(String d) =>
     !d.startsWith('mailto:') &&
     !d.startsWith('data:');
 
+bool _hasAsciiDigit(String s) {
+  for (var i = 0; i < s.length; i++) {
+    if ((s.codeUnitAt(i) ^ 0x30) <= 9) return true;
+  }
+  return false;
+}
+
 List<ProseSmell> _checkInlineCodeSmells(_MaskedDoc mask, ProseProfile prof) {
   final idx = mask.lineIndex, out = <ProseSmell>[];
   for (final (off, content, plural) in mask.codeSpans) {
-    final t = content.trim(), ex = '`${_clipEx(t)}`';
-    final okInt =
-        prof == ProseProfile.readme && _readmeScalarIntRegex.hasMatch(t);
-    if (_numericPillRegex.hasMatch(t) && !okInt) {
-      out.add(idx.sm(off, 'numeric-backtick: Number or rate in backticks', ex));
+    final t = content.trim();
+    if (_hasAsciiDigit(t) &&
+        !(prof == ProseProfile.readme && _readmeScalarIntRegex.hasMatch(t)) &&
+        _numericPillRegex.hasMatch(t)) {
+      out.add(
+        idx.sm(
+          off,
+          'numeric-backtick: Number or rate in backticks',
+          '`${_clipEx(t)}`',
+        ),
+      );
     }
     if (plural) {
-      out.add(idx.sm(off, 'code-span-plural: Plural suffix on code', '${ex}s'));
+      out.add(
+        idx.sm(
+          off,
+          'code-span-plural: Plural suffix on code',
+          '`${_clipEx(t)}`s',
+        ),
+      );
     }
   }
   return out;

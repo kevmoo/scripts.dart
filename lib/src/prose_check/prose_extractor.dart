@@ -4,51 +4,44 @@ final _taskMarkerRegex = RegExp(r'^\[[ xX]\]\s+');
 final _leadingLabelRegex = RegExp(
   r'^(?:\*\*([^*]+)\*\*\s*:?|\*([^*]+)\*\s*:)\s*',
 );
-final _metaHeaderLineRegex = RegExp(r'^(?:\*?[A-Za-z ]+:\*?\s+\S+\s*){2,}$');
+final _metaHeaderLineRegex = RegExp(
+  r'^(?:\*?[A-Za-z]+(?: [A-Za-z]+)?:\*?[ \t]+\S+[ \t]*){2,}$',
+);
 final _alertHeaderRegex = RegExp(
   r'^>\s*\[!(?:NOTE|TIP|IMPORTANT|WARNING|CAUTION)\]\s*$',
 );
 final _hrLineRegex = RegExp(r'^[-*_]{3,}\s*$');
 final _headingPrefixRegex = RegExp(r'^(#{1,6})\s+');
-final _unescapedPipeRegex = RegExp(r'(?<!\\)\|');
 final _tableSepCellRegex = RegExp(r'^:?-{2,}:?$');
+final _mdKeyStripRegex = RegExp(r'[*_`]');
 final _enumParenRegex = RegExp(r'\(\s*(?:\d{1,2}|[a-z]|[ivx]{1,4})\s*\)');
 final _footnoteRefRegex = RegExp(r'\[\^[^\]]+\]');
 
-final _sentenceDotMaskRegexes = <RegExp>[
-  RegExp(
-    r'\.{3,}|\u2026|\b(?:[A-Za-z]\.){2,}|'
-    r'(?<=\b[A-Z])\.(?=\s+(?!(?:However|Therefore|Thus|The|This|That|In|On|At|'
-    r'For|When|While|If|We|It|They|Our)\b)[A-Z])',
-  ),
-  RegExp(
-    r'\b(?:vs|v|e\.g|i\.e|incl|approx|cf|al|viz|ca|Mr|Ms|Mrs|Dr|Prof|St|Fig|'
-    r'Figs|No|p|pp)\.',
-    caseSensitive: false,
-  ),
-  RegExp(
-    r'\b(?:etc|Inc|Corp|Ltd|Co|Jr|Sr)\.(?!\s+(?:However|Therefore|Thus|'
-    r'Moreover|Furthermore|Instead|Meanwhile|Next|First|Second|Third|Finally|'
-    r'The|This|That|These|Those|In|On|At|For|When|While|Where|Because|Although|'
-    r'If|We|It|They|Our)\b)',
-  ),
-  RegExp(
-    r'(?<=\d)\.(?=\d)|(?<=[:;(\s])\d{1,2}\.(?=\s+[a-z])|'
-    r'(?:^|(?<=[\s(\[`]))\.[A-Za-z0-9_-]{1,12}\b',
-  ),
-  RegExp(
-    r'\b(?:[A-Za-z0-9_-]+\.)+(?:dev|com|org|io|net|gov|edu|uk|md|txt|py|go|js|'
-    r'ts|sql|pbtxt|tf|html|yaml|yml|json|dart|cc|h|sh|toml|lock)\b',
-    caseSensitive: false,
-  ),
-];
 final _sentenceBoundaryRegex = RegExp(
   r'[.!?](?:["\x27\u201d\u2019)\]*]+)?(?:\[\^[^\]]+\])*(?=\s+|$)',
 );
-final _wordRegex = RegExp(
-  r"\uE000|\d+(?:[.,]\d+)*(?:[-'/][A-Za-z0-9_]+)*"
-  r"|[A-Za-z0-9_]+(?:[-'/][A-Za-z0-9_]+)*",
-);
+final _tier1Abbrevs =
+    'vs,v,e.g,i.e,incl,approx,cf,al,viz,ca,mr,ms,mrs,dr,prof,st,fig,figs,no,'
+            'p,pp'
+        .split(',')
+        .toSet();
+final _tier2Abbrevs = 'etc,Inc,Corp,Ltd,Co,Jr,Sr'.split(',').toSet();
+final _initialStarters =
+    'However,Therefore,Thus,The,This,That,In,On,At,For,When,While,If,We,It,'
+            'They,Our'
+        .split(',')
+        .toSet();
+final _etcStarters = {
+  ..._initialStarters,
+  ...'Moreover,Furthermore,Instead,Meanwhile,Next,First,Second,Third,Finally,'
+          'These,Those,Where,Because,Although'
+      .split(','),
+};
+final _dotExts =
+    'dev,com,org,io,net,gov,edu,uk,md,txt,py,go,js,ts,sql,pbtxt,tf,html,yaml,'
+            'yml,json,dart,cc,h,sh,toml,lock'
+        .split(',')
+        .toSet();
 final _docMetadataKeys =
     'author,authors,status,owner,owners,updated,date,reviewers,target'
         .split(',')
@@ -84,18 +77,71 @@ final class _ExtractedDoc {
   const new(this.mask, this.profile, this.format, this.blocks, this.tables);
 }
 
-int _countWords(String text) =>
-    _wordRegex.allMatches(text.replaceAll(_footnoteRefRegex, ' ')).length;
+int _countWords(String text) {
+  final s = text.contains('[^')
+      ? text.replaceAll(_footnoteRefRegex, ' ')
+      : text;
+  var words = 0, i = 0;
+  while (i < s.length) {
+    final c = s.codeUnitAt(i);
+    if (c == _codeSentinel) {
+      words++;
+      i++;
+    } else if (_isWordCore(c)) {
+      words++;
+      i = _consumeWordToken(s, i + 1);
+    } else {
+      i++;
+    }
+  }
+  return words;
+}
+
+bool _isWordCore(int c) => _isWord(c) || c == _escapeJoiner;
+
+int _consumeWordToken(String s, int start) {
+  var i = start;
+  while (i < s.length) {
+    final nx = _stepWordToken(s, i);
+    if (nx < 0) break;
+    i = nx;
+  }
+  return i;
+}
+
+int _stepWordToken(String s, int i) {
+  final c = s.codeUnitAt(i);
+  if (_isWordCore(c) || c == 0x23) return i + 1;
+  if (_isWordJoinPunct(c) &&
+      i + 1 < s.length &&
+      _isWordCore(s.codeUnitAt(i + 1))) {
+    return i + 2;
+  }
+  return -1;
+}
+
+bool _isWordJoinPunct(int c) =>
+    c == 0x2E || c == 0x2C || c == 0x27 || c == 0x2F || c == 0x2D;
 
 _ExtractedDoc _extractDocument(_MaskedDoc m, ProseProfile p, ProseFormat f) {
   final st = _ExtractorState(m, p, f);
-  for (var ln = 1; ln <= m.lineIndex.lineCount; ln++) {
+  final maxLn = m.activeEnd == 0
+      ? 0
+      : m.lineIndex.locationAt(m.activeEnd - 1).line;
+  for (var ln = 1; ln <= maxLn; ln++) {
     st.consumeLine(ln);
   }
   st
     ..flushBlock()
     ..flushTable();
   return _ExtractedDoc(m, p, f, st.blocks, st.tables);
+}
+
+bool _isBlankRange(Uint16List u, int s, int e) {
+  for (var i = s; i < e; i++) {
+    if (u[i] > 0x20) return false;
+  }
+  return true;
 }
 
 final class _ExtractorState {
@@ -112,26 +158,47 @@ final class _ExtractorState {
   final List<(int, int, String)> tableCells = [];
 
   new(this.mask, this.profile, this.format)
-    : cleanUnits = Uint16List.fromList(mask.masked.codeUnits);
+    : cleanUnits = Uint16List.fromList(
+        mask.masked
+            .substring(
+              0,
+              mask.activeEnd == 0
+                  ? 0
+                  : mask.lineIndex
+                        .lineRange(
+                          mask.lineIndex.locationAt(mask.activeEnd - 1).line,
+                        )
+                        .$2,
+            )
+            .codeUnits,
+      );
 
   void consumeLine(int ln) {
     final (s, e) = mask.lineIndex.lineRange(ln);
-    final rawL = mask.raw.substring(s, e), maskL = mask.masked.substring(s, e);
-    if (maskL.trim().isEmpty) {
+    if (_isBlankRange(cleanUnits, s, e)) {
       flushBlock();
       return flushTable();
     }
+    final maskL = mask.masked.substring(s, e);
+    final rawL = mask.raw.substring(s, e);
     if (format == ProseFormat.markdown && _consumeMd(ln, (s, e), rawL, maskL)) {
       return;
     }
     flushTable();
-    final noCr = maskL.replaceAll('\r', '');
-    if (_listItemIndentRegex.firstMatch(noCr) case final b?) {
+    final noCr = String.fromCharCodes(cleanUnits.sublist(s, e))
+        .replaceAll('\r', '');
+    final b = _mayStartList(noCr.trimLeft())
+        ? _listItemIndentRegex.firstMatch(noCr)
+        : null;
+    if (b != null) {
       flushBlock();
       blockStart = s;
       blockEnd = e;
       isBullet = true;
-      final tm = _taskMarkerRegex.firstMatch(noCr.substring(b.end));
+      final rest = noCr.substring(b.end);
+      final tm = rest.startsWith('[')
+          ? _taskMarkerRegex.firstMatch(rest)
+          : null;
       return _fillSpaces(cleanUnits, s, s + b.end + (tm?.end ?? 0));
     }
     blockStart ??= s;
@@ -146,11 +213,12 @@ final class _ExtractorState {
       return true;
     }
     if (strip.startsWith('|') && strip.endsWith('|')) {
-      flushBlock();
-      _consumeTableRow(ln, r.$1, rawL, maskL);
-      return true;
+      return _consumePipeLine(ln, r.$1, rawL, maskL);
     }
-    if (_headingPrefixRegex.firstMatch(strip) case final hm?) {
+    final hm = strip.startsWith('#')
+        ? _headingPrefixRegex.firstMatch(strip)
+        : null;
+    if (hm != null) {
       flushBlock();
       flushTable();
       _fillSpaces(cleanUnits, r.$1, r.$1 + maskL.indexOf('#') + hm.end);
@@ -185,21 +253,42 @@ final class _ExtractorState {
       q.startsWith('"') ||
       (q.startsWith('*') && !q.startsWith('**'));
 
-  void _consumeTableRow(int ln, int s, String rawL, String maskL) {
+  bool _consumePipeLine(int ln, int s, String rawL, String maskL) {
     final p1 = maskL.indexOf('|'), p2 = maskL.lastIndexOf('|');
-    if (p2 <= p1) return;
+    if (p2 <= p1) return true;
     final inS = p1 + 1, inMask = maskL.substring(inS, p2);
-    final inRaw = rawL.substring(inS, math.min(p2, rawL.length));
     final spans = _splitPipeOffsets(inMask);
-    if (tableCols == null) _initTableHeader(ln, s + p1, inRaw, spans);
-    if (_isSepRow(inMask, spans) || (tableCols ?? 0) < 2) return;
-    if (tableRowIndex++ > 0) _recordRowCells(s + inS, inMask, inRaw, spans);
+    if (tableCols == null && spans.length == 1) {
+      if (_isSepRow(inMask, spans)) {
+        flushBlock();
+        return true;
+      }
+      cleanUnits[s + p1] = 0x20;
+      cleanUnits[s + p2] = 0x20;
+      return false;
+    }
+    flushBlock();
+    _consumeMultiColTableRow(ln, (s + p1, s + inS), (rawL, inMask, p2), spans);
+    return true;
+  }
+
+  void _consumeMultiColTableRow(
+    int ln,
+    (int pipeOff, int innerOff) offs,
+    (String rawL, String inMask, int p2) txt,
+    List<(int, int)> spans,
+  ) {
+    final inS = offs.$2 - offs.$1 + txt.$1.indexOf('|');
+    final inRaw = txt.$1.substring(inS, math.min(txt.$3, txt.$1.length));
+    if (tableCols == null) _initTableHeader(ln, offs.$1, inRaw, spans);
+    if (_isSepRow(txt.$2, spans) || (tableCols ?? 0) < 2) return;
+    if (tableRowIndex++ > 0) _recordRowCells(offs.$2, txt.$2, inRaw, spans);
   }
 
   void _initTableHeader(int ln, int off, String inRaw, List<(int, int)> spans) {
     final end = spans.isEmpty ? 0 : math.min(spans.first.$2, inRaw.length);
     final first = spans.isEmpty ? '' : inRaw.substring(spans.first.$1, end);
-    final key = first.replaceAll(RegExp(r'[*_`]'), '').trim().toLowerCase();
+    final key = first.replaceAll(_mdKeyStripRegex, '').trim().toLowerCase();
     tableOffset = off;
     tableCols = spans.length;
     tableIsMeta =
@@ -246,11 +335,15 @@ final class _ExtractorState {
 }
 
 bool _isFlushLine(String s, String rawT) =>
-    _hrLineRegex.hasMatch(s) ||
+    (_isHrStart(s) && _hrLineRegex.hasMatch(s)) ||
     s == '[TOC]' ||
-    _alertHeaderRegex.hasMatch(s) ||
+    (s.startsWith('>') && _alertHeaderRegex.hasMatch(s)) ||
     rawT.startsWith('![') ||
     (rawT.startsWith('[![') && _countWords(s) <= 6);
+
+bool _isHrStart(String s) =>
+    s.length >= 3 &&
+    (s.startsWith('---') || s.startsWith('***') || s.startsWith('___'));
 
 bool _isSepRow(String inner, List<(int, int)> spans) => spans.every((s) {
   final c = inner.substring(s.$1, s.$2).trim();
@@ -260,9 +353,11 @@ bool _isSepRow(String inner, List<(int, int)> spans) => spans.every((s) {
 List<(int, int)> _splitPipeOffsets(String inner) {
   final out = <(int, int)>[];
   var last = 0;
-  for (final m in _unescapedPipeRegex.allMatches(inner)) {
-    out.add((last, m.start));
-    last = m.end;
+  for (var i = inner.indexOf('|'); i >= 0; i = inner.indexOf('|', i + 1)) {
+    if (i == 0 || inner.codeUnitAt(i - 1) != 0x5C) {
+      out.add((last, i));
+      last = i + 1;
+    }
   }
   return out..add((last, inner.length));
 }
@@ -270,9 +365,14 @@ List<(int, int)> _splitPipeOffsets(String inner) {
 _ProseBlock? _buildBlock(Uint16List u, (int, int) r, bool bul, ProseProfile p) {
   final sub = u.sublist(r.$1, r.$2);
   final raw = String.fromCharCodes(sub), trim = raw.trim();
-  if (trim.isEmpty || _metaHeaderLineRegex.hasMatch(trim)) return null;
+  if (trim.isEmpty ||
+      (trim.length <= 160 &&
+          trim.contains(':') &&
+          _metaHeaderLineRegex.hasMatch(trim))) {
+    return null;
+  }
   final (lead, pOff, bRel) = bul ? _parseLead(raw, r.$1, p) : (false, null, 0);
-  _maskTopLevelEnumParens(sub);
+  if (raw.contains('(')) _maskTopLevelEnumParens(sub);
   final clean = String.fromCharCodes(sub);
   final rel = clean.substring(bRel).trim().isNotEmpty ? bRel : 0;
   final sents = _splitSents(clean.substring(rel), r.$1 + rel);
@@ -291,6 +391,7 @@ void _maskTopLevelEnumParens(Uint16List sub) {
 
 (bool, int?, int) _parseLead(String raw, int start, ProseProfile p) {
   final ws = raw.length - raw.trimLeft().length, after = raw.substring(ws);
+  if (!after.startsWith('*')) return (false, null, 0);
   final m = _leadingLabelRegex.firstMatch(after);
   if (m == null) return (false, null, 0);
   final lbl = m[1] ?? m[2] ?? '';
@@ -310,7 +411,7 @@ bool _okReadmeLead(String lbl, ProseProfile p) =>
 
 List<(int, String, int, int, bool)> _splitSents(String slice, int base) {
   final u = _zeroNonBoundaryDots(slice);
-  _maskMidParenDots(u);
+  if (slice.contains('(')) _maskMidParenDots(u);
   final seg = String.fromCharCodes(u), out = <(int, String, int, int, bool)>[];
   var cur = 0;
   for (final m in _sentenceBoundaryRegex.allMatches(seg)) {
@@ -323,15 +424,154 @@ List<(int, String, int, int, bool)> _splitSents(String slice, int base) {
 
 Uint16List _zeroNonBoundaryDots(String slice) {
   final u = Uint16List.fromList(slice.codeUnits);
-  for (final m in [
-    for (final r in _sentenceDotMaskRegexes) ...r.allMatches(slice),
-  ]) {
-    for (var i = m.start; i < m.end; i++) {
-      if (u[i] == 0x2E || u[i] == 0x2026) u[i] = 0;
-    }
-  }
+  if (_hasDotLike(slice)) _applyDotMasks(u, slice);
   return u;
 }
+
+bool _hasDotLike(String s) => s.contains('.') || s.contains('\u2026');
+
+void _applyDotMasks(Uint16List u, String s) {
+  for (var i = 0; i < u.length; i++) {
+    if (u[i] == 0x2026) u[i] = 0;
+  }
+  for (var d = s.indexOf('.'); d >= 0; d = s.indexOf('.', d + 1)) {
+    if (d + 2 < s.length &&
+        s.codeUnitAt(d + 1) == 0x2E &&
+        s.codeUnitAt(d + 2) == 0x2E) {
+      d = _zeroDotRun(u, s, d);
+    } else if (_isNonSentenceDot(s, d)) {
+      u[d] = 0;
+    }
+  }
+}
+
+int _zeroDotRun(Uint16List u, String s, int d) {
+  while (d + 1 < s.length && s.codeUnitAt(d + 1) == 0x2E) {
+    u[d++] = 0;
+  }
+  u[d] = 0;
+  return d;
+}
+
+bool _isNonSentenceDot(String s, int d) =>
+    _isDecimalDot(s, d) ||
+    _isLeadingExtDot(s, d) ||
+    _isChainExtDot(s, d) ||
+    _isInlineListDot(s, d) ||
+    _isAbbrevOrInitialDot(s, d);
+
+bool _isDecimalDot(String s, int d) =>
+    d > 0 &&
+    d + 1 < s.length &&
+    (s.codeUnitAt(d - 1) ^ 0x30) <= 9 &&
+    (s.codeUnitAt(d + 1) ^ 0x30) <= 9;
+
+bool _isLeadingExtDot(String s, int d) {
+  if (d > 0 && !_isLeadExtPre(s.codeUnitAt(d - 1))) return false;
+  final end = _identDashEnd(s, d + 1), len = end - (d + 1);
+  return len >= 1 &&
+      len <= 12 &&
+      (end == s.length || !_isWord(s.codeUnitAt(end)));
+}
+
+bool _isLeadExtPre(int c) => c <= 0x20 || c == 0x28 || c == 0x5B || c == 0x60;
+
+int _identDashEnd(String s, int i) {
+  while (i < s.length &&
+      (_isWord(s.codeUnitAt(i)) || s.codeUnitAt(i) == 0x2D)) {
+    i++;
+  }
+  return i;
+}
+
+bool _isChainExtDot(String s, int d) {
+  if (d == 0 || !_isIdentDash(s.codeUnitAt(d - 1))) return false;
+  final (cur, last) = _walkDotChain(s, d);
+  return last.isNotEmpty &&
+      (cur == s.length || !_isWord(s.codeUnitAt(cur))) &&
+      _dotExts.contains(last.toLowerCase());
+}
+
+bool _isIdentDash(int c) => _isWord(c) || c == 0x2D;
+
+(int, String) _walkDotChain(String s, int d) {
+  var cur = d, last = '';
+  while (cur < s.length && s.codeUnitAt(cur) == 0x2E) {
+    final end = _identDashEnd(s, cur + 1);
+    if (end == cur + 1) break;
+    last = s.substring(cur + 1, end);
+    cur = end;
+  }
+  return (cur, last);
+}
+
+bool _isInlineListDot(String s, int d) {
+  if (d == 0 || (s.codeUnitAt(d - 1) ^ 0x30) > 9) return false;
+  final numStart = d >= 2 && (s.codeUnitAt(d - 2) ^ 0x30) <= 9 ? d - 2 : d - 1;
+  if (numStart > 0 && !_isListPre(s.codeUnitAt(numStart - 1))) return false;
+  final nx = _skipWs(s, d + 1);
+  return nx > d + 1 && nx < s.length && _isLower(s.codeUnitAt(nx));
+}
+
+bool _isListPre(int c) => c <= 0x20 || c == 0x3A || c == 0x3B || c == 0x28;
+
+int _skipWs(String s, int i) {
+  while (i < s.length && s.codeUnitAt(i) <= 0x20) {
+    i++;
+  }
+  return i;
+}
+
+bool _isAbbrevOrInitialDot(String s, int d) {
+  final ws = _alphaDotWordStart(s, d);
+  if (ws >= d || (ws > 0 && _isWord(s.codeUnitAt(ws - 1)))) return false;
+  final wb = s.substring(ws, d);
+  if (_isLetterDotRun(s, d, wb) || _tier1Abbrevs.contains(wb.toLowerCase())) {
+    return true;
+  }
+  final nx = _nextAlphaWordAfterWs(s, d + 1);
+  if (_tier2Abbrevs.contains(wb)) return !_etcStarters.contains(nx);
+  return wb.length == 1 &&
+      _isUpper(wb.codeUnitAt(0)) &&
+      nx.isNotEmpty &&
+      _isUpper(nx.codeUnitAt(0)) &&
+      !_initialStarters.contains(nx);
+}
+
+int _alphaDotWordStart(String s, int d) {
+  var i = d;
+  while (i > 0 &&
+      (_isAlpha(s.codeUnitAt(i - 1)) || s.codeUnitAt(i - 1) == 0x2E)) {
+    i--;
+  }
+  return i < d && s.codeUnitAt(i) == 0x2E ? i + 1 : i;
+}
+
+bool _isLetterDotRun(String s, int d, String wb) =>
+    (wb.length >= 3 &&
+        wb.codeUnitAt(wb.length - 2) == 0x2E &&
+        _isAlpha(wb.codeUnitAt(wb.length - 1)) &&
+        _isAlpha(wb.codeUnitAt(wb.length - 3))) ||
+    (wb.length == 1 &&
+        _isAlpha(wb.codeUnitAt(0)) &&
+        d + 2 < s.length &&
+        _isAlpha(s.codeUnitAt(d + 1)) &&
+        s.codeUnitAt(d + 2) == 0x2E &&
+        (d + 3 == s.length || !_isWord(s.codeUnitAt(d + 3))));
+
+String _nextAlphaWordAfterWs(String s, int from) {
+  final i = _skipWs(s, from);
+  if (i == from || i >= s.length || !_isAlpha(s.codeUnitAt(i))) return '';
+  var e = i + 1;
+  while (e < s.length && _isAlpha(s.codeUnitAt(e))) {
+    e++;
+  }
+  return s.substring(i, e);
+}
+
+bool _isUpper(int c) => c >= 0x41 && c <= 0x5A;
+bool _isLower(int c) => c >= 0x61 && c <= 0x7A;
+bool _isAlpha(int c) => _isUpper(c) || _isLower(c);
 
 void _emitSent(
   List<(int, String, int, int, bool)> o,
@@ -339,11 +579,13 @@ void _emitSent(
   int b,
   (int, int) r,
 ) {
-  final sub = s.substring(r.$1, r.$2),
-      lead = sub.length - sub.trimLeft().length;
+  final sub = s.substring(r.$1, r.$2);
+  final lead = sub.length - sub.trimLeft().length;
   final txt = sub.trim(), wc = _countWords(txt);
   if (wc == 0) return;
-  final pills = _codeSentinelChar.allMatches(txt).length;
+  final pills = txt.contains(_codeSentinelChar)
+      ? _codeSentinelChar.allMatches(txt).length
+      : 0;
   o.add((b + r.$1 + lead, txt, wc, pills, txt.contains(_linkSentinelChar)));
 }
 
