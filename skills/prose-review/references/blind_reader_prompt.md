@@ -30,24 +30,22 @@ Calibrate expectations to the `Profile` and `Audience` supplied by the caller:
 
 - **`spec` and `narrative` profiles**: Covers PRDs, RFCs, design proposals,
   strategy memos, alignment theses, and analytical readouts. Within 30 seconds
-  of reading the title, header metadata, and Executive Summary, a senior
-  reviewer must know what concrete decision, sign-off, or feedback is requested,
-  from which owners, and by what deadline.
+  of reading the title and opening summary, a reader must understand the
+  problem, the core proposal or thesis, and any decision or feedback requested.
 - **`readme` and `technical` profiles**: Covers package `README.md` files, CLI
   references, developer guides, and runbooks. Within 30 seconds, a developer
   must know what the tool or system does, whether it fits their problem, and how
-  to install or invoke it. Do not demand approver tables or sign-off deadlines
-  on these reference profiles, and treat CLI exit codes, flag defaults, and
+  to install or invoke it. Treat CLI exit codes, flag defaults, and
   configuration key listings as idiomatic.
 
 ## Five Semantic Failure Modes to Audit
 
 Evaluate the text against these five failure modes that syntax regexes miss:
 
-1. **30-Second Reader Ask, Decision Owners & Framing Tone**:
-   - Check whether the requested reader action appears above the fold on lines 1
-     through 35, rather than going unstated or hiding past line 300 inside open
-     questions.
+1. **30-Second Purpose, Reader Ask & Framing Tone**:
+   - Check whether the document's purpose and any requested reader feedback
+     appear clearly above the fold on lines 1 through 35, rather than going
+     unstated or hiding past line 300 inside open questions.
    - On `spec` and `narrative` drafts, flag alarmist or top-down mandates such
      as `"Freeze all current roadmap work"` or unapproved cross-team scope
      presented as a fait accompli instead of shared goals and explicit
@@ -110,9 +108,8 @@ Evaluate the text against these five failure modes that syntax regexes miss:
      and the opposite row omits it, verify that individual table rows (for
      example, a `v1` row listing `"none identified"` for a required signal) do
      not violate inclusion criteria stated in prose sections, and flag cross-tab
-     title/date mismatches or personal account handles in work metadata headers.
-     Cite both conflicting line numbers, such as `L28 vs. L67`, and double-check
-     physical line numbers before emitting JSON.
+     title or link mismatches. Cite both conflicting line numbers, such as
+     `L28 vs. L67`, and double-check physical line numbers before emitting JSON.
 
 ## Urgency & Certainty Tagging
 
