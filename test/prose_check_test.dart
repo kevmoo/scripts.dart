@@ -822,4 +822,72 @@ Directory link [dir](file://${tempDir.path}) exists on disk.
       );
     },
   );
+
+  group('Dogfood Run #2 regressions', () {
+    test('exempts Framework/Language pairs, C#/.NET, and org/repo slugs while '
+        'catching lowercase slash-jargon piles', () {
+      assertProseSmells(
+        'Compare Flutter/Dart, React/TypeScript, PyTorch/Python, '
+        'Kotlin/Compose, C\\#/.NET, LLVM/Gradle, and flutter/dash-evals.\n\n'
+        'Avoid ⟦slash-jargon-chain: sync/async⟧, read/write, and '
+        'client/server wrappers in prose.\n',
+      );
+    });
+
+    test('ignores parens inside link display text and downgrades cross-tab '
+        '(see ...) pointers to smell', () {
+      final rep = assertProseSmells(
+        'Read [Tab 1 (Thesis, Speculative Bets, Candidate Mitigations, '
+        'and Team Next Steps)](https://example.com/t1) first '
+        '⟦compound-citation-paren: (see [Tab 2: Evidence '
+        'Ledger](https://example.com/t2))⟧.\n',
+      );
+      check(rep.smells.single.severity).equals(SmellSeverity.smell);
+    });
+
+    test('aggregates 3+ repeated bold-lead-paren schema labels into 1 smell '
+        'while keeping ad-hoc lead parens high', () {
+      final ledger = [
+        '- **Ad-hoc Lead (one-off)**: Short item.',
+        for (var i = 0; i < 5; i++)
+          '- **Verified Today (Oct 2026)**: Domain $i verified item.',
+      ].join('\n');
+      final rep = scanProseDocument(ledger);
+      final leads = [
+        for (final s in rep.smells)
+          if (s.smellId == 'bold-lead-paren') s,
+      ];
+      check(leads.length).equals(2);
+      check(leads.first.severity).equals(SmellSeverity.high);
+      check(leads.last.severity).equals(SmellSeverity.smell);
+      check(leads.last.summary).contains('5x');
+    });
+
+    test('detects unbackticked snake_case, package:, and .h symbol soup on '
+        'narrative and spec profiles', () {
+      final filler = List.generate(
+        17,
+        (i) =>
+            'Plain narrative context sentence $i sets up product goals '
+            'across teams with twenty simple English words cleanly today.',
+      ).join(' ');
+      const soup =
+          'Expose build\\_runner, a2ui_flutter, hot_reload, '
+          'widget_inspector, package:unified_analytics, and dart_mcp_server '
+          'through embedder.h across every executive summary paragraph.';
+      final doc = '$soup\n\n$filler\n';
+
+      final nar = scanProseDocument(doc, profile: ProseProfile.narrative);
+      check(nar.stats.pillsPer100Words).equals(0);
+      check(nar.stats.rawSymbolsPer100Words).isGreaterThan(2.0);
+      check(nar.totalSmellCountsById.keys)
+        ..contains('raw-symbol-soup')
+        ..contains('raw-symbol-density');
+
+      final tech = scanProseDocument(doc, profile: ProseProfile.technical);
+      check(tech.totalSmellCountsById.containsKey('raw-symbol-soup')).isFalse;
+      check(tech.totalSmellCountsById.containsKey('raw-symbol-density'))
+          .isFalse;
+    });
+  });
 }

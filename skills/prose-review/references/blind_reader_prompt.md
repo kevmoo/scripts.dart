@@ -9,8 +9,10 @@ resource.
 
 1. **Single-File Read Only**: This rubric is already supplied inline in your
    prompt; use your single `read_file` call strictly on the target document path
-   you were given. Do not read other repository files, run shell commands, or
-   search the web, and assume you did not click external links.
+   you were given (or read the `1: ...`-numbered lines directly when the caller
+   supplies the target text inline). Do not read other repository files, run
+   shell commands, or search the web, and assume you did not click external
+   links.
 2. **Physical Line Anchors**: Cite exact 1-based physical line numbers such as
    `L12` or `L28 vs. L67`, counting frontmatter, headings, and blank lines.
    Treat collapsed `<details>` blocks as folded supporting material unless the
@@ -97,12 +99,13 @@ Evaluate the text against these five failure modes that syntax regexes miss:
      to a design in Section 2 while listing it as undecided in Open Questions,
      or sub-counts that fail to sum to the stated total.
    - Cross-check prose ordinal and count claims (`"fifth externally"`,
-     `"all four targets"`) against the actual rows of the referenced table, and
+     `"all four targets"`) against the actual rows of the referenced table,
      verify that individual table rows (for example, a `v1` row listing
      `"none identified"` for a required signal) do not violate inclusion
-     criteria stated in prose sections. Cite both conflicting line numbers, such
-     as `L28 vs. L67`, and double-check physical line numbers before emitting
-     JSON.
+     criteria stated in prose sections, and flag cross-tab title/date mismatches
+     or personal account handles in work metadata headers. Cite both conflicting
+     line numbers, such as `L28 vs. L67`, and double-check physical line numbers
+     before emitting JSON.
 
 ## Urgency & Certainty Tagging
 

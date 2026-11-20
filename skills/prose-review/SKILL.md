@@ -55,6 +55,11 @@ cat /path/to/draft.md | kscripts prose-check --json -
      plain-text scrape. Plain-text scrapes strip `**bold**` markers, inline
      `` `code` `` spans, and table pipes, hiding wall-of-bold monotony while
      turning table rows into fake 100-word sentences.
+   - Because rich-text Markdown exporters often drop embedded raster diagrams or
+     inline images silently, list or check document images alongside export, and
+     on **multi-tab documents**, pull all companion tabs and verify cross-tab
+     heading titles, `Updated` dates, cross-tab link labels, and
+     work-vs-personal author handles in header metadata.
 2. **Classify Profile & Audience**:
    - Read the opening ~30 lines (frontmatter, title, headings) to confirm or
      override `--profile` (`--profile=auto` inspects filename keywords plus
@@ -82,7 +87,8 @@ cat /path/to/draft.md | kscripts prose-check --json -
    - Extracts exact vitality ratios (`proseWords`, `proseBlocks` as the
      denominator of `boldLeadPct` across all non-heading paragraphs and list
      items including nested sub-bullets, `sentenceMeanWords`, `pctOver30Words`,
-     `pctWordsInParens`, `pillsPer100Words`, `boldLeadPct`,
+     `pctWordsInParens`, `pillsPer100Words`, `rawSymbolsPer100Words` for
+     backtick-stripped `snake_case` / `package:` / `.h` symbols, `boldLeadPct`,
      `maxConsecutiveBoldLeads`, `maxTableCols`, `maxTableCellWords`),
      profile-calibrated `thresholds`, `profileReason`, `totalSmellCountsById`,
      and stratified `line:column` hotspots with context excerpts in `~15 ms` and
@@ -90,22 +96,27 @@ cat /path/to/draft.md | kscripts prose-check --json -
 
 ### Step 2: Hotspot Sanity Check & Inquisitor Smell Dismissal
 
-Read **only** the flagged `line:column` hotspot lines (`+/- 3` lines of context)
-rather than trusting regex hits blindly. Drop false smells using three
-**Inquisitor Dismissal Filters** before scoring:
+If `truncatedSmells > 0`, re-run with `--top=0` first so every hotspot is
+visible. Read **only** the flagged `line:column` hotspot lines (`+/- 3` lines of
+context) rather than trusting regex hits blindly, and drop false smells using
+three **Inquisitor Dismissal Filters** before scoring:
 
 - **`[DISMISSED: REFERENCE_IDIOM]`**: Backticked version strings (such as
   `` `1.0` ``, `` `3.x` ``, or `` `1.2.0` ``), CLI exit codes or HTTP status
-  literals (such as `` `78` `` or `` `200 OK` ``), CLI option or config key
-  type/default tuples (`(bool, default true; ...)`), short parenthetical
-  platform or scope qualifiers on CLI reference bullets, API type signatures,
-  config reference tables, and `code-pill-soup` or `paren-word-share` totals
-  driven by enumerating CLI flags and config keys in `readme`/`technical` docs.
+  literals (such as `` `78` `` or `` `200 OK` ``), `Framework/Language` stack
+  pairs (`Flutter/Dart`, `React/TypeScript`) and `org/repo` slugs, CLI option or
+  config key type/default tuples (`(bool, default true; ...)`), short
+  parenthetical platform or scope qualifiers on CLI reference bullets, API type
+  signatures, config reference tables, and `code-pill-soup` or
+  `paren-word-share` totals driven by enumerating CLI flags and config keys in
+  `readme`/`technical` docs.
 - **`[DISMISSED: INTENTIONAL_EMPHASIS]`**: Bounded `3`-to-`5` item option lists
-  using `**Option A**:` labels, short term definitions, deliberate rhetorical
-  contrasts, or `smell`-tier `wall-of-bold` hits in `spec`/`technical` docs when
-  short conclusion-first bullets are used uniformly under clear section prose
-  without mixing nested sub-bullets and flat bold leads across sections.
+  using `**Option A**:` labels, repeated structured ledger/schema labels across
+  parallel sections (such as `**Verified Today (Oct 2026)**`), short term
+  definitions, deliberate rhetorical contrasts, or `smell`-tier `wall-of-bold`
+  hits in `spec`/`technical` docs when short conclusion-first bullets are used
+  uniformly under clear section prose without mixing nested sub-bullets and flat
+  bold leads across sections.
 - **`[DISMISSED: LOW_CERTAINTY_OPINION]`**: Pure subjective word-choice
   preferences where existing prose is already clear and concise.
 
@@ -117,12 +128,14 @@ Spawn **one** strictly read-only subagent (`EnableWriteTools: false`, or an
 isolated read-only `Explore` / `research` helper agent with file-read access
 only, no shell commands, and zero authoring-conversation context):
 
-1. **Inline the Rubric**: Read
+1. **Inline the Rubric (and Numbered Scratch Text When Sandboxed)**: Read
    [references/blind_reader_prompt.md](references/blind_reader_prompt.md)
    yourself and paste its full instructions **inline** into the subagent's
-   prompt alongside one line stating `Profile`, target `Audience`, and the
-   target file path, so the subagent's **single** `read_file` call reads only
-   the target document.
+   prompt alongside `Profile`, target `Audience`, and the target file path so
+   the subagent's **single** `read_file` call reads only the target document.
+   When the exported snapshot lives in a scratch directory outside a read-only
+   subagent's workspace sandbox, pass `1: ...`-prefixed physical lines inline in
+   the prompt instead of a path for exact line anchors with zero sandbox errors.
 2. **Inquisitor Line-Citation Check**: Before merging Step 3 findings into Step
    4, verify every cited line or line pair (`L28 vs. L67`) against the target
    file. Fix off-by-a-few line numbers, downgrade overstated urgency, and drop

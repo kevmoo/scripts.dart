@@ -65,6 +65,7 @@ final class ProseStats {
   final int proseBlocks, maxTableCols;
   final double estimatedReadMinutes, sentenceMeanWords, pctOver30Words;
   final double pctWordsInParens, pillsPer100Words, boldLeadPct;
+  final double rawSymbolsPer100Words;
 
   const new([
     this.proseWords = 0,
@@ -82,6 +83,7 @@ final class ProseStats {
     this.maxTableCellWords = 0,
     this.proseBlocks = 0,
     this.maxTableCols = 0,
+    this.rawSymbolsPer100Words = 0,
   ]);
 
   Map<String, Object?> toJson() => {
@@ -95,6 +97,7 @@ final class ProseStats {
     'pctOver30Words': pctOver30Words,
     'pctWordsInParens': pctWordsInParens,
     'pillsPer100Words': pillsPer100Words,
+    'rawSymbolsPer100Words': rawSymbolsPer100Words,
     'boldLeadPct': boldLeadPct,
     'maxConsecutiveBoldLeads': maxConsecutiveBoldLeads,
     'tableCount': tableCount,

@@ -388,12 +388,21 @@ List<(int, String)> _maskLinksInsideOut(Uint16List u, int lim) {
   return links;
 }
 
+void _scrubParens(Uint16List u, int s, int e) {
+  for (var i = s; i < e; i++) {
+    final c = u[i];
+    if (c == 0x28 || c == 0x29) u[i] = 0x20;
+  }
+}
+
 void _maskRefLinkTokens(Uint16List u, String cur) {
   for (final m in _mdRefLinkRegex.allMatches(cur)) {
     final bang = m.start > 0 && u[m.start - 1] == 0x21;
     if (bang) u[m.start - 1] = 0x20;
     u[m.start] = bang ? 0x20 : _linkSentinel;
-    _fillSpaces(u, m.start + 1 + m[1]!.length, m.end);
+    final lblEnd = m.start + 1 + m[1]!.length;
+    if (!bang) _scrubParens(u, m.start + 1, lblEnd);
+    _fillSpaces(u, lblEnd, m.end);
   }
 }
 
@@ -414,7 +423,9 @@ void _scrubMatchedLink(Uint16List u, bool bang, RegExpMatch m) {
   if (bang) u[m.start - 1] = 0x20;
   u[m.start] = bang ? 0x20 : _linkSentinel;
   final hide = t.startsWith('http://') || t.startsWith('https://');
-  _fillSpaces(u, hide ? m.start + 1 : m.start + 1 + lbl.length, m.end);
+  final lblEnd = m.start + 1 + lbl.length;
+  if (!hide && !bang) _scrubParens(u, m.start + 1, lblEnd);
+  _fillSpaces(u, hide ? m.start + 1 : lblEnd, m.end);
 }
 
 final _numericPillRegex = RegExp(

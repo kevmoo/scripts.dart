@@ -45,6 +45,18 @@ final _allowedSlash3 =
     'html/css/js,html/css/svg/js,ci/cd/ct,r/w/x,yyyy/mm/dd,mm/dd/yyyy'
         .split(',')
         .toSet();
+final _orgRepoSlugRegex = RegExp(r'^[a-z0-9_]+/[a-z0-9_]+-[a-z0-9_.-]+$');
+final _listLeadTrimRegex = RegExp(r'^(?:[-*+]|\d+[.)])\s+(?:\[[ xX]\]\s+)?');
+final _docNavRefRegex = RegExp(
+  r'^\s*\uE001?\s*(?:tab|section|appendix|part|table|figure)\b',
+  caseSensitive: false,
+);
+final _rawCodeSymbolRegex = RegExp(
+  r'\bpackage:[a-z][a-z0-9_\uE002]*\b'
+  r'|\b[a-z][a-z0-9]*(?:\uE002?_[a-z0-9]+)+\b'
+  r'|\b[A-Za-z0-9_\uE002-]+\.(?:dart|h|cc|cpp|hpp|py|go|rs|kt|java|swift|proto|yaml|json|toml|sh)\b'
+  r'|(?:(?<=\s)|^)--[a-z][a-z0-9-]+\b',
+);
 
 ProseCheckReport _evaluateSmells(
   _ExtractedDoc doc, {
@@ -94,7 +106,7 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
       if (!b.isHeading) b,
   ];
   final (labeled, maxRun, boldOff) = _countBoldLeads(proseBlocks);
-  final (sentWords, parenW, pills, sentSmells) = _scanBlockSentences(
+  final (sentWords, parenW, pills, rawSyms, sentSmells) = _scanBlockSentences(
     doc,
     proseBlocks,
   );
@@ -120,30 +132,32 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
       maxCell,
       proseBlocks.length,
       maxCols,
+      _pct(rawSyms, totalW),
     ),
     boldOff,
     sentSmells,
   );
 }
 
-(List<int>, int, int, List<ProseSmell>) _scanBlockSentences(
+(List<int>, int, int, int, List<ProseSmell>) _scanBlockSentences(
   _ExtractedDoc doc,
   List<_ProseBlock> blocks,
 ) {
   final words = <int>[], smells = <ProseSmell>[];
-  var parenW = 0, pills = 0;
+  var parenW = 0, pills = 0, rawSyms = 0;
   for (final blk in blocks) {
     if (blk.maskedSlice.contains(_codeSentinelChar)) {
       pills += _codeSentinelChar.allMatches(blk.maskedSlice).length;
     }
     for (final s in blk.sentences) {
       words.add(s.$3);
-      final (pw, sm) = _analyzeSentence(doc, s);
+      final (pw, rs, sm) = _analyzeSentence(doc, s);
       parenW += pw;
+      rawSyms += rs;
       smells.addAll(sm);
     }
   }
-  return (words, parenW, pills, smells);
+  return (words, parenW, pills, rawSyms, smells);
 }
 
 (int, int, int) _countBoldLeads(List<_ProseBlock> blocks) {
@@ -160,15 +174,47 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
   return (labeled, maxRun, maxRunOff);
 }
 
+String _normLeadKey(String raw, _ProseBlock b) => _clipEx(
+  raw.substring(b.startOffset, b.startOffset + b.bodyRelOffset),
+  80,
+).replaceFirst(_listLeadTrimRegex, '').toLowerCase();
+
+Map<String, int> _countLeadParenKeys(_ExtractedDoc doc) {
+  final counts = <String, int>{};
+  for (final b in doc.blocks) {
+    if (!b.isHeading && b.leadOpenParenOffset != null) {
+      final k = _normLeadKey(doc.mask.raw, b);
+      counts[k] = (counts[k] ?? 0) + 1;
+    }
+  }
+  return counts;
+}
+
+ProseSmell? _leadParenSmell(
+  _LineIndex idx,
+  _ProseBlock b,
+  Map<String, int> counts,
+  Set<String> seen,
+) {
+  final off = b.leadOpenParenOffset;
+  if (off == null) return null;
+  final k = _normLeadKey(idx.raw, b), n = counts[k] ?? 1;
+  if (n < 3) return idx.hi(off, 'bold-lead-paren: Paren in bullet lead');
+  return seen.add(k)
+      ? idx.sm(off, 'bold-lead-paren: Repeated schema lead (${n}x)')
+      : null;
+}
+
 List<ProseSmell> _checkBlockAndHeadingSmells(_ExtractedDoc doc) {
   final em = doc.profile == ProseProfile.readme
       ? SmellSeverity.info
       : SmellSeverity.smell;
+  final leadCounts = _countLeadParenKeys(doc), seenLeads = <String>{};
   return [
     for (final b in doc.blocks)
       ...(b.isHeading
           ? _headingSmells(doc.mask.lineIndex, b, em)
-          : _blockSmells(doc.mask.lineIndex, b, em)),
+          : _blockSmells(doc.mask.lineIndex, b, em, leadCounts, seenLeads)),
   ];
 }
 
@@ -216,10 +262,16 @@ List<ProseSmell> _headingSmells(
   return out;
 }
 
-List<ProseSmell> _blockSmells(_LineIndex idx, _ProseBlock b, SmellSeverity em) {
+List<ProseSmell> _blockSmells(
+  _LineIndex idx,
+  _ProseBlock b,
+  SmellSeverity em,
+  Map<String, int> leadCounts,
+  Set<String> seenLeads,
+) {
+  final leadSm = _leadParenSmell(idx, b, leadCounts, seenLeads);
   final out = <ProseSmell>[
-    if (b.leadOpenParenOffset case final off?)
-      idx.hi(off, 'bold-lead-paren: Paren in bullet lead'),
+    ?leadSm,
     ..._emDashSmells(
       idx,
       b.startOffset + b.bodyRelOffset,
@@ -281,16 +333,21 @@ List<ProseSmell> _emDashSmells(
   return [idx.mark(at, single, 'prose-em-dash: Prose em-dash', ex)];
 }
 
-(int, List<ProseSmell>) _analyzeSentence(
+bool _isReaderProseProfile(ProseProfile p) =>
+    p == ProseProfile.narrative || p == ProseProfile.spec;
+
+(int, int, List<ProseSmell>) _analyzeSentence(
   _ExtractedDoc doc,
   (int, String, int, int, bool) s,
 ) {
   final idx = doc.mask.lineIndex;
   final (pw, pSm) = _checkSentenceParens(doc, s);
+  final rawSyms = _rawCodeSymbolRegex.allMatches(s.$2).length;
   return (
     pw,
+    rawSyms,
     [
-      ..._checkFlow(idx, s),
+      ..._checkFlow(idx, doc.profile, s, rawSyms),
       ..._slashSmells(idx, s),
       ..._tildeSmells(idx, s),
       ...pSm,
@@ -298,11 +355,23 @@ List<ProseSmell> _emDashSmells(
   );
 }
 
-List<ProseSmell> _checkFlow(_LineIndex idx, (int, String, int, int, bool) s) {
+List<ProseSmell> _checkFlow(
+  _LineIndex idx,
+  ProseProfile prof,
+  (int, String, int, int, bool) s,
+  int rawSyms,
+) {
   final semi = _semiSmell(idx, s.$1, s.$2, s.$3);
+  final rawSoup = _isReaderProseProfile(prof) && s.$3 >= 12 && rawSyms >= 4;
   return [
     if (s.$3 > 25 && s.$4 >= 7)
       idx.by(s.$1, s.$4 >= 9, 'code-pill-soup: ${s.$4} code spans in ${s.$3}w'),
+    if (rawSoup)
+      idx.by(
+        s.$1,
+        rawSyms >= 6,
+        'raw-symbol-soup: $rawSyms unbackticked code symbols in ${s.$3}w',
+      ),
     if (s.$3 > 35)
       idx.by(s.$1, s.$3 >= 45, 'long-sentence: ${s.$3}-word sentence'),
     ?semi,
@@ -347,17 +416,31 @@ List<ProseSmell> _slashSmells(_LineIndex idx, (int, String, int, int, bool) s) {
   ];
 }
 
+bool _startsCapOrDotCap(String s) =>
+    s.isNotEmpty &&
+    (_isUpper(s.codeUnitAt(0)) ||
+        (s.codeUnitAt(0) == 0x2E && s.length > 1 && _isUpper(s.codeUnitAt(1))));
+
+bool _isBenignSlashPair(String raw) {
+  final p = raw.replaceAll('\uE002', '');
+  if (!p.contains(' ') && _orgRepoSlugRegex.hasMatch(p)) return true;
+  final sl = p.indexOf('/');
+  return _startsCapOrDotCap(p.substring(0, sl).trim()) &&
+      _startsCapOrDotCap(p.substring(sl + 1).trim());
+}
+
 ProseSmell? _slashPairSmell(_LineIndex idx, String clean, int base) {
   if (!clean.contains('/')) return null;
   final pairs = [
     for (final m in _slashPairRegex.allMatches(clean))
-      if (!m[0]!.contains(_codeSentinelChar)) m,
+      if (!m[0]!.contains(_codeSentinelChar) && !_isBenignSlashPair(m[0]!)) m,
   ];
   if (pairs.length < 3) return null;
+  final at = base + pairs.first.start;
   return idx.sm(
-    base + pairs.first.start,
+    at,
     'slash-jargon-chain: ${pairs.length} slash pairs',
-    pairs.first[0]!.replaceAll('\uE002', ''),
+    idx.contextEx(at),
   );
 }
 
@@ -516,7 +599,9 @@ List<ProseSmell> _citeParenSmells(
   if (!_startsSeeOrCf(txt)) return const [];
   final sm = _seeParenRegex.firstMatch('($txt)');
   if (sm == null) return const [];
-  final hi = links > 0 || _hasDomainOrRepoPath(sm[1]!) || pw > 4;
+  final target = sm[1]!;
+  final nav = links <= 1 && _docNavRefRegex.hasMatch(target);
+  final hi = !nav && (_hasDomainOrRepoPath(target) || links >= 2 || pw > 6);
   return [idx.by(off, hi, 'compound-citation-paren: "(see ...)" crutch', ex)];
 }
 
@@ -634,7 +719,7 @@ List<ProseSmell> _checkDocAggregates(
   final idx = doc.mask.lineIndex, c = _capsFor(doc.profile);
   final w400 = st.proseWords >= 400;
   return [
-    if (st.proseWords >= 300) ..._checkWord300Smells(idx, c, st),
+    if (st.proseWords >= 300) ..._checkWord300Smells(idx, doc.profile, c, st),
     if (w400 && st.pctWordsInParens >= c.parenWarn)
       idx.by(
         0,
@@ -659,21 +744,32 @@ List<ProseSmell> _checkDocAggregates(
 
 List<ProseSmell> _checkWord300Smells(
   _LineIndex idx,
+  ProseProfile prof,
   _ProfileCaps c,
   ProseStats st,
-) => [
-  if (st.pctOver30Words > c.over30Warn || st.sentenceMeanWords > c.meanWarn)
-    idx.by(
-      0,
-      st.pctOver30Words > c.over30High || st.sentenceMeanWords > c.meanHigh,
-      'run-on-share: ${st.pctOver30Words}% >30w',
-      'mean ${st.sentenceMeanWords}w, max ${st.sentenceMaxWords}w',
-    ),
-  if (st.pillsPer100Words > c.pillsWarn)
-    idx.by(
-      0,
-      st.pillsPer100Words > c.pillsHigh,
-      'doc-pill-density: ${st.pillsPer100Words}/100w',
-      '${st.proseWords} prose words',
-    ),
-];
+) {
+  final rawCap = prof == ProseProfile.narrative ? (2.0, 4.0) : (3.5, 6.0);
+  return [
+    if (st.pctOver30Words > c.over30Warn || st.sentenceMeanWords > c.meanWarn)
+      idx.by(
+        0,
+        st.pctOver30Words > c.over30High || st.sentenceMeanWords > c.meanHigh,
+        'run-on-share: ${st.pctOver30Words}% >30w',
+        'mean ${st.sentenceMeanWords}w, max ${st.sentenceMaxWords}w',
+      ),
+    if (st.pillsPer100Words > c.pillsWarn)
+      idx.by(
+        0,
+        st.pillsPer100Words > c.pillsHigh,
+        'doc-pill-density: ${st.pillsPer100Words}/100w',
+        '${st.proseWords} prose words',
+      ),
+    if (_isReaderProseProfile(prof) && st.rawSymbolsPer100Words > rawCap.$1)
+      idx.by(
+        0,
+        st.rawSymbolsPer100Words > rawCap.$2,
+        'raw-symbol-density: ${st.rawSymbolsPer100Words}/100w unbackticked',
+        '${st.proseWords} prose words',
+      ),
+  ];
+}
