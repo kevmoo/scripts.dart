@@ -49,17 +49,19 @@ final _allowedSlash3 =
 ProseCheckReport _evaluateSmells(
   _ExtractedDoc doc, {
   required String path,
+  required String reason,
   Directory? baseDir,
 }) {
-  final (stats, sentSmells) = _computeProseStats(doc);
+  final (stats, boldOff, sentSmells) = _computeProseStats(doc);
   final smells = <ProseSmell>[
     ..._checkLinkSmells(doc.mask, baseDir),
     ..._checkInlineCodeSmells(doc.mask, doc.profile),
     ..._checkBlockAndHeadingSmells(doc),
     ...sentSmells,
     ..._checkTableCells(doc),
+    ..._checkWideTables(doc),
     ..._checkMicroTables(doc),
-    ..._checkDocAggregates(doc, stats),
+    ..._checkDocAggregates(doc, stats, boldOff),
   ]..sort(_compareSmells);
   final counts = <String, int>{};
   for (final s in smells) {
@@ -68,6 +70,7 @@ ProseCheckReport _evaluateSmells(
   return ProseCheckReport(
     path: path,
     profile: doc.profile,
+    profileReason: reason,
     format: doc.format,
     stats: stats,
     smells: smells,
@@ -85,12 +88,12 @@ int _compareSmells(ProseSmell a, ProseSmell b) {
 double _r1(double v) => (v * 10).roundToDouble() / 10;
 double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
 
-(ProseStats, List<ProseSmell>) _computeProseStats(_ExtractedDoc doc) {
+(ProseStats, int, List<ProseSmell>) _computeProseStats(_ExtractedDoc doc) {
   final proseBlocks = [
     for (final b in doc.blocks)
       if (!b.isHeading) b,
   ];
-  final (labeled, maxRun) = _countBoldLeads(proseBlocks);
+  final (labeled, maxRun, boldOff) = _countBoldLeads(proseBlocks);
   final (sentWords, parenW, pills, sentSmells) = _scanBlockSentences(
     doc,
     proseBlocks,
@@ -99,6 +102,7 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
   final sc = sorted.length, totalW = sorted.fold<int>(0, (a, b) => a + b);
   final cells = [for (final t in doc.tables) ...t.$5];
   final maxCell = cells.fold<int>(0, (m, c) => math.max(m, c.$2));
+  final maxCols = doc.tables.fold<int>(0, (m, t) => math.max(m, t.$2));
   return (
     ProseStats(
       totalW,
@@ -114,7 +118,10 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
       maxRun,
       doc.tables.length,
       maxCell,
+      proseBlocks.length,
+      maxCols,
     ),
+    boldOff,
     sentSmells,
   );
 }
@@ -139,17 +146,18 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
   return (words, parenW, pills, smells);
 }
 
-(int, int) _countBoldLeads(List<_ProseBlock> blocks) {
-  var labeled = 0, run = 0, maxRun = 0;
+(int, int, int) _countBoldLeads(List<_ProseBlock> blocks) {
+  var labeled = 0, run = 0, maxRun = 0, runStart = 0, maxRunOff = 0;
   for (final b in blocks) {
     if (!b.hasBoldOrItalicLead) {
       run = 0;
     } else {
       labeled++;
-      if (++run > maxRun) maxRun = run;
+      if (run++ == 0) runStart = b.startOffset;
+      if (run > maxRun) (maxRun, maxRunOff) = (run, runStart);
     }
   }
-  return (labeled, maxRun);
+  return (labeled, maxRun, maxRunOff);
 }
 
 List<ProseSmell> _checkBlockAndHeadingSmells(_ExtractedDoc doc) {
@@ -266,10 +274,11 @@ List<ProseSmell> _emDashSmells(
 ) {
   final f = s.indexOf('\u2014');
   if (f < 0) return const [];
+  final at = base + f, ex = idx.contextEx(at);
   if (s.indexOf('\u2014', f + 1) >= 0) {
-    return [idx.hi(base + f, 'paired-em-dash: Paired em-dash aside', '\u2014')];
+    return [idx.hi(at, 'paired-em-dash: Paired em-dash aside', ex)];
   }
-  return [idx.mark(base + f, single, 'prose-em-dash: Prose em-dash', '\u2014')];
+  return [idx.mark(at, single, 'prose-em-dash: Prose em-dash', ex)];
 }
 
 (int, List<ProseSmell>) _analyzeSentence(
@@ -309,15 +318,17 @@ ProseSmell? _semiSmell(_LineIndex idx, int off, String txt, int words) {
       _fillSpaces(u, ps, pe);
     }
   }
-  final clean = String.fromCharCodes(u);
-  final f = clean.indexOf(';');
+  final clean = String.fromCharCodes(u), f = clean.indexOf(';');
   if (f < 0) return null;
   final n = ';'.allMatches(clean).length;
+  if (n == 1 && words <= 28) return null;
+  final at = off + f,
+      label = n == 1 ? '1 semicolon (${words}w)' : '$n semicolons';
   return idx.by(
-    off + f,
+    at,
     n >= 2 || words > 35,
-    'prose-semicolon-chain: $n semicolon(s)',
-    ';',
+    'prose-semicolon-chain: $label',
+    idx.contextEx(at),
   );
 }
 
@@ -585,6 +596,17 @@ List<ProseSmell> _checkTableCells(_ExtractedDoc doc) => [
       ),
 ];
 
+List<ProseSmell> _checkWideTables(_ExtractedDoc doc) => [
+  for (final (off, cols, rows, meta, _) in doc.tables)
+    if (!meta && cols >= 6)
+      doc.mask.lineIndex.by(
+        off,
+        cols >= 8,
+        'wide-table: $cols-column table ($rows rows)',
+        doc.mask.lineIndex.spanEx(off),
+      ),
+];
+
 List<ProseSmell> _checkMicroTables(_ExtractedDoc doc) {
   final m = [
     for (final t in doc.tables)
@@ -593,66 +615,65 @@ List<ProseSmell> _checkMicroTables(_ExtractedDoc doc) {
   if (m.isEmpty || (m.length == 1 && doc.profile == ProseProfile.readme)) {
     return const [];
   }
+  final off = m.first.$1;
   return [
     doc.mask.lineIndex.by(
-      m.first.$1,
+      off,
       m.length >= 2,
       'micro-table-fragmentation: Micro-table',
-      'table',
+      doc.mask.lineIndex.spanEx(off),
     ),
   ];
 }
 
-List<ProseSmell> _checkDocAggregates(_ExtractedDoc doc, ProseStats st) {
-  final idx = doc.mask.lineIndex;
-  final nBlocks = doc.blocks.where((b) => !b.isHeading).length;
+List<ProseSmell> _checkDocAggregates(
+  _ExtractedDoc doc,
+  ProseStats st,
+  int boldOff,
+) {
+  final idx = doc.mask.lineIndex, c = _capsFor(doc.profile);
+  final w400 = st.proseWords >= 400;
   return [
-    if (st.proseWords >= 300) ..._checkWord300Smells(idx, doc.profile, st),
-    if (st.proseWords >= 400 && st.pctWordsInParens >= 7.5)
+    if (st.proseWords >= 300) ..._checkWord300Smells(idx, c, st),
+    if (w400 && st.pctWordsInParens >= c.parenWarn)
       idx.by(
         0,
-        st.pctWordsInParens >= 12,
+        st.pctWordsInParens >= c.parenHigh,
         'paren-word-share: ${st.pctWordsInParens}% in parens',
-        'doc',
+        '${st.proseWords} prose words',
       ),
-    if (st.proseWords >= 400 &&
-        nBlocks >= 12 &&
-        (st.boldLeadPct >= 55 || st.maxConsecutiveBoldLeads >= 15))
+    if (w400 &&
+        st.proseBlocks >= 12 &&
+        (st.boldLeadPct >= c.boldWarn ||
+            st.maxConsecutiveBoldLeads >= c.boldRunHigh))
       idx.by(
-        0,
-        st.boldLeadPct >= 70 || st.maxConsecutiveBoldLeads >= 15,
-        'wall-of-bold: ${st.boldLeadPct}% bold leads',
-        'doc',
+        boldOff,
+        st.boldLeadPct >= c.boldHigh ||
+            st.maxConsecutiveBoldLeads >= c.boldRunHigh,
+        'wall-of-bold: ${st.boldLeadPct}% of ${st.proseBlocks} blocks '
+        '(run ${st.maxConsecutiveBoldLeads})',
+        idx.spanEx(boldOff),
       ),
   ];
 }
 
 List<ProseSmell> _checkWord300Smells(
   _LineIndex idx,
-  ProseProfile p,
+  _ProfileCaps c,
   ProseStats st,
-) {
-  final (wCap, hCap) = switch (p) {
-    ProseProfile.narrative => (6.0, 8.0),
-    ProseProfile.readme => (22.0, 25.0),
-    ProseProfile.auto ||
-    ProseProfile.technical ||
-    ProseProfile.spec => (15.0, 18.0),
-  };
-  return [
-    if (st.pctOver30Words > 12 || st.sentenceMeanWords > 22)
-      idx.by(
-        0,
-        st.pctOver30Words > 15 || st.sentenceMeanWords > 24,
-        'run-on-share: ${st.pctOver30Words}% >30w',
-        'doc',
-      ),
-    if (st.pillsPer100Words > wCap)
-      idx.by(
-        0,
-        st.pillsPer100Words > hCap,
-        'doc-pill-density: ${st.pillsPer100Words}/100w',
-        'doc',
-      ),
-  ];
-}
+) => [
+  if (st.pctOver30Words > c.over30Warn || st.sentenceMeanWords > c.meanWarn)
+    idx.by(
+      0,
+      st.pctOver30Words > c.over30High || st.sentenceMeanWords > c.meanHigh,
+      'run-on-share: ${st.pctOver30Words}% >30w',
+      'mean ${st.sentenceMeanWords}w, max ${st.sentenceMaxWords}w',
+    ),
+  if (st.pillsPer100Words > c.pillsWarn)
+    idx.by(
+      0,
+      st.pillsPer100Words > c.pillsHigh,
+      'doc-pill-density: ${st.pillsPer100Words}/100w',
+      '${st.proseWords} prose words',
+    ),
+];

@@ -62,6 +62,7 @@ final class ProseSmell {
 final class ProseStats {
   final int proseWords, sentenceCount, sentenceP90Words, sentenceMaxWords;
   final int maxConsecutiveBoldLeads, tableCount, maxTableCellWords;
+  final int proseBlocks, maxTableCols;
   final double estimatedReadMinutes, sentenceMeanWords, pctOver30Words;
   final double pctWordsInParens, pillsPer100Words, boldLeadPct;
 
@@ -79,10 +80,13 @@ final class ProseStats {
     this.maxConsecutiveBoldLeads = 0,
     this.tableCount = 0,
     this.maxTableCellWords = 0,
+    this.proseBlocks = 0,
+    this.maxTableCols = 0,
   ]);
 
   Map<String, Object?> toJson() => {
     'proseWords': proseWords,
+    'proseBlocks': proseBlocks,
     'estimatedReadMinutes': estimatedReadMinutes,
     'sentenceCount': sentenceCount,
     'sentenceMeanWords': sentenceMeanWords,
@@ -94,13 +98,77 @@ final class ProseStats {
     'boldLeadPct': boldLeadPct,
     'maxConsecutiveBoldLeads': maxConsecutiveBoldLeads,
     'tableCount': tableCount,
+    'maxTableCols': maxTableCols,
     'maxTableCellWords': maxTableCellWords,
   };
 }
 
+final class _ProfileCaps {
+  final double pillsWarn, pillsHigh, boldWarn, boldHigh, parenWarn, parenHigh;
+  final double over30Warn, over30High, meanWarn, meanHigh;
+  final int boldRunHigh;
+
+  const new(
+    this.pillsWarn,
+    this.pillsHigh,
+    this.boldWarn,
+    this.boldHigh,
+    this.boldRunHigh,
+    this.parenWarn,
+    this.parenHigh, [
+    this.over30Warn = 12,
+    this.over30High = 15,
+    this.meanWarn = 22,
+    this.meanHigh = 24,
+  ]);
+
+  Map<String, Object?> toJson() => {
+    'pillsPer100Words': {'smell': pillsWarn, 'high': pillsHigh},
+    'boldLeadPct': {
+      'smell': boldWarn,
+      'high': boldHigh,
+      'runHigh': boldRunHigh,
+    },
+    'pctWordsInParens': {'smell': parenWarn, 'high': parenHigh},
+    'pctOver30Words': {'smell': over30Warn, 'high': over30High},
+    'sentenceMeanWords': {'smell': meanWarn, 'high': meanHigh},
+  };
+}
+
+_ProfileCaps _capsFor(ProseProfile p) => switch (p) {
+  ProseProfile.narrative => const _ProfileCaps(6, 8, 45, 60, 10, 6.5, 10),
+  ProseProfile.spec => const _ProfileCaps(12, 16, 55, 70, 15, 7.5, 12),
+  ProseProfile.readme => const _ProfileCaps(
+    22,
+    25,
+    75,
+    88,
+    22,
+    12,
+    18,
+    14,
+    18,
+    23,
+    25,
+  ),
+  ProseProfile.auto || ProseProfile.technical => const _ProfileCaps(
+    16,
+    20,
+    65,
+    80,
+    18,
+    9,
+    14,
+    14,
+    18,
+    23,
+    25,
+  ),
+};
+
 /// Complete smell-scan result for a single document.
 final class ProseCheckReport {
-  final String path;
+  final String path, profileReason;
   final ProseProfile profile;
   final ProseFormat format;
   final ProseStats stats;
@@ -114,6 +182,7 @@ final class ProseCheckReport {
     required this.stats,
     required this.smells,
     required this.totalSmellCountsById,
+    this.profileReason = '',
   });
 
   int get highSmellCount =>
@@ -126,7 +195,9 @@ final class ProseCheckReport {
     return {
       'path': path,
       'profile': profile.name,
+      'profileReason': profileReason,
       'format': format.name,
+      'thresholds': _capsFor(profile).toJson(),
       'totalSmells': smells.length,
       'highSmells': highSmellCount,
       'truncatedSmells': smells.length - shown.length,
@@ -140,9 +211,10 @@ final class ProseCheckReport {
     final shown = topSmells(top), s = stats;
     final smN = smells.where((x) => x.severity == SmellSeverity.smell).length;
     final inN = smells.where((x) => x.severity == SmellSeverity.info).length;
+    final why = profileReason.isEmpty ? '' : ' ($profileReason)';
     final b = StringBuffer()
       ..writeln(
-        '=== $path [profile=${profile.name}, format=${format.name}] ===',
+        '=== $path [profile=${profile.name}$why, format=${format.name}] ===',
       )
       ..writeln(
         'Words: ${s.proseWords} (~${s.estimatedReadMinutes}m) | Sents: '
@@ -152,8 +224,9 @@ final class ProseCheckReport {
       )
       ..writeln(
         'Parens: ${s.pctWordsInParens}% | Pills: ${s.pillsPer100Words}/100w | '
-        'Bold: ${s.boldLeadPct}% (run ${s.maxConsecutiveBoldLeads}) | '
-        'Tables: ${s.tableCount} (max cell ${s.maxTableCellWords}w)',
+        'Bold: ${s.boldLeadPct}% of ${s.proseBlocks} '
+        '(run ${s.maxConsecutiveBoldLeads}) | Tables: ${s.tableCount} '
+        '(max ${s.maxTableCols} cols, max cell ${s.maxTableCellWords}w)',
       )
       ..writeln(
         'Smells: ${smells.length} '
@@ -171,6 +244,34 @@ final class ProseCheckReport {
   }
 }
 
+final _specNameKeys = 'prd,spec,rfc,proposal,scope,design'.split(',');
+final _narrativeNameKeys = 'strategy,thesis,memo,narrative,vision,readout'
+    .split(',');
+final _specHeadingKeys = [
+  'proposed scope',
+  'non-goals',
+  'open questions',
+  'user journeys',
+  'alternatives considered',
+  'success metrics',
+  'decision requested',
+];
+final _specSummaryPeers = 'scope,proposed,requirements,open,goals'.split(',');
+final _narrativeHeadingKeys = [
+  'strategic',
+  'thesis',
+  'market',
+  'implications',
+  'outlook',
+];
+final _readmeHeadingKeys = [
+  'installation',
+  'quick start',
+  'cli options',
+  'command-line',
+  'subcommands',
+];
+
 /// Scans [raw] text synchronously and returns a structured [ProseCheckReport].
 ProseCheckReport scanProseDocument(
   String raw, {
@@ -179,13 +280,14 @@ ProseCheckReport scanProseDocument(
   ProseFormat format = ProseFormat.auto,
   Directory? baseDir,
 }) {
-  final fmt = _resolveFormat(path, format),
-      prof = _resolveProfile(path, profile);
+  final fmt = _resolveFormat(path, format);
+  final (prof, reason) = _resolveProfile(path, raw, profile);
   if (profile == ProseProfile.auto &&
       p.basename(path).toLowerCase() == 'changelog.md') {
     return ProseCheckReport(
       path: path,
       profile: prof,
+      profileReason: 'changelog skipped in auto mode',
       format: fmt,
       stats: const ProseStats(),
       smells: const [],
@@ -193,7 +295,7 @@ ProseCheckReport scanProseDocument(
     );
   }
   final doc = _extractDocument(_maskDocument(raw, format: fmt), prof, fmt);
-  return _evaluateSmells(doc, path: path, baseDir: baseDir);
+  return _evaluateSmells(doc, path: path, reason: reason, baseDir: baseDir);
 }
 
 ProseFormat _resolveFormat(String path, ProseFormat explicit) =>
@@ -203,21 +305,55 @@ ProseFormat _resolveFormat(String path, ProseFormat explicit) =>
           ? ProseFormat.text
           : ProseFormat.markdown);
 
-ProseProfile _resolveProfile(String path, ProseProfile explicit) {
-  if (explicit != ProseProfile.auto) return explicit;
+(ProseProfile, String) _resolveProfile(
+  String path,
+  String raw,
+  ProseProfile explicit,
+) {
+  if (explicit != ProseProfile.auto) return (explicit, 'explicit flag');
   final b = p.basename(path).toLowerCase();
-  if (b == 'readme.md' || b.startsWith('readme.')) return ProseProfile.readme;
-  if (b.contains('prd') || b.contains('spec') || b.contains('rfc')) {
-    return ProseProfile.spec;
+  if (b == 'readme.md' || b.startsWith('readme.')) {
+    return (ProseProfile.readme, 'filename readme');
   }
-  return _isNarrativeName(b) ? ProseProfile.narrative : ProseProfile.technical;
+  if (_specNameKeys.any(b.contains)) {
+    return (ProseProfile.spec, 'filename keyword');
+  }
+  if (_narrativeNameKeys.any(b.contains)) {
+    return (ProseProfile.narrative, 'filename keyword');
+  }
+  return _inferProfileFromHeadings(raw);
 }
 
-bool _isNarrativeName(String b) =>
-    b.contains('strategy') ||
-    b.contains('thesis') ||
-    b.contains('memo') ||
-    b.contains('narrative');
+(ProseProfile, String) _inferProfileFromHeadings(String raw) {
+  final hs = _topHeadings(raw, maxLines: 60);
+  if (hs.isEmpty) return (ProseProfile.technical, 'default technical');
+  final joined = hs.join('\n');
+  final execSpec =
+      joined.contains('executive summary') &&
+      _specSummaryPeers.any(joined.contains);
+  if (execSpec || _specHeadingKeys.any(joined.contains)) {
+    return (ProseProfile.spec, 'document headings');
+  }
+  if (_narrativeHeadingKeys.any(joined.contains)) {
+    return (ProseProfile.narrative, 'document headings');
+  }
+  return _readmeHeadingKeys.any(joined.contains)
+      ? (ProseProfile.readme, 'document headings')
+      : (ProseProfile.technical, 'default technical');
+}
+
+List<String> _topHeadings(String raw, {required int maxLines}) {
+  final out = <String>[];
+  var pos = 0;
+  for (var n = 0; n < maxLines && pos < raw.length; n++) {
+    final nl = raw.indexOf('\n', pos);
+    final end = nl < 0 ? raw.length : nl;
+    final t = raw.substring(pos, end).trimLeft();
+    if (t.startsWith('#')) out.add(t.toLowerCase());
+    pos = end + 1;
+  }
+  return out;
+}
 
 ArgParser _buildProseCheckParser() => ArgParser()
   ..addOption(

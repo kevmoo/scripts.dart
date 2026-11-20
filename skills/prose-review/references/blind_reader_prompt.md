@@ -7,9 +7,10 @@ resource.
 
 ## Clean-Room Isolation Rules
 
-1. **Single-File Read Only**: Read only the target document path you were given
-   via a single `read_file` call. Do not read other repository files, run shell
-   commands, or search the web, and assume you did not click external links.
+1. **Single-File Read Only**: This rubric is already supplied inline in your
+   prompt; use your single `read_file` call strictly on the target document path
+   you were given. Do not read other repository files, run shell commands, or
+   search the web, and assume you did not click external links.
 2. **Physical Line Anchors**: Cite exact 1-based physical line numbers such as
    `L12` or `L28 vs. L67`, counting frontmatter, headings, and blank lines.
    Treat collapsed `<details>` blocks as folded supporting material unless the
@@ -55,24 +56,34 @@ Evaluate the text against these five failure modes that syntax regexes miss:
    - When the body covers multiple distinct cohorts, surfaces, or rollout
      phases, such as instrumented sites alongside uninstrumented sites, verify
      that the Executive Summary names every cohort rather than omitting one.
-3. **Telegraphic Shorthand, Coined Jargon & Unbacked Precision**:
+3. **Telegraphic Shorthand, Coined Jargon, Unanchored Time & Unbacked
+   Precision**:
    - **Telegraphic compression**: Flag noun-heavy shorthand that deletes causal
      verbs, such as `"without proving 1:1 displacement"` or
      `"legacy route decay"`. Plain causal English states the mechanism directly:
      `"Because counts track requests rather than unique people, they show what tools fetch rather than why browser views fell."`
-   - **Coined insider jargon**: Flag undefined author-invented labels or
-     tracker-ID soup such as `"SDK Seam"`, `"PRD design stance"`,
-     `"V1 Disposition"`, `"spatial workbenches"`, `"stripped-OS shells"`, `[E0]`
-     through `[E7]`, or unbackticked slash-chains.
+   - **Coined insider jargon & undefined metaphors**: Flag undefined
+     author-invented labels, domain metaphors, or tracker-ID soup such as
+     `"SDK Seam"`, `"PRD design stance"`, `"V1 Disposition"`, `"the head"`,
+     `"lighthouse migration"`, `"spatial workbenches"`, `"stripped-OS shells"`,
+     `[E0]` through `[E7]`, or unbackticked slash-chains.
+   - **Unanchored relative time**: On `spec` and `narrative` drafts, flag
+     dateless relative phrases such as `"right now"`,
+     `"over the next two weeks"`, or `"recently"` that go stale without an
+     explicit `YYYY-MM-DD` or quarter anchor.
    - **Fake precision**: Flag ungrounded percentage guesses without a source
      link, or tiny sample slices such as 6 of 39 single-day hits reported to a
      tenth of a percent or a 5-hour log slice extrapolated into a daily rate.
-4. **Cross-Section Repetition & Altitude Whiplash**:
+4. **Cross-Section Repetition, Table Scan Drag & Altitude Whiplash**:
    - Flag headline statistics, constraints, deadlines, or link lists repeated
      four or more times across sections.
    - Flag visual outline monotony where nearly every bullet opens with a bold
-     label and flat prose paragraphs disappear, or where inline-code pills
-     clutter narrative prose.
+     label and flat prose paragraphs disappear, jarring shifts between nested
+     sub-bullets in some sections and flat bold-lead bullets in others, or
+     inline-code pills cluttering narrative prose.
+   - Flag horizontal-scroll tables (`8+` columns) that overload scanning, and
+     ambiguous `"the table"` references when two different tables appear within
+     roughly 15 lines without naming which table is meant.
    - Flag altitude mismatches and bucket-stuffing. On a `spec` PRD, flag both
      low-level class wiring and dedicated `Technical Architecture` or subsystem
      design sections that may belong in a companion TDD or separate tab, tagging
@@ -80,12 +91,18 @@ Evaluate the text against these five failure modes that syntax regexes miss:
      flag unrelated user workflows bundled into one catch-all user journey, or
      80-word semicolon-chained prose bullets listing repositories and owners
      instead of a `Task | Owner` table.
-5. **Internal Contradictions Across Sections or Companion Tabs**:
+5. **Internal Contradictions & Table-to-Prose Drift**:
    - Flag conflicting status, scope, or architecture claims across the document.
      Examples include a `Draft` header paired with an `Aligned` body, committing
      to a design in Section 2 while listing it as undecided in Open Questions,
-     or sub-counts that fail to sum to the stated total. Cite both conflicting
-     line numbers, such as `L28 vs. L67`.
+     or sub-counts that fail to sum to the stated total.
+   - Cross-check prose ordinal and count claims (`"fifth externally"`,
+     `"all four targets"`) against the actual rows of the referenced table, and
+     verify that individual table rows (for example, a `v1` row listing
+     `"none identified"` for a required signal) do not violate inclusion
+     criteria stated in prose sections. Cite both conflicting line numbers, such
+     as `L28 vs. L67`, and double-check physical line numbers before emitting
+     JSON.
 
 ## Urgency & Certainty Tagging
 

@@ -56,13 +56,13 @@ cat /path/to/draft.md | kscripts prose-check --json -
      `` `code` `` spans, and table pipes, hiding wall-of-bold monotony while
      turning table rows into fake 100-word sentences.
 2. **Classify Profile & Audience**:
-   - Read the opening ~30 lines (frontmatter, title, headings) to pick an
-     explicit `--profile` (essential on neutral scratch filenames like
-     `draft.md`):
+   - Read the opening ~30 lines (frontmatter, title, headings) to confirm or
+     override `--profile` (`--profile=auto` inspects filename keywords plus
+     top-60-line headings and reports `profileReason` in JSON):
      - `readme`: Package `README.md` or CLI/API reference (flags, config keys,
        exit codes).
-     - `spec`: PRDs, RFCs, and design proposals with user journeys, scope
-       tables, and open decisions.
+     - `spec`: PRDs, RFCs, scope proposals, and design docs (`Executive Summary`
+       with `Proposed Scope`, `Non-Goals`, `Open Questions`, `User Journeys`).
      - `narrative`: Executive strategy memos, theses, and analytical readouts.
      - `technical`: Developer guides, walkthroughs, and operational runbooks.
 3. **Classify Ownership Tier**:
@@ -79,12 +79,14 @@ cat /path/to/draft.md | kscripts prose-check --json -
    ```
    _(Fall back to `prose-check --json ...` if shimmed on `PATH`; pass
    `--format=text` for plain text.)_
-   - Extracts exact vitality ratios (`proseWords`, `sentenceMeanWords`,
-     `pctOver30Words`, `pctWordsInParens`, `pillsPer100Words`, `boldLeadPct`,
-     `maxConsecutiveBoldLeads`, `maxTableCellWords`, `totalSmellCountsById`,
-     `truncatedSmells`) and top stratified `line:column` hotspots in `~10 ms`
-     and `~300 tokens` so the agent never counts words by eye or scans clean
-     paragraphs. Never leak `prose-check` output into Step 3's blind reader.
+   - Extracts exact vitality ratios (`proseWords`, `proseBlocks` as the
+     denominator of `boldLeadPct` across all non-heading paragraphs and list
+     items including nested sub-bullets, `sentenceMeanWords`, `pctOver30Words`,
+     `pctWordsInParens`, `pillsPer100Words`, `boldLeadPct`,
+     `maxConsecutiveBoldLeads`, `maxTableCols`, `maxTableCellWords`),
+     profile-calibrated `thresholds`, `profileReason`, `totalSmellCountsById`,
+     and stratified `line:column` hotspots with context excerpts in `~15 ms` and
+     `~350 tokens`. Never leak `prose-check` output into Step 3's blind reader.
 
 ### Step 2: Hotspot Sanity Check & Inquisitor Smell Dismissal
 
@@ -92,30 +94,39 @@ Read **only** the flagged `line:column` hotspot lines (`+/- 3` lines of context)
 rather than trusting regex hits blindly. Drop false smells using three
 **Inquisitor Dismissal Filters** before scoring:
 
-- **`[DISMISSED: REFERENCE_IDIOM]`**: Backticked exit codes or HTTP status
+- **`[DISMISSED: REFERENCE_IDIOM]`**: Backticked version strings (such as
+  `` `1.0` ``, `` `3.x` ``, or `` `1.2.0` ``), CLI exit codes or HTTP status
   literals (such as `` `78` `` or `` `200 OK` ``), CLI option or config key
   type/default tuples (`(bool, default true; ...)`), short parenthetical
   platform or scope qualifiers on CLI reference bullets, API type signatures,
   config reference tables, and `code-pill-soup` or `paren-word-share` totals
   driven by enumerating CLI flags and config keys in `readme`/`technical` docs.
 - **`[DISMISSED: INTENTIONAL_EMPHASIS]`**: Bounded `3`-to-`5` item option lists
-  using `**Option A**:` labels, short term definitions, or a deliberate
-  rhetorical contrast.
+  using `**Option A**:` labels, short term definitions, deliberate rhetorical
+  contrasts, or `smell`-tier `wall-of-bold` hits in `spec`/`technical` docs when
+  short conclusion-first bullets are used uniformly under clear section prose
+  without mixing nested sub-bullets and flat bold leads across sections.
 - **`[DISMISSED: LOW_CERTAINTY_OPINION]`**: Pure subjective word-choice
   preferences where existing prose is already clear and concise.
 
 Record the dismissed count and filter breakdown in the report summary.
 
-### Step 3: Fresh-Context Blind Reader Pass
+### Step 3: Fresh-Context Blind Reader Pass & Citation Verification
 
 Spawn **one** strictly read-only subagent (`EnableWriteTools: false`, or an
 isolated read-only `Explore` / `research` helper agent with file-read access
-only, no shell commands, and zero authoring-conversation context) given
-**only**:
+only, no shell commands, and zero authoring-conversation context):
 
-1. [references/blind_reader_prompt.md](references/blind_reader_prompt.md).
-2. One line stating the document `Profile` and target `Audience`.
-3. The target file path.
+1. **Inline the Rubric**: Read
+   [references/blind_reader_prompt.md](references/blind_reader_prompt.md)
+   yourself and paste its full instructions **inline** into the subagent's
+   prompt alongside one line stating `Profile`, target `Audience`, and the
+   target file path, so the subagent's **single** `read_file` call reads only
+   the target document.
+2. **Inquisitor Line-Citation Check**: Before merging Step 3 findings into Step
+   4, verify every cited line or line pair (`L28 vs. L67`) against the target
+   file. Fix off-by-a-few line numbers, downgrade overstated urgency, and drop
+   any claim not backed by the actual lines.
 
 _(In restricted worker harnesses without subagent tools, spawn a fresh read-only
 helper agent with zero history, or run
@@ -130,40 +141,50 @@ The blind reader audits **five semantic failure modes** regexes miss:
 2. **Minimum-Decision-Context Summary & Multi-Cohort Completeness** (zero
    low-level config/symbol weeds above the fold, and naming **both** active and
    pending/uninstrumented cohorts covered in the body).
-3. **Telegraphic Noun-Phrase Shorthand & Coined Jargon**
+3. **Telegraphic Noun-Phrase Shorthand, Coined Jargon & Unanchored Time**
    (`"without proving 1:1 displacement"` vs. plain causal English
    `"Because counts track requests rather than unique people, they show what tools fetch rather than why browser views fell"`,
-   undefined labels like `"SDK Seam"`, `"PRD design stance"`, or
-   `"spatial workbenches"`, and uncited `~10%-15%` guesses).
-4. **Cross-Section Metric Repetition (`4x+`) & Altitude Whiplash**: Repeating
-   stats `4x+`, dedicated `Technical Architecture` / subsystem-design sections
-   or TDD internals inside a `spec` PRD that may belong in a companion TDD or
-   separate tab (`[P1 | Certainty: Medium]` 2-way question), bundling unrelated
-   workflows into one user journey, or 80-word repo/owner bullets that belong in
-   a table.
-5. **Internal Contradictions Across Sections or Tabs** (`Draft` vs. `Aligned`,
-   `Committed` vs. `Unvalidated`, or component counts that fail to sum).
+   undefined labels or metaphors like `"SDK Seam"`, `"the head"`, or
+   `"lighthouse migration"`, dateless relative phrases like
+   `"over the next two weeks"` or `"right now"`, and uncited `~10%-15%`
+   guesses).
+4. **Cross-Section Repetition (`4x+`), Wide-Table Drag & Altitude Whiplash**:
+   Repeating stats `4x+`, `8+` column tables or ambiguous `"the table"`
+   references near multiple tables, jarring shifts between nested sub-bullets
+   and flat bold leads across sections, dedicated `Technical Architecture` / TDD
+   sections inside a `spec` PRD (`[P1 | Certainty: Medium]` 2-way question),
+   bundled user journeys, or 80-word repo/owner bullets that belong in a table.
+5. **Internal Contradictions & Table-to-Prose Drift** (`Draft` vs. `Aligned`,
+   `Committed` vs. `Unvalidated`, prose ordinal or count claims like
+   `"fifth externally"` that no longer match table rows, or table rows like
+   `"none identified"` that violate an inclusion rule stated in prose).
 
 ### Step 4: Orthogonal `2D Urgency x Certainty` Triage & Report
 
 Every kept finding carries **both** an Urgency tier and a Certainty level:
 
 - **Urgency**:
-  - `🚨 P0 Decision Blocker`: Missing/buried ask, cross-section contradiction,
-    omitted summary cohort, or unintelligible telegraphic shorthand / undefined
-    jargon above the fold.
-  - `⚠️ P1 Scan Tax`: Systemic readability drag (`>= 70%` wall-of-bold or `15+`
-    consecutive bold leads, `>= 12%` non-reference paren word share, `45w+`
-    run-on or semicolon mega-bullets, nested parens, `> 35w` table cells, `1D`
-    micro-table spam, narrative pill overload, uncited `~X%-Y%` guesses, `4x+`
-    repetition, bucket-stuffed user journeys, or TDD weeds in a spec).
-  - `🧹 P2 Polish`: Isolated prose em-dashes, minor backtick nits, or a single
-    long parenthetical. **Suppress `P2` completely if zero `P0` or `P1` findings
-    exist!**
+  - `🚨 P0 Decision Blocker`: Missing/buried ask, cross-section or table-vs-rule
+    contradiction, stale ordinal/count claim vs. table rows, omitted summary
+    cohort, or unintelligible telegraphic shorthand / undefined jargon above the
+    fold.
+  - `⚠️ P1 Scan Tax`: Systemic readability drag exceeding profile `thresholds`
+    (`high`-severity `wall-of-bold` or non-uniform `smell`-tier bold walls,
+    `high`-severity `paren-word-share`, `45w+` run-on or `2+` semicolon chains,
+    nested parens, `> 35w` table cells, `8+` column `wide-table` grids, `1D`
+    micro-table spam, narrative pill overload, uncited `~X%-Y%` guesses,
+    unanchored relative dates, `4x+` repetition, bucket-stuffed user journeys,
+    or TDD weeds in a spec).
+  - `🧹 P2 Polish`: Isolated prose em-dashes, minor backtick nits, `6-7` column
+    tables, or a single `29-35w` semicolon sentence. **Suppress `P2` completely
+    if zero `P0` or `P1` findings exist!**
 - **Certainty**:
   - `High`: Backed by `prose-check` metrics verified in context, exact
     conflicting line quotes (`L28` vs. `L67`), or an objectively absent ask /
-    undefined coined term. Eligible for direct rewrite on approval.
+    undefined coined term. Prose/mechanical `High` items rewrite directly on
+    approval; **author-fact gaps** (such as a missing deadline or approver list)
+    must prompt the author or insert an explicit `TODO(<owner / YYYY-MM-DD>)`
+    placeholder rather than inventing facts.
   - `Medium`: Structural or comprehension signal where author intent could go
     two ways. **Surface as a concrete question or 2-way choice; never silently
     rewrite!**
@@ -172,16 +193,16 @@ Every kept finding carries **both** an Urgency tier and a Certainty level:
 ```markdown
 # Prose Review: <Document Title or Filename>
 
-**Profile**: `<profile>` | **Ownership**: `<Tier 1 | Tier 2>` | **Verdict**: `<✅ Clean | ⚠️ Scan Tax | 🚨 Decision Blockers>`
+**Profile**: `<profile>` (`<profileReason>`) | **Ownership**: `<Tier 1 | Tier 2>` | **Verdict**: `<✅ Clean | ⚠️ Scan Tax | 🚨 Decision Blockers>`
 **30s Blind-Read**: `<Pass | Fail>` | **Ask**: `<inferred ask or UNCLEAR>` (Score: `<N>/10`)
-**Vitality**: `<proseWords>` words · mean `<X>`w/sent (`<Y>%` >30w) · parens `<Z>%` · bold `<B>%` · pills `<P>`/100w
+**Vitality**: `<proseWords>` words · mean `<X>`w/sent (`<Y>%` >30w) · parens `<Z>%` · bold `<B>%` of `<proseBlocks>` blocks (run `<R>`) · pills `<P>`/100w · tables `<T>` (max `<C>` cols, `<W>`w cell)
 **Inquisitor Filter**: Dismissed `<N>` benign hits (`<REFERENCE_IDIOM / INTENTIONAL_EMPHASIS / LOW_CERTAINTY_OPINION>`)
 
 ## Findings
 
 - **[P0 | Certainty: High]** `L1-L45`: **<Declarative takeaway>**
   - **Evidence**: <Exact quote, conflicting line pair, or `prose-check` metric.>
-  - **Fix / Choice**: <Plain causal-English rewrite for `High`, or 2-way author question for `Medium`.>
+  - **Fix / Choice**: <Plain causal-English rewrite, `TODO(<owner/date>)` prompt for missing author facts, or 2-way choice for `Medium`.>
 ```
 
 ### Step 5: Approval Gate & Bounded 2-Pass Remediation
@@ -191,7 +212,7 @@ and leave the file untouched. Otherwise, gate via `ask_question` (when
 available):
 
 - **Tier 1 (Owned Local Draft)**:
-  1. `"(Recommended) Apply High-certainty P0/P1 fixes in-place (2-pass rewrite) and confirm Medium choices"`
+  1. `"(Recommended) Apply High-certainty P0/P1 fixes in-place (2-pass rewrite) and confirm Medium/author-fact choices"`
   2. `"Preview replacement diffs without editing"`
   3. `"Keep audit report only"`
 - **Tier 2 (Shared Collaborative Doc with Active Threads or External Repo)**:
@@ -202,21 +223,23 @@ available):
 
 1. **Pass 1 (Structural & Causal-English Pass)**: If `truncatedSmells > 0`, run
    `kscripts prose-check --json --profile=<profile> --top=0 <path>` first so
-   every hotspot is visible. Apply approved `High` `P0`/`P1` fixes in plain
-   causal English with explicit subjects and active verbs (never compress into
-   telegraphic noun stacks, and never delete `Medium`-certainty sections like a
-   PRD `Technical Architecture` section without author confirmation).
-   **Anti-Whack-a-Mole Rule**: Never trade deleted parentheses `(aside)` into
-   paired em-dashes (`paired-em-dash`) or semicolon chains; rewrite mid-sentence
-   examples or acronyms as a separate sentence or a plain `such as ...` /
-   `including ...` clause. Flatten `- **Label**:` bullet walls into 2-to-4
-   sentence paragraphs, move 80-word owner/repo bullets into a table, flatten
-   `<= 2x2` micro-tables, and preserve Tier 2 comment anchors via per-paragraph
-   edits.
+   every hotspot is visible. Apply approved `High` `P0`/`P1` prose fixes in
+   plain causal English with explicit subjects and active verbs: never compress
+   into telegraphic noun stacks, never invent missing deadlines or approvers
+   (use `TODO(<approver / YYYY-MM-DD>)` unless supplied by the author), and
+   never delete `Medium`-certainty sections like a PRD `Technical Architecture`
+   section without confirmation. **Anti-Whack-a-Mole Rule**: Never trade deleted
+   parentheses `(aside)` into paired em-dashes (`paired-em-dash`) or semicolon
+   chains; rewrite mid-sentence examples or acronyms as a separate sentence or a
+   plain `such as ...` / `including ...` clause. Flatten `- **Label**:` bullet
+   walls into 2-to-4 sentence paragraphs, split or trim `8+` column tables, move
+   80-word owner/repo bullets into a table, flatten `<= 2x2` micro-tables, and
+   preserve Tier 2 comment anchors via per-paragraph edits.
 2. **Pass 2 (`prose-check` & Fact-Preservation Delta Pass)**: Re-run
    `kscripts prose-check --json --profile=<profile> --top=0 <path>`. Require
-   **`0` newly introduced `high` smells** (`paired-em-dash`, `nested-parens`,
-   `prose-semicolon-chain`) and fix **every** remaining non-dismissed `high`
+   **`0` newly introduced `high`-severity smells** (`paired-em-dash`,
+   `nested-parens`, `2+` semicolon or `> 35w` `prose-semicolon-chain`,
+   `wide-table` `8+` cols) and fix **every** remaining non-dismissed `high`
    smell (leaving only irreducible `[DISMISSED: REFERENCE_IDIOM]` CLI/code
    spans), while confirming **zero lost facts, links, numbers, or modal
    qualifiers** (`proposed` vs. `shipped`, `projected` vs. `committed`). Stop

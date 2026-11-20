@@ -655,4 +655,171 @@ Modern command-line tools benefit from fast deterministic feedback loops (especi
       });
     },
   );
+
+  group(
+    'Dogfood Run #1 regressions (versions, semicolons, profiles, tables)',
+    () {
+      test(
+        'exempts semver and version-adjacent X.Y spans from numeric-backtick',
+        () {
+          assertProseSmells(
+            'Ship stable `1.0` versions and `1.0.0` packages on Dart `3.7` '
+            'while flagging ⟦numeric-backtick: `12.4`⟧ mean words and '
+            '⟦numeric-backtick: `0.0%`⟧ rates.\n',
+            path: 'service_scope.md',
+          );
+        },
+      );
+
+      test('single semicolon in <=28w stays clean; >28w or 2+ chains fire', () {
+        const longTwoClause =
+            'First clause sets up thirty one total words across a single '
+            'sentence boundary inside this specification '
+            'paragraph⟦prose-semicolon-chain: ;⟧ '
+            'second clause appends fourteen extra trailing words right after '
+            'that single semicolon today.';
+        final rep = assertProseSmells(
+          'Scope stays tight; v1 ships three core packages.\n\n'
+          '$longTwoClause\n\n'
+          'Alpha runs first⟦prose-semicolon-chain: ;⟧ beta runs second; gamma '
+          'runs third.\n',
+        );
+        check(rep.smells.first.severity).equals(SmellSeverity.high);
+        check(rep.smells.first.excerpt == ';').isFalse;
+        check(rep.smells.last.severity).equals(SmellSeverity.smell);
+        check(rep.smells.last.excerpt.length).isGreaterThan(10);
+      });
+
+      test(
+        'auto profile resolves scope filenames & spec headings + thresholds',
+        () {
+          final byName = scanProseDocument(
+            'Short clean paragraph.\n',
+            path: 'dart_cloud_sdk_v1_service_scope.md',
+          );
+          check(byName.profile).equals(ProseProfile.spec);
+          check(byName.profileReason).equals('filename keyword');
+
+          const headingDoc = '''
+# Package Launch Plan
+
+## Executive Summary
+
+Short overview paragraph.
+
+## Proposed scope
+
+Scoped items here.
+
+## Open questions
+
+Pending items here.
+''';
+          final byHeadings = scanProseDocument(
+            headingDoc,
+            path: 'draft_notes.md',
+          );
+          check(byHeadings.profile).equals(ProseProfile.spec);
+          check(byHeadings.profileReason).equals('document headings');
+
+          final json = byHeadings.toJson();
+          check(json.keys)
+            ..contains('profileReason')
+            ..contains('thresholds');
+        },
+      );
+
+      test(
+        'profiles differentiate 64% bold-lead docs and anchor longest run',
+        () {
+          final intro = List.generate(
+            5,
+            (i) =>
+                'Plain introductory paragraph $i sets shared context across '
+                'teams with natural words today. Every reader sees why this '
+                'scope matters before scanning the item list below. Clear '
+                'framing keeps reviewers aligned across all engineering '
+                'streams without any extra meetings.',
+          ).join('\n\n');
+          final boldRun = List.generate(
+            9,
+            (i) =>
+                '- **Item $i**: Concise conclusion-first bullet explaining '
+                'package scope item $i clearly without any long sentences. '
+                'Follow-up sentence keeps total prose well above four hundred '
+                'words across fourteen blocks.',
+          ).join('\n');
+          // 9 of 14 prose blocks = 64.3% bold leads, max run 9 starting at L11.
+          final doc = '$intro\n\n$boldRun\n';
+
+          final narrative = scanProseDocument(
+            doc,
+            profile: ProseProfile.narrative,
+          );
+          final spec = scanProseDocument(doc, profile: ProseProfile.spec);
+          final technical = scanProseDocument(
+            doc,
+            profile: ProseProfile.technical,
+          );
+          final readme = scanProseDocument(doc, profile: ProseProfile.readme);
+
+          check(narrative.stats.proseBlocks).equals(14);
+          check(narrative.stats.boldLeadPct).equals(64.3);
+          check(
+            narrative.smells
+                .singleWhere((s) => s.smellId == 'wall-of-bold')
+                .severity,
+          ).equals(SmellSeverity.high);
+
+          final specBold = spec.smells.singleWhere(
+            (s) => s.smellId == 'wall-of-bold',
+          );
+          check(specBold.severity).equals(SmellSeverity.smell);
+          check(specBold.line).equals(11);
+          check(specBold.excerpt).contains('Item 0');
+
+          check(technical.totalSmellCountsById.containsKey('wall-of-bold'))
+              .isFalse;
+          check(readme.totalSmellCountsById.containsKey('wall-of-bold'))
+              .isFalse;
+        },
+      );
+
+      test(
+        'wide-table flags 6-7 cols as smell, 8+ as high, and dir file:// ok',
+        () {
+          final tempDir = Directory.systemTemp.createTempSync(
+            'prose_dir_link_',
+          );
+          addTearDown(() => tempDir.deleteSync(recursive: true));
+
+          final doc =
+              '''
+Directory link [dir](file://${tempDir.path}) exists on disk.
+
+| C1 | C2 | C3 | C4 | C5 | C6 |
+| :- | :- | :- | :- | :- | :- |
+| a | b | c | d | e | f |
+
+| C1 | C2 | C3 | C4 | C5 | C6 | C7 | C8 |
+| :- | :- | :- | :- | :- | :- | :- | :- |
+| a | b | c | d | e | f | g | h |
+''';
+          final rep = scanProseDocument(doc, baseDir: tempDir);
+          check(rep.totalSmellCountsById.containsKey('broken-local-link'))
+              .isFalse;
+          check(rep.stats.maxTableCols).equals(8);
+          final wide = [
+            for (final s in rep.smells)
+              if (s.smellId == 'wide-table') s,
+          ];
+          check(wide.length).equals(2);
+          check(wide.first.severity).equals(SmellSeverity.high);
+          check(wide.first.line).equals(7);
+          check(wide.last.severity).equals(SmellSeverity.smell);
+          check(wide.last.line).equals(3);
+        },
+      );
+    },
+  );
 }

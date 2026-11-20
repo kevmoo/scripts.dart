@@ -82,6 +82,14 @@ final class _LineIndex {
     return _clipEx(raw.substring(s, (s + len).clamp(s, raw.length)));
   }
 
+  String contextEx(int off, [int pre = 20, int post = 28]) {
+    final loc = locationAt(off);
+    final (ls, le) = lineRange(loc.line);
+    final s = math.max(ls, off - pre), e = math.min(le, off + post);
+    final preDots = s > ls ? '...' : '', postDots = e < le ? '...' : '';
+    return '$preDots${_clipEx(raw.substring(s, e), pre + post)}$postDots';
+  }
+
   ProseSmell mark(int off, SmellSeverity sev, String idMsg, [String? ex]) {
     final c = idMsg.indexOf(':'), loc = locationAt(off);
     return ProseSmell(
@@ -419,6 +427,16 @@ final _numericPillRegex = RegExp(
   caseSensitive: false,
 );
 final _readmeScalarIntRegex = RegExp(r'^\d{1,4}$');
+final _multiDotSemverRegex = RegExp(r'^\d+(?:\.\d+){2,}(?:-[A-Za-z0-9.-]+)?$');
+final _twoPartVerRegex = RegExp(r'^\d+\.\d+$');
+final _verPrevWordRegex = RegExp(
+  r'\b(?:versions?|releases?|sdk|dart|flutter|semver|api|http|tls|oauth)\s+$',
+  caseSensitive: false,
+);
+final _verNextWordRegex = RegExp(
+  r'^\s+(?:versions?|releases?)\b',
+  caseSensitive: false,
+);
 
 List<ProseSmell> _checkLinkSmells(_MaskedDoc mask, Directory? baseDir) => [
   for (final (off, dest) in mask.links)
@@ -434,7 +452,9 @@ List<ProseSmell> _singleLinkSmells(
   final ex = _clipEx(d);
   if (d.startsWith('file://')) {
     final loc = d.substring('file://'.length).split('#').first;
-    final dead = loc.isNotEmpty && !File(loc).existsSync();
+    final dead =
+        loc.isNotEmpty &&
+        FileSystemEntity.typeSync(loc) == FileSystemEntityType.notFound;
     return [
       idx.sm(off, 'unportable-file-uri: Local file:// URI is not portable', ex),
       if (dead) idx.hi(off, 'broken-local-link: Target file missing', ex),
@@ -463,12 +483,24 @@ bool _hasAsciiDigit(String s) {
   return false;
 }
 
+bool _isVersionSpan(_LineIndex idx, int off, String t) {
+  if (_multiDotSemverRegex.hasMatch(t)) return true;
+  if (!_twoPartVerRegex.hasMatch(t)) return false;
+  final loc = idx.locationAt(off);
+  final (ls, le) = idx.lineRange(loc.line);
+  final pre = idx.raw.substring(math.max(ls, off - 16), off);
+  final end = (off + t.length + 2).clamp(ls, le);
+  final post = idx.raw.substring(end, math.min(le, end + 16));
+  return _verPrevWordRegex.hasMatch(pre) || _verNextWordRegex.hasMatch(post);
+}
+
 List<ProseSmell> _checkInlineCodeSmells(_MaskedDoc mask, ProseProfile prof) {
   final idx = mask.lineIndex, out = <ProseSmell>[];
   for (final (off, content, plural) in mask.codeSpans) {
     final t = content.trim();
     if (_hasAsciiDigit(t) &&
         !(prof == ProseProfile.readme && _readmeScalarIntRegex.hasMatch(t)) &&
+        !_isVersionSpan(idx, off, t) &&
         _numericPillRegex.hasMatch(t)) {
       out.add(
         idx.sm(
