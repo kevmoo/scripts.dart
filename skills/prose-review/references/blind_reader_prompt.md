@@ -49,36 +49,39 @@ Evaluate the text against these five failure modes that syntax regexes miss:
      through 35, rather than going unstated or hiding past line 300 inside open
      questions.
    - On `spec` and `narrative` drafts, flag alarmist or top-down mandates such
-     as `"Re-center next-year bets"` or unapproved cross-team scope presented as
-     a fait accompli instead of shared goals and explicit trade-offs.
+     as `"Freeze all current roadmap work"` or unapproved cross-team scope
+     presented as a fait accompli instead of shared goals and explicit
+     trade-offs.
 2. **Minimum-Decision-Context Summary & Multi-Cohort Completeness**:
    - Check whether the Executive Summary stays at decision altitude rather than
      dumping low-level config flags, internal rule or form IDs, regexes, or
      build symbols before stating the problem and proposal.
    - When the body covers multiple distinct cohorts, surfaces, or rollout
-     phases, such as instrumented sites alongside uninstrumented sites, verify
-     that the Executive Summary names every cohort rather than omitting one.
+     phases, such as active surfaces alongside uninstrumented surfaces or sunset
+     gates, verify that the Executive Summary names every cohort rather than
+     omitting one.
 3. **Telegraphic Shorthand, Coined Jargon, Unanchored Time & Unbacked
    Precision**:
    - **Telegraphic compression**: Flag noun-heavy shorthand that deletes causal
-     verbs, such as `"without proving 1:1 displacement"` or
+     verbs, such as `"without proving 1:1 user churn"` or
      `"legacy route decay"`. Plain causal English states the mechanism directly:
-     `"Because counts track requests rather than unique people, they show what tools fetch rather than why browser views fell."`
+     `"Because server logs count automated retries alongside human visits, request totals show traffic volume rather than user churn."`
    - **Coined insider jargon & undefined metaphors**: Flag undefined
      author-invented labels, domain metaphors, or tracker-ID soup such as
-     `"SDK Seam"`, `"PRD design stance"`, `"V1 Disposition"`, `"the head"`,
-     `"lighthouse migration"`, `"spatial workbenches"`, `"stripped-OS shells"`,
-     `[E0]` through `[E7]`, or unbackticked slash-chains.
+     `"Integration Seam"`, `"Spec Stance"`, `"Rollout Disposition"`,
+     `"flagship migration"`, `"ambient surfaces"`, `[M0]` through `[M7]`, or
+     unbackticked slash-chains.
    - **Unanchored relative time**: On `spec` and `narrative` drafts, flag
      dateless relative phrases such as `"right now"`,
      `"over the next two weeks"`, or `"recently"` that go stale without an
      explicit `YYYY-MM-DD` or quarter anchor.
    - **Fake precision**: Flag ungrounded percentage guesses without a source
-     link, or tiny sample slices such as 6 of 39 single-day hits reported to a
-     tenth of a percent or a 5-hour log slice extrapolated into a daily rate.
+     link, or tiny sample slices reported to a tenth of a percent or a short log
+     window extrapolated into a daily rate.
 4. **Cross-Section Repetition, Table Scan Drag & Altitude Whiplash**:
    - Flag headline statistics, constraints, deadlines, or link lists repeated
-     four or more times across sections.
+     four or more times across sections, and adjacent sections whose scopes
+     overlap without stating how their purposes differ.
    - Flag visual outline monotony where nearly every bullet opens with a bold
      label and flat prose paragraphs disappear, jarring shifts between nested
      sub-bullets in some sections and flat bold-lead bullets in others, or
@@ -89,23 +92,27 @@ Evaluate the text against these five failure modes that syntax regexes miss:
    - Flag altitude mismatches and bucket-stuffing. On a `spec` PRD, flag both
      low-level class wiring and dedicated `Technical Architecture` or subsystem
      design sections that may belong in a companion TDD or separate tab, tagging
-     that section-boundary question as `"P1"` with `"Medium"` certainty. Also
-     flag unrelated user workflows bundled into one catch-all user journey, or
-     80-word semicolon-chained prose bullets listing repositories and owners
-     instead of a `Task | Owner` table.
+     that section-boundary question as `"P1"` with `"Medium"` certainty. Check
+     every `CUJ` / `User Journey` / `Scenario` heading and flag journeys that
+     bundle three or more unrelated workflows
+     (`"Codegen, Browser Tests, & API Proxies"`), as well as 80-word
+     semicolon-chained prose bullets listing repositories and owners instead of
+     a `Task | Owner` table.
 5. **Internal Contradictions & Table-to-Prose Drift**:
    - Flag conflicting status, scope, or architecture claims across the document.
-     Examples include a `Draft` header paired with an `Aligned` body, committing
-     to a design in Section 2 while listing it as undecided in Open Questions,
-     or sub-counts that fail to sum to the stated total.
-   - Cross-check prose ordinal and count claims (`"fifth externally"`,
-     `"all four targets"`) against the actual rows of the referenced table,
-     verify that individual table rows (for example, a `v1` row listing
-     `"none identified"` for a required signal) do not violate inclusion
-     criteria stated in prose sections, and flag cross-tab title/date mismatches
-     or personal account handles in work metadata headers. Cite both conflicting
-     line numbers, such as `L28 vs. L67`, and double-check physical line numbers
-     before emitting JSON.
+     Examples include a `Draft` header paired with an `Aligned` body, calling an
+     item `"untracked"` while citing its tracking issue ID, committing to a
+     design in Section 2 while listing it as undecided in Open Questions, or
+     sub-counts that fail to sum to the stated total.
+   - Cross-check prose ordinal and count claims (`"fourth overall"`,
+     `"all four targets"`) against the actual rows of the referenced table, flag
+     asymmetric paired table rows where one mode specifies its CLI flag or limit
+     and the opposite row omits it, verify that individual table rows (for
+     example, a `v1` row listing `"none identified"` for a required signal) do
+     not violate inclusion criteria stated in prose sections, and flag cross-tab
+     title/date mismatches or personal account handles in work metadata headers.
+     Cite both conflicting line numbers, such as `L28 vs. L67`, and double-check
+     physical line numbers before emitting JSON.
 
 ## Urgency & Certainty Tagging
 

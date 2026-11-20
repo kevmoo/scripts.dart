@@ -101,15 +101,17 @@ visible. Read **only** the flagged `line:column` hotspot lines (`+/- 3` lines of
 context) rather than trusting regex hits blindly, and drop false smells using
 three **Inquisitor Dismissal Filters** before scoring:
 
-- **`[DISMISSED: REFERENCE_IDIOM]`**: Backticked version strings (such as
-  `` `1.0` ``, `` `3.x` ``, or `` `1.2.0` ``), CLI exit codes or HTTP status
-  literals (such as `` `78` `` or `` `200 OK` ``), `Framework/Language` stack
-  pairs (`Flutter/Dart`, `React/TypeScript`) and `org/repo` slugs, CLI option or
-  config key type/default tuples (`(bool, default true; ...)`), short
-  parenthetical platform or scope qualifiers on CLI reference bullets, API type
-  signatures, config reference tables, and `code-pill-soup` or
-  `paren-word-share` totals driven by enumerating CLI flags and config keys in
-  `readme`/`technical` docs.
+- **`[DISMISSED: REFERENCE_IDIOM]`**: Header metadata rosters (`Author`,
+  `Stakeholders`, `Reviewers` with `(@handle)` chips), backticked version
+  strings (such as `` `1.0` ``, `` `3.x` ``, or `` `1.2.0` ``), CLI exit codes
+  or HTTP status literals (such as `` `78` `` or `` `200 OK` ``),
+  `Framework/Language` stack pairs (`Flutter/Dart`, `React/TypeScript`) and
+  `org/repo` slugs, CLI option or config key type/default tuples
+  (`(bool, default true; ...)`), short parenthetical platform or scope
+  qualifiers on CLI reference bullets, API type signatures, config reference
+  tables, and `code-pill-soup` or `paren-word-share` totals driven by
+  enumerating CLI flags, paths, and config keys in `readme`, `technical`, or
+  CLI/API walkthrough sections of `spec` docs.
 - **`[DISMISSED: INTENTIONAL_EMPHASIS]`**: Bounded `3`-to-`5` item option lists
   using `**Option A**:` labels, repeated structured ledger/schema labels across
   parallel sections (such as `**Verified Today (Oct 2026)**`), short term
@@ -128,14 +130,17 @@ Spawn **one** strictly read-only subagent (`EnableWriteTools: false`, or an
 isolated read-only `Explore` / `research` helper agent with file-read access
 only, no shell commands, and zero authoring-conversation context):
 
-1. **Inline the Rubric (and Numbered Scratch Text When Sandboxed)**: Read
+1. **Inline the Rubric (and Guard Against Prompt Truncation)**: Read
    [references/blind_reader_prompt.md](references/blind_reader_prompt.md)
    yourself and paste its full instructions **inline** into the subagent's
    prompt alongside `Profile`, target `Audience`, and the target file path so
    the subagent's **single** `read_file` call reads only the target document.
-   When the exported snapshot lives in a scratch directory outside a read-only
-   subagent's workspace sandbox, pass `1: ...`-prefixed physical lines inline in
-   the prompt instead of a path for exact line anchors with zero sandbox errors.
+   When a small exported snapshot (`<= 30 KB` / `~250` lines) sits in a scratch
+   directory outside a built-in subagent's workspace sandbox, you may pass
+   `1: ...`-prefixed physical lines inline; for larger documents (`> 30 KB`),
+   never inline the document body (which risks prompt-cap tail truncation)—use a
+   custom read-only subagent (`EnableWriteTools: false`) that calls `read_file`
+   directly on the scratch file path.
 2. **Inquisitor Line-Citation Check**: Before merging Step 3 findings into Step
    4, verify every cited line or line pair (`L28 vs. L67`) against the target
    file. Fix off-by-a-few line numbers, downgrade overstated urgency, and drop
@@ -155,22 +160,26 @@ The blind reader audits **five semantic failure modes** regexes miss:
    low-level config/symbol weeds above the fold, and naming **both** active and
    pending/uninstrumented cohorts covered in the body).
 3. **Telegraphic Noun-Phrase Shorthand, Coined Jargon & Unanchored Time**
-   (`"without proving 1:1 displacement"` vs. plain causal English
-   `"Because counts track requests rather than unique people, they show what tools fetch rather than why browser views fell"`,
-   undefined labels or metaphors like `"SDK Seam"`, `"the head"`, or
-   `"lighthouse migration"`, dateless relative phrases like
+   (`"without proving 1:1 user churn"` vs. plain causal English
+   `"Because server logs count automated retries alongside human visits, request totals show traffic volume rather than user churn"`,
+   undefined labels or metaphors like `"Integration Seam"`, `"Spec Stance"`, or
+   `"flagship migration"`, dateless relative phrases like
    `"over the next two weeks"` or `"right now"`, and uncited `~10%-15%`
    guesses).
 4. **Cross-Section Repetition (`4x+`), Wide-Table Drag & Altitude Whiplash**:
    Repeating stats `4x+`, `8+` column tables or ambiguous `"the table"`
    references near multiple tables, jarring shifts between nested sub-bullets
-   and flat bold leads across sections, dedicated `Technical Architecture` / TDD
-   sections inside a `spec` PRD (`[P1 | Certainty: Medium]` 2-way question),
-   bundled user journeys, or 80-word repo/owner bullets that belong in a table.
+   and flat bold leads across sections, adjacent sections with overlapping
+   roles, dedicated `Technical Architecture` / TDD sections inside a `spec` PRD
+   (`[P1 | Certainty: Medium]` 2-way question), `CUJ` / `User Journey` headings
+   that bundle `3+` distinct workflows, or 80-word repo/owner bullets that
+   belong in a table.
 5. **Internal Contradictions & Table-to-Prose Drift** (`Draft` vs. `Aligned`,
    `Committed` vs. `Unvalidated`, prose ordinal or count claims like
-   `"fifth externally"` that no longer match table rows, or table rows like
-   `"none identified"` that violate an inclusion rule stated in prose).
+   `"fourth overall"` that no longer match table rows, asymmetric paired table
+   rows where one row specifies a CLI flag and its opposite omits it, or table
+   rows like `"none identified"` that violate an inclusion rule stated in
+   prose).
 
 ### Step 4: Orthogonal `2D Urgency x Certainty` Triage & Report
 

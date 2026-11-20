@@ -149,6 +149,9 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
     if (blk.maskedSlice.contains(_codeSentinelChar)) {
       pills += _codeSentinelChar.allMatches(blk.maskedSlice).length;
     }
+    final (mpw, mSm) = _multiSentParenSmells(doc.mask.lineIndex, blk);
+    parenW += mpw;
+    smells.addAll(mSm);
     for (final s in blk.sentences) {
       words.add(s.$3);
       final (pw, rs, sm) = _analyzeSentence(doc, s);
@@ -158,6 +161,33 @@ double _pct(num part, int whole) => whole == 0 ? 0 : _r1(100.0 * part / whole);
     }
   }
   return (words, parenW, pills, rawSyms, smells);
+}
+
+(int, List<ProseSmell>) _multiSentParenSmells(_LineIndex idx, _ProseBlock b) {
+  if (b.sentences.length < 2 || !b.maskedSlice.contains('(')) {
+    return (0, const []);
+  }
+  final base = b.startOffset + b.bodyRelOffset;
+  final body = b.maskedSlice.substring(b.bodyRelOffset);
+  var sum = 0;
+  final out = <ProseSmell>[];
+  for (final (ps, pe, txt) in _innermostParens(body)) {
+    final s = base + ps, e = base + pe;
+    if (b.sentences.any((x) => s >= x.$1 && e <= x.$1 + x.$2.length)) continue;
+    final pw = _countWords(txt);
+    sum += pw;
+    if (pw >= 6) {
+      out.add(
+        idx.by(
+          s,
+          pw > 10 || _hasClauseWord(txt, true),
+          'long-or-clause-paren: Multi-sentence paren (${pw}w)',
+          idx.spanEx(s, pe - ps),
+        ),
+      );
+    }
+  }
+  return (sum, out);
 }
 
 (int, int, int) _countBoldLeads(List<_ProseBlock> blocks) {
@@ -242,11 +272,13 @@ List<ProseSmell> _headingSmells(
   if (b.headingLevel < 2 || !b.maskedSlice.contains('(')) return out;
   final p = _innermostParens(b.maskedSlice);
   if (p.length >= 2) {
+    final pw = p.fold<int>(0, (sum, m) => sum + _countWords(m.$3));
     return [
       ...out,
-      idx.hi(
+      idx.by(
         b.startOffset + p.first.$1,
-        'multi-paren-sentence: ${p.length} parens in heading',
+        p.length >= 3 || pw >= 10,
+        'multi-paren-sentence: ${p.length} parens in heading (${pw}w)',
       ),
     ];
   }

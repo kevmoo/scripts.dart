@@ -890,4 +890,49 @@ Directory link [dir](file://${tempDir.path}) exists on disk.
           .isFalse;
     });
   });
+
+  group('Dogfood Run #3 regressions', () {
+    test('catches multi-sentence parenthetical blocks while keeping '
+        '1-sentence standalone parens clean', () {
+      const doc =
+          '(Short standalone sentence.)\n\n'
+          '*⟦long-or-clause-paren: (Positional* *`[<entrypoint>]`* '
+          '*targets must reside inside `web/` today. Passing a target '
+          'outside `web/` exits immediately with code 64. Extra flags '
+          'apply across all active build modes.)⟧*\n';
+      final rep = assertProseSmells(doc, profile: ProseProfile.spec);
+      check(rep.smells.single.severity).equals(SmellSeverity.high);
+      check(rep.stats.pctWordsInParens).isGreaterThan(50.0);
+    });
+
+    test('skips top-of-doc Stakeholders/Reviewers rosters and indented '
+        'child sub-bullet bold-lead-paren hits', () {
+      const doc = '''
+# Launch Proposal
+
+- **Author**: Alice (`alice@`)
+- **Stakeholders**: Bob (`bob@` / [`@bob`](https://example.com)), Carol (`carol@`), Dan (`dan@`), Eve (`eve@`), Frank (`frank@`), Grace (`grace@`), Heidi (`heidi@`), Ivan (`ivan@`), Judy (`judy@`)
+
+### P1 ⟦multi-paren-sentence: (Short-Term)⟧: Migrate Apps (pkg:alpha, pkg:beta)
+
+- **Top-level takeaway ⟦bold-lead-paren: (stuffed)⟧**: Needs rewrite.
+    - **Standalone web apps (former `pkg:legacy`)**: Clean child sub-bullet.
+        - **`development` (`tool serve`)**: Clean nested mode bullet.
+''';
+      final rep = assertProseSmells(doc, profile: ProseProfile.spec);
+      final hSmell = rep.smells.singleWhere(
+        (s) => s.smellId == 'multi-paren-sentence',
+      );
+      check(hSmell.severity).equals(SmellSeverity.smell);
+      final leadSmell = rep.smells.singleWhere(
+        (s) => s.smellId == 'bold-lead-paren',
+      );
+      check(leadSmell.severity).equals(SmellSeverity.high);
+      final pillsCap =
+          (rep.toJson()['thresholds']
+                  as Map<String, Object?>)['pillsPer100Words']
+              as Map<String, Object?>;
+      check(pillsCap['high']).equals(20.0);
+    });
+  });
 }

@@ -42,10 +42,30 @@ final _dotExts =
             'yml,json,dart,cc,h,sh,toml,lock'
         .split(',')
         .toSet();
-final _docMetadataKeys =
-    'author,authors,status,owner,owners,updated,date,reviewers,target'
-        .split(',')
-        .toSet();
+const _docMetadataKeys = {
+  'author',
+  'authors',
+  'status',
+  'owner',
+  'owners',
+  'updated',
+  'last updated',
+  'last updates',
+  'date',
+  'reviewer',
+  'reviewers',
+  'stakeholder',
+  'stakeholders',
+  'approver',
+  'approvers',
+  'contributors',
+  'consulted',
+  'target',
+  'poc',
+  'dri',
+  'document status',
+};
+final _metaKeyLeadTrimRegex = RegExp(r'^(?:[-*+]|\d+[.)])\s+');
 
 final class _ProseBlock {
   final int startOffset, headingLevel, bodyRelOffset;
@@ -152,7 +172,7 @@ final class _ExtractorState {
   final List<_ProseBlock> blocks = [];
   final List<(int, int, int, bool, List<(int, int, String)>)> tables = [];
   int? blockStart, tableOffset, tableCols;
-  int blockEnd = 0, tableRowIndex = 0, tableBodyRows = 0;
+  int blockEnd = 0, bulletIndent = 0, tableRowIndex = 0, tableBodyRows = 0;
   bool isBullet = false, inExemptQuote = false, prevQuoteColon = false;
   bool tableIsMeta = false;
   final List<(int, int, String)> tableCells = [];
@@ -195,6 +215,7 @@ final class _ExtractorState {
       blockStart = s;
       blockEnd = e;
       isBullet = true;
+      bulletIndent = b[1]!.length;
       final rest = noCr.substring(b.end);
       final tm = rest.startsWith('[')
           ? _taskMarkerRegex.firstMatch(rest)
@@ -311,8 +332,18 @@ final class _ExtractorState {
   void flushBlock() {
     if (blockStart case final s?) {
       blockStart = null;
-      final b = _buildBlock(cleanUnits, (s, blockEnd), isBullet, profile);
+      final ln = mask.lineIndex.locationAt(s).line;
+      final rawBlk = mask.raw.substring(s, blockEnd);
+      final b = _isTopMetaBlock(rawBlk, ln)
+          ? null
+          : _buildBlock(
+              cleanUnits,
+              (s, blockEnd),
+              (isBullet, bulletIndent),
+              profile,
+            );
       isBullet = false;
+      bulletIndent = 0;
       if (b != null) blocks.add(b);
     }
   }
@@ -362,7 +393,25 @@ List<(int, int)> _splitPipeOffsets(String inner) {
   return out..add((last, inner.length));
 }
 
-_ProseBlock? _buildBlock(Uint16List u, (int, int) r, bool bul, ProseProfile p) {
+bool _isTopMetaBlock(String rawBlock, int line) {
+  if (line > 25) return false;
+  final t = rawBlock.trimLeft(), colon = t.indexOf(':');
+  if (colon <= 0 || colon > 48) return false;
+  final key = t
+      .substring(0, colon)
+      .replaceFirst(_metaKeyLeadTrimRegex, '')
+      .replaceAll(_mdKeyStripRegex, '')
+      .trim()
+      .toLowerCase();
+  return _docMetadataKeys.contains(key);
+}
+
+_ProseBlock? _buildBlock(
+  Uint16List u,
+  (int, int) r,
+  (bool, int) bul,
+  ProseProfile p,
+) {
   final sub = u.sublist(r.$1, r.$2);
   final raw = String.fromCharCodes(sub), trim = raw.trim();
   if (trim.isEmpty ||
@@ -371,7 +420,9 @@ _ProseBlock? _buildBlock(Uint16List u, (int, int) r, bool bul, ProseProfile p) {
           _metaHeaderLineRegex.hasMatch(trim))) {
     return null;
   }
-  final (lead, pOff, bRel) = bul ? _parseLead(raw, r.$1, p) : (false, null, 0);
+  final (lead, pOff, bRel) = bul.$1
+      ? _parseLead(raw, r.$1, bul.$2, p)
+      : (false, null, 0);
   if (raw.contains('(')) _maskTopLevelEnumParens(sub);
   final clean = String.fromCharCodes(sub);
   final rel = clean.substring(bRel).trim().isNotEmpty ? bRel : 0;
@@ -389,14 +440,21 @@ void _maskTopLevelEnumParens(Uint16List sub) {
   }
 }
 
-(bool, int?, int) _parseLead(String raw, int start, ProseProfile p) {
+(bool, int?, int) _parseLead(
+  String raw,
+  int start,
+  int indent,
+  ProseProfile p,
+) {
   final ws = raw.length - raw.trimLeft().length, after = raw.substring(ws);
   if (!after.startsWith('*')) return (false, null, 0);
   final m = _leadingLabelRegex.firstMatch(after);
   if (m == null) return (false, null, 0);
   final lbl = m[1] ?? m[2] ?? '';
   final pIdx = lbl.contains('(') ? lbl.indexOf('(') : lbl.indexOf(')');
-  if (pIdx < 0 || _okReadmeLead(lbl, p)) return (true, null, ws + m.end);
+  if (pIdx < 0 || indent >= 2 || _okReadmeLead(lbl, p)) {
+    return (true, null, ws + m.end);
+  }
   return (
     true,
     start + ws + (after.startsWith('**') ? 2 : 1) + pIdx,

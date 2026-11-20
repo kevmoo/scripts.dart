@@ -140,7 +140,7 @@ final class _ProfileCaps {
 
 _ProfileCaps _capsFor(ProseProfile p) => switch (p) {
   ProseProfile.narrative => const _ProfileCaps(6, 8, 45, 60, 10, 6.5, 10),
-  ProseProfile.spec => const _ProfileCaps(12, 16, 55, 70, 15, 7.5, 12),
+  ProseProfile.spec => const _ProfileCaps(16, 20, 55, 70, 15, 7.5, 12),
   ProseProfile.readme => const _ProfileCaps(
     22,
     25,
