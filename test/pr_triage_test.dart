@@ -11,11 +11,12 @@ import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 Future<({int exitCode, List<String> lines})> _capturePrTriage(
-  List<String> args,
-) async {
+  List<String> args, {
+  CommandRunner runCommand = runCommand,
+}) async {
   final lines = <String>[];
   final code = await runZoned(
-    () => wrappedForTesting(() => runPrTriageCli(args)),
+    () => wrappedForTesting(() => runPrTriageCli(args, runCommand: runCommand)),
     zoneSpecification: ZoneSpecification(
       print: (self, parent, zone, line) {
         lines.add(line);
@@ -1152,6 +1153,232 @@ void _registerResolveCliTests() {
         contains('Error: <body_text> cannot be empty.'),
       );
     });
+
+    test('resolve --react validates comment_id and reaction values', () async {
+      final missingCommentId = await _capturePrTriage([
+        'resolve',
+        '--react',
+        '+1',
+        'PRRT_123',
+      ]);
+      expect(missingCommentId.exitCode, equals(ExitCode.usage.code));
+      expect(
+        missingCommentId.lines.join('\n'),
+        contains('Error: --react requires <comment_id>'),
+      );
+
+      final invalidReaction = await _capturePrTriage([
+        'resolve',
+        '--react',
+        'eyes',
+        'PRRT_123',
+        '456',
+      ]);
+      expect(invalidReaction.exitCode, equals(ExitCode.usage.code));
+      expect(
+        invalidReaction.lines.join('\n'),
+        contains('Error: --react must be "+1" or "-1" (got "eyes").'),
+      );
+    });
+
+    test(
+      'react CLI validates arguments and handles -1 in any position',
+      () async {
+        final noArgs = await _capturePrTriage(['react']);
+        expect(noArgs.exitCode, equals(ExitCode.usage.code));
+        expect(
+          noArgs.lines.join('\n'),
+          contains('Error: Invalid arguments for react subcommand.'),
+        );
+
+        final badId = await _capturePrTriage(['react', 'PRRC_node', '-1']);
+        expect(badId.exitCode, equals(ExitCode.usage.code));
+        expect(
+          badId.lines.join('\n'),
+          contains('Error: <comment_id> must be a numeric database ID.'),
+        );
+
+        final badReaction = await _capturePrTriage([
+          'react',
+          '4656762591',
+          'thumbsdown',
+          '--issue-comment',
+        ]);
+        expect(badReaction.exitCode, equals(ExitCode.usage.code));
+        expect(
+          badReaction.lines.join('\n'),
+          contains(
+            'Error: <reaction> must be "+1" or "-1" (got "thumbsdown").',
+          ),
+        );
+
+        final cliCalls = <String>[];
+        Future<String> fakeCliRunner(
+          String exe,
+          List<String> args, {
+          String? workingDirectory,
+        }) async {
+          cliCalls.add('$exe ${args.join(' ')}');
+          if (args.contains('graphql')) {
+            return jsonEncode({
+              'data': {
+                'resolveReviewThread': {
+                  'thread': {'isResolved': true},
+                },
+              },
+            });
+          }
+          return '{}';
+        }
+
+        final reactRes = await _capturePrTriage([
+          'react',
+          '7074541766',
+          '-1',
+          '--issue-comment',
+          '--pr',
+          'https://github.com/dart-lang/i18n/pull/1138',
+        ], runCommand: fakeCliRunner);
+        expect(reactRes.exitCode, equals(0));
+        expect(cliCalls, hasLength(1));
+        expect(
+          cliCalls.single,
+          equals(
+            'gh api repos/dart-lang/i18n/issues/comments/7074541766/reactions '
+            '-f content=-1',
+          ),
+        );
+
+        cliCalls.clear();
+        final resolveReactRes = await _capturePrTriage([
+          'resolve',
+          '--react',
+          '-1',
+          '--pr',
+          'https://github.com/dart-lang/i18n/pull/1138',
+          'PRRT_kwDOJDJVXs66ggwv',
+          '4656762591',
+          'Already landed on main in f6015be2.',
+        ], runCommand: fakeCliRunner);
+        expect(resolveReactRes.exitCode, equals(0));
+        expect(cliCalls, hasLength(3));
+        expect(
+          cliCalls[1],
+          equals(
+            'gh api repos/dart-lang/i18n/pulls/comments/4656762591/reactions '
+            '-f content=-1',
+          ),
+        );
+      },
+    );
+
+    test('replyAndResolveThread and reactToPrComment execute REST reaction '
+        'calls in order', () async {
+      final prContext = PrContext(
+        workingDir: '/tmp/repo',
+        prNumber: '1138',
+        owner: 'dart-lang',
+        repo: 'i18n',
+      );
+      final calls = <String>[];
+      Future<String> fakeRunner(
+        String exe,
+        List<String> args, {
+        String? workingDirectory,
+      }) async {
+        calls.add('$exe ${args.join(' ')}');
+        if (args.contains('graphql')) {
+          return jsonEncode({
+            'data': {
+              'resolveReviewThread': {
+                'thread': {'isResolved': true},
+              },
+            },
+          });
+        }
+        return '{}';
+      }
+
+      await replyAndResolveThread(
+        prContext,
+        threadId: 'PRRT_kwDOJDJVXs66ggwv',
+        commentId: '4656762591',
+        body: 'Already landed on main in f6015be2.',
+        reaction: '-1',
+        runCommand: fakeRunner,
+      );
+
+      expect(calls, hasLength(3));
+      expect(
+        calls[0],
+        equals(
+          'gh api repos/dart-lang/i18n/pulls/1138/comments/4656762591/replies '
+          '-f body=Already landed on main in f6015be2.',
+        ),
+      );
+      expect(
+        calls[1],
+        equals(
+          'gh api repos/dart-lang/i18n/pulls/comments/4656762591/reactions '
+          '-f content=-1',
+        ),
+      );
+      expect(calls[2], startsWith('gh api graphql '));
+
+      calls.clear();
+      await replyAndResolveThread(
+        prContext,
+        threadId: 'PRRT_kwDOJDJVXs66ggwv',
+        commentId: '4656762591',
+        reaction: '+1',
+        runCommand: fakeRunner,
+      );
+      expect(calls, hasLength(2));
+      expect(
+        calls[0],
+        equals(
+          'gh api repos/dart-lang/i18n/pulls/comments/4656762591/reactions '
+          '-f content=+1',
+        ),
+      );
+      expect(calls[1], startsWith('gh api graphql '));
+
+      calls.clear();
+      await reactToPrComment(
+        prContext,
+        commentId: '7074541766',
+        reaction: '-1',
+        isIssueComment: true,
+        runCommand: fakeRunner,
+      );
+      expect(calls, hasLength(1));
+      expect(
+        calls.single,
+        equals(
+          'gh api repos/dart-lang/i18n/issues/comments/7074541766/reactions '
+          '-f content=-1',
+        ),
+      );
+
+      await expectLater(
+        replyAndResolveThread(
+          prContext,
+          threadId: 'PRRT_1',
+          reaction: '+1',
+          runCommand: fakeRunner,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+      await expectLater(
+        reactToPrComment(
+          prContext,
+          commentId: '4656762591',
+          reaction: 'rocket',
+          runCommand: fakeRunner,
+        ),
+        throwsA(isA<ArgumentError>()),
+      );
+    });
   });
 }
 
@@ -1323,6 +1550,8 @@ void _registerReRequestCliTests() {
         ('rerequest', 're-request <reviewer_login>'),
         ('re_request', 're-request <reviewer_login>'),
         ('reply', 'resolve <thread_id> <comment_id>'),
+        ('reaction', 'react <comment_id> <+1|-1> [--issue-comment]'),
+        ('reactions', 'react <comment_id> <+1|-1> [--issue-comment]'),
       ]) {
         final hintRes = await _capturePrTriage([cmd, '123']);
         expect(hintRes.exitCode, equals(ExitCode.usage.code));
@@ -1585,6 +1814,7 @@ void _registerEnterpriseHostTests() {
         threadId: 'PRRT_enterprise_1',
         commentId: '44156',
         body: 'Quote-reply feedback',
+        reaction: '+1',
         runCommand: fakeRunner,
         environment: enterpriseEnv,
       );
@@ -1622,19 +1852,27 @@ void _registerEnterpriseHostTests() {
       );
       expect(
         calls[3],
+        equals(
+          'custom-gh-enterprise api --hostname git.example.com '
+          'repos/team-org/knowledge-base/pulls/comments/44156/reactions '
+          '-f content=+1',
+        ),
+      );
+      expect(
+        calls[4],
         startsWith(
           'custom-gh-enterprise api --hostname git.example.com graphql ',
         ),
       );
       expect(
-        calls[4],
+        calls[5],
         equals(
           'custom-gh-enterprise pr comment 95 -R '
           'git.example.com/team-org/knowledge-base --body Ready for another look',
         ),
       );
       expect(
-        calls[5],
+        calls[6],
         equals(
           'custom-gh-enterprise api --hostname git.example.com -X PUT '
           'repos/team-org/knowledge-base/pulls/95/reviews/777/dismissals '
@@ -1642,7 +1880,7 @@ void _registerEnterpriseHostTests() {
         ),
       );
       expect(
-        calls[6],
+        calls[7],
         equals(
           'custom-gh-enterprise pr edit 95 -R '
           'git.example.com/team-org/knowledge-base --add-reviewer alice',

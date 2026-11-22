@@ -18,8 +18,11 @@ description: >-
 # Triage the active PR for a target repository checkout or worktree:
 kscripts pr-triage --dir /path/to/target-repository [--pr 123]
 
-# Reply to a comment and resolve a review thread (always pass --pr <N> when triaging multiple PRs):
-kscripts pr-triage resolve --dir /path/to/target-repository [--pr 123] <thread_id> [<comment_id> "<reply_body>"]
+# Reply to a comment, optionally react (+1/-1 for @gemini-code-assist), and resolve a review thread:
+kscripts pr-triage resolve --dir /path/to/target-repository [--pr 123] [--react <+1|-1>] <thread_id> [<comment_id> ["<reply_body>"]]
+
+# Post a standalone +1/-1 reaction (unresolved thread or --issue-comment conversation reply):
+kscripts pr-triage react --dir /path/to/target-repository [--pr 123] [--issue-comment] <comment_id> <+1|-1>
 
 # Post an optional top-level reply, optionally dismiss a stale CHANGES_REQUESTED review, and re-request review:
 kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <reviewer_login> [--comment "<reply_body>"] [--dismiss <review_database_id> -m "<reason>"]
@@ -108,8 +111,9 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
      - **Agent Assessment**: Agreement Level (`🔥 Urgent [Valid — Fix]`,
        `👍 Solid [Valid — Fix]`, `🤷 Meh`, or `👎 Disagree`), Empirical
        Verification output, and Rationale.
-     - **Planned Action & 2-Bucket TDD Filter**: Target file/line changes plus
-       either a **Companion Test** (`test/..._test.dart` for bug fixes, edge
+     - **Planned Action & 2-Bucket TDD Filter**: Target file/line changes,
+       planned `+1`/`-1` reaction for actionable `@gemini-code-assist` comments,
+       and either a **Companion Test** (`test/..._test.dart` for bug fixes, edge
        cases, or behavior changes) or **Explicit Skip (`None — <reason>`)** for
        copy/comment/rename or behavior-preserving refactors.
    - **Wire `[Valid — Fix]` Findings to `/sharpen-later` (`--cat=review-escape`,
@@ -170,9 +174,21 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
 ## Replying, Resolving Threads, and Re-Requesting Review
 
 See [`references/graphql_and_templates.md`](references/graphql_and_templates.md)
-for full `kscripts pr-triage resolve` / `re-request` syntax, GitHub
+for full `kscripts pr-triage resolve` / `react` / `re-request` syntax, GitHub
 state-machine notes, and underlying GraphQL/REST schemas.
 
+- **React `+1` / `-1` on `@gemini-code-assist` Review Comments**: Public
+  GitHub's Gemini Code Assist (`@gemini-code-assist` in GraphQL,
+  `gemini-code-assist[bot]` in REST) uses 👍 (`+1`) and 👎 (`-1`) comment
+  reactions as quality feedback. In Step 8 (never during read-only triage), pass
+  `--react +1` for `[Valid — Fix]` findings and `--react -1` (paired with a
+  concise factual reply) for `👎 Disagree` false positives on
+  `kscripts pr-triage resolve` — or run
+  `kscripts pr-triage react --dir <repo-path> [--pr <pr_number>] [--issue-comment] <comment_id> <+1|-1>`
+  when leaving a thread open or reacting to an `@gemini-code-assist`
+  conversation reply. Skip reactions on neutral `🤷 Meh` items, automatic
+  `## Summary of Changes` comments, top-level `## Code Review` summary headers,
+  and CI status bots (`github-actions[bot]`).
 - **Never Re-Request an Active `APPROVED` Reviewer**: `--add-reviewer` revokes
   active approvals. Run `kscripts pr-triage re-request` **ONLY when ALL 3
   hold**:

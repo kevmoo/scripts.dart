@@ -22,6 +22,39 @@ class _PrTriageFailure implements Exception {
 
 Never _failTriage(String message) => throw _PrTriageFailure(message);
 
+const _negOneArgSentinel = '__pr_triage_minus_one__';
+
+String _restoreNegOne(String value) =>
+    value == _negOneArgSentinel ? '-1' : value;
+
+String? _restoreOptionalNegOne(String? value) =>
+    value == null ? null : _restoreNegOne(value);
+
+String _validateReactionFlag(String raw, {required String label}) {
+  final clean = raw.trim();
+  if (clean != '+1' && clean != '-1') {
+    _failTriage('$label must be "+1" or "-1" (got "$raw").');
+  }
+  return clean;
+}
+
+ArgParser _buildResolveArgParser() => buildPrContextArgParser()
+  ..addOption(
+    'react',
+    help:
+        'Optional "+1" or "-1" reaction to post on <comment_id> before '
+        'resolving.',
+  );
+
+ArgParser _buildReactArgParser() => buildPrContextArgParser()
+  ..addFlag(
+    'issue-comment',
+    negatable: false,
+    help:
+        'React to a general PR/issue conversation comment instead of an '
+        'inline review comment.',
+  );
+
 ArgParser _buildReRequestArgParser() => buildPrContextArgParser()
   ..addOption(
     'dismiss',
@@ -46,8 +79,10 @@ void _printPrTriageUsage(ArgParser parser) {
   print('Usage:');
   print('  kscripts pr-triage [options]');
   print(
-    '  kscripts pr-triage resolve <thread_id> [<comment_id> "<body_text>"]',
+    '  kscripts pr-triage resolve [--react <+1|-1>] <thread_id> '
+    '[<comment_id> ["<body_text>"]]',
   );
+  print('  kscripts pr-triage react [--issue-comment] <comment_id> <+1|-1>');
   print(
     '  kscripts pr-triage re-request <reviewer_login> '
     '[--comment "<reply_body>"] '
@@ -63,18 +98,28 @@ const _commonPrTriageSubcommandMistakes = <String, String>{
   'rerequest': 're-request <reviewer_login>',
   're_request': 're-request <reviewer_login>',
   'reply': 'resolve <thread_id> <comment_id> "<body_text>"',
+  'reaction': 'react <comment_id> <+1|-1> [--issue-comment]',
+  'reactions': 'react <comment_id> <+1|-1> [--issue-comment]',
 };
 
-Future<void> runPrTriageCli(List<String> args) async {
+Future<void> runPrTriageCli(
+  List<String> args, {
+  CommandRunner runCommand = runCommand,
+}) async {
   final parser = buildPrContextArgParser()
-    ..addCommand('resolve', buildPrContextArgParser())
+    ..addCommand('resolve', _buildResolveArgParser())
+    ..addCommand('react', _buildReactArgParser())
     ..addCommand('re-request', _buildReRequestArgParser());
+  final sanitizedArgs = [
+    for (final arg in args) arg == '-1' ? _negOneArgSentinel : arg,
+  ];
   final ArgResults results;
   try {
-    results = parser.parse(args);
+    results = parser.parse(sanitizedArgs);
   } on FormatException catch (e) {
+    final cleanMsg = e.message.replaceAll(_negOneArgSentinel, '-1');
     setError(
-      message: 'Error: ${e.message}\n\n${parser.usage}',
+      message: 'Error: $cleanMsg\n\n${parser.usage}',
       exitCode: ExitCode.usage.code,
     );
     return;
@@ -86,7 +131,7 @@ Future<void> runPrTriageCli(List<String> args) async {
   }
 
   try {
-    await _runTriage(results);
+    await _runTriage(results, runCommand: runCommand);
   } on _PrTriageFailure catch (e) {
     setError(message: 'Error: ${e.message}', exitCode: ExitCode.usage.code);
   } catch (e, stack) {
@@ -98,37 +143,47 @@ Future<void> runPrTriageCli(List<String> args) async {
   }
 }
 
-Future<void> _runTriage(ArgResults results) async {
+Future<void> _runTriage(
+  ArgResults results, {
+  required CommandRunner runCommand,
+}) async {
   final subCmd = results.command;
-  if (subCmd != null && subCmd.name == 'resolve') {
-    await _handleResolveCommand(results, subCmd);
-    return;
-  }
-  if (subCmd != null && subCmd.name == 're-request') {
-    await _handleReRequestCommand(results, subCmd);
-    return;
+  if (subCmd != null) {
+    switch (subCmd.name) {
+      case 'resolve':
+        await _handleResolveCommand(results, subCmd, runCommand: runCommand);
+        return;
+      case 'react':
+        await _handleReactCommand(results, subCmd, runCommand: runCommand);
+        return;
+      case 're-request':
+        await _handleReRequestCommand(results, subCmd, runCommand: runCommand);
+        return;
+    }
   }
 
-  if (results.rest.isNotEmpty) {
-    final firstArg = results.rest.first.trim().toLowerCase();
+  final rest = results.rest.map(_restoreNegOne).toList();
+  if (rest.isNotEmpty) {
+    final firstArg = rest.first.trim().toLowerCase();
     final suggestion = _commonPrTriageSubcommandMistakes[firstArg];
     if (suggestion != null) {
       _failTriage(
-        'Unknown pr-triage subcommand "${results.rest.first}". '
+        'Unknown pr-triage subcommand "${rest.first}". '
         'Did you mean "kscripts pr-triage $suggestion"?',
       );
     }
   }
 
-  final targetDir = results.option('dir');
+  final targetDir = _restoreOptionalNegOne(results.option('dir'));
   final prInput =
-      results.option('pr') ??
-      (results.rest.isNotEmpty ? results.rest.first : null);
+      _restoreOptionalNegOne(results.option('pr')) ??
+      (rest.isNotEmpty ? rest.first : null);
 
   final context = await resolvePrContextFromArgs(
     prInput: prInput,
     targetDir: targetDir,
     onFail: _failTriage,
+    runCommand: runCommand,
   );
 
   final (data, conflictAnalysis, resolvedFollowUps) = await _fetchTriageData(
@@ -144,17 +199,27 @@ Future<void> _runTriage(ArgResults results) async {
   stdout.write(report);
 }
 
-({String threadId, String? commentId, String? bodyText}) _parseResolveArgs(
-  List<String> positional,
-) {
+({String threadId, String? commentId, String? bodyText, String? reaction})
+_parseResolveArgs(List<String> positional, {String? rawReaction}) {
+  final reaction = rawReaction != null
+      ? _validateReactionFlag(rawReaction, label: '--react')
+      : null;
   final (threadId, commentId, bodyText) = switch (positional) {
-    [final t] => (t, null, null),
+    [final t] when reaction == null => (t, null, null),
+    [final t, final c] when reaction != null => (t, c, null),
     [final t, final c, final b] => (t, c, b),
+    [final _] => _failTriage(
+      '--react requires <comment_id> (numeric database ID).\n'
+      'Usage:\n'
+      '  kscripts pr-triage resolve --react <+1|-1> <thread_id> '
+      '<comment_id> ["<body_text>"]',
+    ),
     _ => _failTriage(
       'Invalid arguments for resolve subcommand.\n'
       'Usage:\n'
       '  kscripts pr-triage resolve <thread_id>\n'
-      '  kscripts pr-triage resolve <thread_id> <comment_id> "<body_text>"',
+      '  kscripts pr-triage resolve [--react <+1|-1>] <thread_id> '
+      '<comment_id> ["<body_text>"]',
     ),
   };
 
@@ -165,40 +230,131 @@ Future<void> _runTriage(ArgResults results) async {
     _failTriage('<body_text> cannot be empty.');
   }
 
-  return (threadId: threadId, commentId: commentId, bodyText: bodyText);
+  return (
+    threadId: threadId,
+    commentId: commentId,
+    bodyText: bodyText,
+    reaction: reaction,
+  );
 }
 
 Future<void> _handleResolveCommand(
   ArgResults results,
-  ArgResults resolveCmd,
-) async {
-  final parsed = _parseResolveArgs(resolveCmd.rest);
-  final targetDir = resolveCmd.option('dir') ?? results.option('dir');
-  final prInput = resolveCmd.option('pr') ?? results.option('pr');
+  ArgResults resolveCmd, {
+  required CommandRunner runCommand,
+}) async {
+  final parsed = _parseResolveArgs(
+    resolveCmd.rest.map(_restoreNegOne).toList(),
+    rawReaction: _restoreOptionalNegOne(resolveCmd.option('react')),
+  );
+  final targetDir = _restoreOptionalNegOne(
+    resolveCmd.option('dir') ?? results.option('dir'),
+  );
+  final prInput = _restoreOptionalNegOne(
+    resolveCmd.option('pr') ?? results.option('pr'),
+  );
 
   final context = await resolvePrContextFromArgs(
     prInput: prInput,
     targetDir: targetDir,
     onFail: _failTriage,
     requireLocalRepo: false,
+    runCommand: runCommand,
   );
 
-  if (parsed.commentId != null && parsed.bodyText != null) {
-    print(
-      'Replying to comment ${parsed.commentId} and resolving thread '
-      '${parsed.threadId}...',
-    );
-  } else {
-    print('Resolving thread ${parsed.threadId}...');
-  }
-
+  print(_formatResolveStatusLine(parsed));
   await replyAndResolveThread(
     context,
     threadId: parsed.threadId,
     commentId: parsed.commentId,
     body: parsed.bodyText,
+    reaction: parsed.reaction,
+    runCommand: runCommand,
   );
   print('Successfully resolved thread ${parsed.threadId}.');
+}
+
+String _formatResolveStatusLine(
+  ({String threadId, String? commentId, String? bodyText, String? reaction})
+  parsed,
+) {
+  final hasReply = parsed.commentId != null && parsed.bodyText != null;
+  final reaction = parsed.reaction;
+  if (hasReply && reaction != null) {
+    return 'Replying to comment ${parsed.commentId}, reacting ($reaction), '
+        'and resolving thread ${parsed.threadId}...';
+  }
+  if (hasReply) {
+    return 'Replying to comment ${parsed.commentId} and resolving thread '
+        '${parsed.threadId}...';
+  }
+  if (reaction != null) {
+    return 'Reacting ($reaction) to comment ${parsed.commentId} and resolving '
+        'thread ${parsed.threadId}...';
+  }
+  return 'Resolving thread ${parsed.threadId}...';
+}
+
+({String commentId, String reaction, bool isIssueComment}) _parseReactArgs(
+  ArgResults reactCmd,
+) {
+  final positional = reactCmd.rest.map(_restoreNegOne).toList();
+  final (commentId, rawReaction) = switch (positional) {
+    [final c, final r] => (c, r),
+    _ => _failTriage(
+      'Invalid arguments for react subcommand.\n'
+      'Usage:\n'
+      '  kscripts pr-triage react [--issue-comment] <comment_id> <+1|-1>',
+    ),
+  };
+
+  if (!RegExp(r'^\d+$').hasMatch(commentId)) {
+    _failTriage('<comment_id> must be a numeric database ID.');
+  }
+  final reaction = _validateReactionFlag(rawReaction, label: '<reaction>');
+  return (
+    commentId: commentId,
+    reaction: reaction,
+    isIssueComment: reactCmd.flag('issue-comment'),
+  );
+}
+
+Future<void> _handleReactCommand(
+  ArgResults results,
+  ArgResults reactCmd, {
+  required CommandRunner runCommand,
+}) async {
+  final parsed = _parseReactArgs(reactCmd);
+  final targetDir = _restoreOptionalNegOne(
+    reactCmd.option('dir') ?? results.option('dir'),
+  );
+  final prInput = _restoreOptionalNegOne(
+    reactCmd.option('pr') ?? results.option('pr'),
+  );
+
+  final context = await resolvePrContextFromArgs(
+    prInput: prInput,
+    targetDir: targetDir,
+    onFail: _failTriage,
+    requireLocalRepo: false,
+    runCommand: runCommand,
+  );
+
+  final kindLabel = parsed.isIssueComment ? 'issue comment' : 'review comment';
+  print(
+    'Posting ${parsed.reaction} reaction on $kindLabel ${parsed.commentId}...',
+  );
+  await reactToPrComment(
+    context,
+    commentId: parsed.commentId,
+    reaction: parsed.reaction,
+    isIssueComment: parsed.isIssueComment,
+    runCommand: runCommand,
+  );
+  print(
+    'Successfully posted ${parsed.reaction} reaction on $kindLabel '
+    '${parsed.commentId}.',
+  );
 }
 
 ({
@@ -217,14 +373,17 @@ _parseReRequestArgs(ArgResults reRequestCmd) {
       '[--dismiss <review_database_id> -m "<message>"]',
     );
   }
-  final normalizedLogins = normalizeReviewerLogins(reRequestCmd.rest.single);
+  final normalizedLogins = normalizeReviewerLogins(
+    _restoreNegOne(reRequestCmd.rest.single),
+  );
   if (normalizedLogins.isEmpty) {
     _failTriage('<reviewer_login> cannot be empty.');
   }
 
-  final dismissId = reRequestCmd.option('dismiss')?.trim();
-  final dismissMessage = reRequestCmd.option('message');
-  final comment = reRequestCmd.option('comment');
+  final dismissId = _restoreOptionalNegOne(reRequestCmd.option('dismiss'))
+      ?.trim();
+  final dismissMessage = _restoreOptionalNegOne(reRequestCmd.option('message'));
+  final comment = _restoreOptionalNegOne(reRequestCmd.option('comment'));
 
   if (dismissId != null &&
       dismissId.isNotEmpty &&
@@ -250,17 +409,23 @@ _parseReRequestArgs(ArgResults reRequestCmd) {
 
 Future<void> _handleReRequestCommand(
   ArgResults results,
-  ArgResults reRequestCmd,
-) async {
+  ArgResults reRequestCmd, {
+  required CommandRunner runCommand,
+}) async {
   final parsed = _parseReRequestArgs(reRequestCmd);
-  final targetDir = reRequestCmd.option('dir') ?? results.option('dir');
-  final prInput = reRequestCmd.option('pr') ?? results.option('pr');
+  final targetDir = _restoreOptionalNegOne(
+    reRequestCmd.option('dir') ?? results.option('dir'),
+  );
+  final prInput = _restoreOptionalNegOne(
+    reRequestCmd.option('pr') ?? results.option('pr'),
+  );
 
   final context = await resolvePrContextFromArgs(
     prInput: prInput,
     targetDir: targetDir,
     onFail: _failTriage,
     requireLocalRepo: false,
+    runCommand: runCommand,
   );
 
   final mentions = formatReviewerMentions(parsed.reviewerLogins);
@@ -278,6 +443,7 @@ Future<void> _handleReRequestCommand(
     comment: parsed.comment,
     dismissReviewId: parsed.dismissReviewId,
     dismissMessage: parsed.dismissMessage,
+    runCommand: runCommand,
   );
   print('Successfully re-requested review from $mentions.');
 }
