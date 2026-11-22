@@ -10,6 +10,16 @@ enum RepoKind {
   legacyOrIgnored,
 }
 
+/// Combined result of a portfolio alignment scan, pairing evaluated
+/// [repos] with any non-fork, non-archived remote repositories not yet listed
+/// in `repos.yaml` ([unclassifiedRepos]).
+final class RepoAlignScanReport {
+  final List<RepoAlignmentStatus> repos;
+  final List<String> unclassifiedRepos;
+
+  const new({required this.repos, this.unclassifiedRepos = const []});
+}
+
 /// Information about a discovered repository's alignment status.
 class RepoAlignmentStatus {
   final String name;
@@ -59,6 +69,13 @@ class RepoAlignmentStatus {
   final bool hasMarkdownWorkflow;
   final bool hasPrettierIgnore;
   final List<String> spotDriftIssues;
+
+  // pkg:example validation
+  /// Whether any markdown file carries a fence whose info string contains
+  /// `@example`.
+  final bool hasExampleFences;
+  final bool hasExamplesWorkflow;
+  final bool hasCanonicalExamplesWorkflow;
 
   // GitHub Remote Configuration
   final bool autoMergeAllowed;
@@ -114,6 +131,9 @@ class RepoAlignmentStatus {
     this.hasMarkdownWorkflow = false,
     this.hasPrettierIgnore = false,
     this.spotDriftIssues = const [],
+    this.hasExampleFences = false,
+    this.hasExamplesWorkflow = false,
+    this.hasCanonicalExamplesWorkflow = true,
     required this.autoMergeAllowed,
     this.hasAutosubmitLabel = true,
     required this.hasRulesetOrProtection,
@@ -135,14 +155,15 @@ class RepoAlignmentStatus {
     _checkApiSummaryIssues(result);
     _checkCiIssues(result);
     _checkMarkdownIssues(result);
+    _checkExamplesIssues(result);
     _checkGitHubIssues(result);
     return result;
   }
 
   /// Dart lint standards apply to any repo carrying a `pubspec.yaml`,
-  /// including [RepoKind.agentSkills] -- `kevmoo_skills` and `dash_skills`
-  /// ship real Dart tooling under a workspace root, and a root
-  /// `analysis_options.yaml` governs every workspace member.
+  /// including [RepoKind.agentSkills] -- skills workspaces carry real Dart
+  /// tooling under `tool/`, and a root `analysis_options.yaml` governs every
+  /// workspace member.
   void _checkDartIssues(List<String> result) {
     if (!hasPubspec) return;
 
@@ -186,6 +207,10 @@ class RepoAlignmentStatus {
       !hasPublishToNone &&
       (kind == RepoKind.publishedPackage || kind == RepoKind.monorepoWorkspace);
 
+  /// Whether this repository has published packages that require
+  /// `lower_bound.yml`.
+  bool get requiresLowerBound => requiresApiSummary;
+
   /// Whether this repository kind requires standard Dart CI workflows
   /// (`complexity.yml` and `autosubmit.yml`).
   bool get requiresStandardCiWorkflows =>
@@ -205,7 +230,7 @@ class RepoAlignmentStatus {
   void _checkCiIssues(List<String> result) {
     _checkDependabotAndWorkflowHygiene(result);
     if (!requiresStandardCiWorkflows) return;
-    if (kind == RepoKind.publishedPackage && !hasLowerBound) {
+    if (requiresLowerBound && !hasLowerBound) {
       result.add('Missing lower_bound.yml');
     }
     if (!hasCogComp) result.add('Missing complexity.yml');
@@ -257,6 +282,25 @@ class RepoAlignmentStatus {
       result.add('markdown.yml present but not a required check');
     }
     result.addAll(spotDriftIssues);
+  }
+
+  /// `examples.yml` is required only where markdown actually uses
+  /// `pkg:example` fences, but applies to every repo kind that does.
+  void _checkExamplesIssues(List<String> result) {
+    if (hasExampleFences && !hasExamplesWorkflow) {
+      result.add('Missing examples.yml');
+    }
+    if (!hasExamplesWorkflow) return;
+    if (!hasCanonicalExamplesWorkflow) {
+      result.add(
+        'Non-canonical examples.yml '
+        '(differs from canonical template or pinned SHA)',
+      );
+    }
+    if (hasRulesetOrProtection &&
+        !defaultBranchRequiredChecks.contains(examplesCheckContext)) {
+      result.add('examples.yml present but not a required check');
+    }
   }
 
   void _checkGitHubIssues(List<String> result) {
@@ -346,6 +390,9 @@ class RepoAlignmentStatus {
     'hasMarkdownWorkflow': hasMarkdownWorkflow,
     'hasPrettierIgnore': hasPrettierIgnore,
     'spotDriftIssues': spotDriftIssues,
+    'hasExampleFences': hasExampleFences,
+    'hasExamplesWorkflow': hasExamplesWorkflow,
+    'hasCanonicalExamplesWorkflow': hasCanonicalExamplesWorkflow,
     'autoMergeAllowed': autoMergeAllowed,
     'hasRulesetOrProtection': hasRulesetOrProtection,
     'requiredChecks': requiredChecks,

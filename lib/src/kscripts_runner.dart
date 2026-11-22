@@ -21,6 +21,7 @@ import 'lint_cleanup.dart';
 import 'pr_check.dart';
 import 'pr_cleanup.dart';
 import 'pr_triage.dart';
+import 'prose_check.dart';
 import 'puppy.dart';
 import 'relay_whoami.dart';
 import 'repo_align/repo_align_runner.dart';
@@ -106,6 +107,11 @@ const kscriptSubcommands = <KScriptSubcommand>[
     run: runPrTriageCli,
   ),
   KScriptSubcommand(
+    name: 'prose-check',
+    description: proseCheckDescription,
+    run: runProseCheckCli,
+  ),
+  KScriptSubcommand(
     name: 'puppy',
     description: 'Run a command in all package directories.',
     run: runPuppyCli,
@@ -154,12 +160,16 @@ const commonKScriptMistakes = <String, String>{
   'preflight': 'pr-check',
   'gh-preflight': 'pr-check',
   'check': 'pr-check',
+  'prose': 'prose-check',
+  'prose-review': 'prose-check',
+  'doc-audit': 'prose-check',
+  'doc-smells': 'prose-check',
   'relay': 'relay-whoami',
   'whoami': 'relay-whoami',
 };
 
 /// Prints `kscripts` usage and available subcommands.
-void printKScriptsUsage() {
+void _printKScriptsUsage() {
   print(kscriptsDescription);
   print('');
   print('Usage: kscripts <subcommand> [arguments]');
@@ -184,7 +194,7 @@ KScriptSubcommand? findKScriptSubcommand(String name) {
 }
 
 /// Suggests a canonical subcommand name for [input] if one matches.
-String? suggestKScriptSubcommand(String input) {
+String? _suggestKScriptSubcommand(String input) {
   final normalized = input.trim().toLowerCase();
   final fromMap = commonKScriptMistakes[normalized];
   if (fromMap != null) return fromMap;
@@ -268,7 +278,7 @@ Future<void> runKScriptsCli(
       args.first == '--help' ||
       args.first == '-h' ||
       (args.first == 'help' && args.length == 1)) {
-    printKScriptsUsage();
+    _printKScriptsUsage();
     return;
   }
 
@@ -306,7 +316,7 @@ void _reportStaleShim(String name) {
 }
 
 void _reportUnknownSubcommand(String commandName) {
-  final suggestion = suggestKScriptSubcommand(commandName);
+  final suggestion = _suggestKScriptSubcommand(commandName);
   final hint = suggestion != null
       ? ' Did you mean "kscripts $suggestion"?'
       : '';
@@ -611,7 +621,7 @@ Future<void> runPuppyCli(List<String> args) async {
   });
 }
 
-void runRepoAlignCli(List<String> args) {
+Future<void> runRepoAlignCli(List<String> args) async {
   final parser = ArgParser()
     ..addCommand('check')
     ..addCommand('fix')
@@ -644,7 +654,8 @@ void runRepoAlignCli(List<String> args) {
       'ci',
       help:
           'Fix/synchronize CI workflows '
-          '(lower_bound, complexity, autosubmit, dependabot)',
+          '(lower_bound, complexity, autosubmit, dependabot, markdown, '
+          'examples)',
     )
     ..addFlag(
       'github',
@@ -693,7 +704,7 @@ void runRepoAlignCli(List<String> args) {
   final runner = RepoAlignRunner();
 
   if (commandName == 'check') {
-    runner.runCheck(
+    await runner.runCheck(
       targetRepo: targetRepo,
       targetDir: targetDir,
       jsonOutput: jsonOutput,

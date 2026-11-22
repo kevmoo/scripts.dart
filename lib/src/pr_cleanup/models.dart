@@ -19,6 +19,8 @@ class ActiveItem {
   final String reviewBadge;
   final String author;
   final bool isDraft;
+  final int unresolvedReviewerThreads;
+  final int unresolvedAuthorThreads;
   final DateTime? createdAt;
   final DateTime? updatedAt;
   final DateTime? lastAuthorActivityAt;
@@ -36,6 +38,8 @@ class ActiveItem {
     required this.reviewBadge,
     required this.author,
     required this.isDraft,
+    this.unresolvedReviewerThreads = 0,
+    this.unresolvedAuthorThreads = 0,
     this.createdAt,
     this.updatedAt,
     this.lastAuthorActivityAt,
@@ -54,6 +58,8 @@ class ActiveItem {
     'reviewBadge': reviewBadge,
     'author': author,
     'isDraft': isDraft,
+    'unresolvedReviewerThreads': unresolvedReviewerThreads,
+    'unresolvedAuthorThreads': unresolvedAuthorThreads,
     'createdAt': createdAt?.toIso8601String(),
     'updatedAt': updatedAt?.toIso8601String(),
     'lastAuthorActivityAt': lastAuthorActivityAt?.toIso8601String(),
@@ -140,6 +146,7 @@ class TriageItem {
   final String repository;
   final String branch;
   final String? worktreePath;
+  final String? remoteBranch;
   final int? prOrClNumber;
   final String reason;
   final DateTime? createdAt;
@@ -150,6 +157,7 @@ class TriageItem {
     required this.repository,
     required this.branch,
     this.worktreePath,
+    this.remoteBranch,
     this.prOrClNumber,
     required this.reason,
     this.createdAt,
@@ -161,6 +169,7 @@ class TriageItem {
     'repository': repository,
     'branch': branch,
     'worktreePath': worktreePath,
+    'remoteBranch': remoteBranch,
     'prOrClNumber': prOrClNumber,
     'reason': reason,
     'createdAt': createdAt?.toIso8601String(),
@@ -193,5 +202,30 @@ class PrSweepResult {
     'active': [for (final item in active) item.toJson()],
     'needsTriage': [for (final item in needsTriage) item.toJson()],
     'lockedWorktrees': [for (final item in lockedWorktrees) item.toJson()],
+  };
+}
+
+/// Result of executing pruning actions on ready-to-prune items.
+class PrCleanupApplyResult {
+  final int prunedWorktrees;
+  final int deletedBranches;
+  final int deletedRemoteBranches;
+  final List<String> skippedWorktrees;
+  final List<String> errors;
+
+  const new({
+    this.prunedWorktrees = 0,
+    this.deletedBranches = 0,
+    this.deletedRemoteBranches = 0,
+    this.skippedWorktrees = const [],
+    this.errors = const [],
+  });
+
+  Map<String, dynamic> toJson() => {
+    'prunedWorktrees': prunedWorktrees,
+    'deletedBranches': deletedBranches,
+    'deletedRemoteBranches': deletedRemoteBranches,
+    'skippedWorktrees': skippedWorktrees,
+    'errors': errors,
   };
 }

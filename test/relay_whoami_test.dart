@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:kevmoo_scripts/src/relay_whoami.dart';
 import 'package:kevmoo_scripts/src/relay_whoami/relay_whoami_options.dart';
+import 'package:kevmoo_scripts/src/shared/git_cli.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
@@ -463,21 +464,21 @@ Landed PR #113 on kevmoo/scripts.dart.
 
   group('nonInteractiveGitEnv & syncRelayGitRepo', () {
     test('enforces BatchMode=yes across unset and custom GIT_SSH_COMMAND', () {
-      final defaultEnv = nonInteractiveGitEnv(const {});
+      final defaultEnv = nonInteractiveGitEnv(baseEnv: const {});
       expect(defaultEnv['GIT_TERMINAL_PROMPT'], '0');
       expect(defaultEnv['GIT_SSH_COMMAND'], contains('BatchMode=yes'));
 
-      final customKeyEnv = nonInteractiveGitEnv(const {
-        'GIT_SSH_COMMAND': 'ssh -i /tmp/test_id',
-      });
+      final customKeyEnv = nonInteractiveGitEnv(
+        baseEnv: const {'GIT_SSH_COMMAND': 'ssh -i /tmp/test_id'},
+      );
       expect(
         customKeyEnv['GIT_SSH_COMMAND'],
         'ssh -i /tmp/test_id -o BatchMode=yes -o ConnectTimeout=10',
       );
 
-      final explicitEnv = nonInteractiveGitEnv(const {
-        'GIT_SSH_COMMAND': 'ssh -o BatchMode=yes',
-      });
+      final explicitEnv = nonInteractiveGitEnv(
+        baseEnv: const {'GIT_SSH_COMMAND': 'ssh -o BatchMode=yes'},
+      );
       expect(explicitEnv['GIT_SSH_COMMAND'], 'ssh -o BatchMode=yes');
     });
 

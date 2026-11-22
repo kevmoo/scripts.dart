@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:yaml/yaml.dart';
 
+import 'shared/git_cli.dart';
+
 /// Checks whether the compiled `kscripts` binary is older than the local
 /// `scripts.dart` checkout's `main` ref (using `KSCRIPTS_REPO_DIR` or the
 /// `dart install` bundle's `../../pubspec.lock` path).
@@ -51,31 +53,28 @@ void checkKScriptsStaleness({
 /// Prefers the reflog entry (when the local ref last moved, matching the old
 /// mtime semantics) and falls back to the commit time when there is no reflog.
 DateTime? _mainUpdatedAt(String repoPath) {
-  String? run(List<String> args) {
-    try {
-      final result = Process.runSync('git', ['-C', repoPath, ...args]);
-      if (result.exitCode != 0) return null;
-      final out = (result.stdout as String).trim();
-      return out.isEmpty ? null : out;
-    } catch (_) {
-      return null;
-    }
-  }
-
   // `main@{<unix seconds>}` from the reflog, if one exists.
-  final reflog = run([
+  final reflog = defaultGitCli.stdoutOrNullSync(const [
     'log',
     '-g',
     '-1',
     '--format=%gd',
     '--date=unix',
     'main',
-  ]);
+  ], workingDirectory: repoPath);
   final seconds =
       int.tryParse(
         RegExp(r'@\{(\d+)\}$').firstMatch(reflog ?? '')?.group(1) ?? '',
       ) ??
-      int.tryParse(run(['log', '-1', '--format=%ct', 'main']) ?? '');
+      int.tryParse(
+        defaultGitCli.stdoutOrNullSync(const [
+              'log',
+              '-1',
+              '--format=%ct',
+              'main',
+            ], workingDirectory: repoPath) ??
+            '',
+      );
   if (seconds == null) return null;
   return DateTime.fromMillisecondsSinceEpoch(seconds * 1000);
 }

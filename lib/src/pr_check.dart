@@ -289,12 +289,19 @@ PrCheckReport runPrCheck({
 }) {
   final repoRoot = _resolveGitTopLevel(directory, processRunner) ?? directory;
   final baseRef = _resolveBaseRef(repoRoot, baseRefOverride, processRunner);
-  final changedFiles = _collectChangedFiles(repoRoot, baseRef, processRunner);
+  final (:changedFiles, :deletedFiles) = _collectChangedFiles(
+    repoRoot,
+    baseRef,
+    processRunner,
+  );
   final runner = _PrCheckRunner(
     repoRoot: repoRoot,
     baseRef: baseRef,
     changedFiles: changedFiles,
-    workflowsText: changedFiles.isEmpty ? '' : _readWorkflowsContent(repoRoot),
+    deletedFiles: deletedFiles,
+    workflowsText: changedFiles.isEmpty && deletedFiles.isEmpty
+        ? ''
+        : _readWorkflowsContent(repoRoot),
     dartBin: _resolveDartBinary(),
     isDartSdk: File(p.join(repoRoot.path, 'tools', 'VERSION')).existsSync(),
     runSync: processRunner,
@@ -312,6 +319,10 @@ final class _PrCheckRunner {
   final Directory repoRoot;
   final String baseRef;
   final List<String> changedFiles;
+
+  /// Files deleted vs [baseRef]. Only the firehose checks see these; the
+  /// format, analyze, prettier, and test steps need files that exist.
+  final List<String> deletedFiles;
   final String workflowsText;
   final String dartBin;
   final bool isDartSdk;
@@ -327,6 +338,7 @@ final class _PrCheckRunner {
     required this.repoRoot,
     required this.baseRef,
     required this.changedFiles,
+    required this.deletedFiles,
     required this.workflowsText,
     required this.dartBin,
     required this.isDartSdk,
@@ -346,7 +358,7 @@ final class _PrCheckRunner {
     if (versionNote != null) warnings.add(versionNote);
 
     _recordSingle('git-status', _checkCleanWorkingTree(repoRoot, runSync));
-    if (changedFiles.isEmpty) {
+    if (changedFiles.isEmpty && deletedFiles.isEmpty) {
       _skip('diff-checks', 'no changed files vs $baseRef');
       return _toReport();
     }
@@ -391,11 +403,22 @@ final class _PrCheckRunner {
     required bool requireWip,
     required bool runRevDeps,
   }) {
-    final packages = runZoned(
-      () => firehose.Repository(repoRoot).locatePackages(),
-      zoneSpecification: ZoneSpecification(print: (_, _, _, _) {}),
-    );
-    final changedSet = changedFiles.toSet();
+    if (isDartSdk) {
+      _skip('firehose', 'Dart SDK repo');
+      return;
+    }
+    final List<firehose.Package> packages;
+    try {
+      packages = runZoned(
+        () => firehose.Repository(repoRoot).locatePackages(),
+        zoneSpecification: ZoneSpecification(print: (_, _, _, _) {}),
+      );
+    } on Object catch (e) {
+      warnings.add('Skipping firehose checks due to malformed pubspec: $e');
+      _skip('firehose', 'malformed pubspec.yaml');
+      return;
+    }
+    final changedSet = {...changedFiles, ...deletedFiles};
     var checkedAny = false;
     for (final pkg in packages) {
       if (_validateFirehosePackage(
@@ -466,7 +489,7 @@ final class _PrCheckRunner {
       runSync,
     );
     if (requireWip &&
-        pkgChanged.any(_isCodeOrPackageFile) &&
+        pkgChanged.any(_requiresWipBump) &&
         !ver.isPreRelease &&
         (baseVer == null || baseVer == verStr)) {
       final nextWip = '${ver.major}.${ver.minor}.${ver.patch + 1}-wip';
@@ -532,7 +555,14 @@ final class _PrCheckRunner {
       } else {
         _recordSingle(
           'cognitive-complexity',
-          _checkCognitiveComplexity(repoRoot, libBinFiles, dartBin, runSync),
+          _checkCognitiveComplexity(
+            repoRoot: repoRoot,
+            baseRef: baseRef,
+            workflowsText: workflowsText,
+            libBinFiles: libBinFiles,
+            dartBin: dartBin,
+            runSync: runSync,
+          ),
         );
       }
     }
@@ -574,7 +604,7 @@ final class _PrCheckRunner {
         'no touched SKILL.md, AGENTS.md, or references/ files',
       );
     } else {
-      _recordMulti('agent-docs', checkAgentDocFiles(repoRoot, agentDocFiles));
+      _recordMulti('agent-docs', _checkAgentDocFiles(repoRoot, agentDocFiles));
     }
 
     final hasPrettier =
@@ -691,14 +721,30 @@ String _resolveBaseRef(
   String? override,
   SyncProcessRunner runSync,
 ) {
+  final preferUpstream =
+      (override == null || override.isEmpty) &&
+      _prefersUpstreamBase(repoRoot, runSync);
   final candidates = <String>[
     if (override != null && override.isNotEmpty) ...[
       override,
-      if (!override.startsWith('origin/')) 'origin/$override',
+      if (!override.contains('/')) ...[
+        'origin/$override',
+        'upstream/$override',
+      ],
+    ],
+    if (preferUpstream) ...[
+      'upstream/HEAD',
+      'upstream/main',
+      'upstream/master',
     ],
     'origin/HEAD',
     'origin/main',
     'origin/master',
+    if (!preferUpstream) ...[
+      'upstream/HEAD',
+      'upstream/main',
+      'upstream/master',
+    ],
     'HEAD~1',
   ];
   for (final ref in candidates) {
@@ -712,7 +758,32 @@ String _resolveBaseRef(
   return 'HEAD';
 }
 
-List<String> _collectChangedFiles(
+bool _prefersUpstreamBase(Directory repoRoot, SyncProcessRunner runSync) {
+  final ghResolved = runSync('git', const [
+    'config',
+    '--local',
+    '--get',
+    'remote.upstream.gh-resolved',
+  ], workingDirectory: repoRoot.path);
+  if (ghResolved.exitCode == 0 &&
+      (ghResolved.stdout as String).trim() == 'base') {
+    return true;
+  }
+  final upstream = runSync('git', const [
+    'remote',
+    'get-url',
+    'upstream',
+  ], workingDirectory: repoRoot.path);
+  if (upstream.exitCode != 0 || (upstream.stdout as String).trim().isEmpty) {
+    return false;
+  }
+  final segments = p.split(p.normalize(repoRoot.path));
+  final ghIdx = segments.lastIndexOf('github');
+  return ghIdx < 0 || segments.length != ghIdx + 3;
+}
+
+/// Files touched vs [baseRef], split by whether they still exist on disk.
+({List<String> changedFiles, List<String> deletedFiles}) _collectChangedFiles(
   Directory repoRoot,
   String baseRef,
   SyncProcessRunner runSync,
@@ -720,15 +791,22 @@ List<String> _collectChangedFiles(
   final res = runSync('git', [
     'diff',
     '--name-only',
-    '--diff-filter=ACMR',
+    '--diff-filter=ACMRD',
     '$baseRef...HEAD',
   ], workingDirectory: repoRoot.path);
-  if (res.exitCode != 0) return const [];
-  return (res.stdout as String)
-      .split('\n')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty && File(p.join(repoRoot.path, s)).existsSync())
-      .toList();
+  final changedFiles = <String>[];
+  final deletedFiles = <String>[];
+  if (res.exitCode == 0) {
+    for (final line in (res.stdout as String).split('\n')) {
+      final path = line.trim();
+      if (path.isEmpty) continue;
+      (File(p.join(repoRoot.path, path)).existsSync()
+              ? changedFiles
+              : deletedFiles)
+          .add(path);
+    }
+  }
+  return (changedFiles: changedFiles, deletedFiles: deletedFiles);
 }
 
 String _readWorkflowsContent(Directory repoRoot) {
@@ -764,14 +842,11 @@ List<String> _packageRelativeChanges(String prefix, Set<String> changedFiles) {
   return result;
 }
 
-bool _isCodeOrPackageFile(String relToPkg) =>
-    relToPkg == 'pubspec.yaml' ||
-    relToPkg.startsWith('lib/') ||
-    relToPkg.startsWith('bin/') ||
-    relToPkg.startsWith('test/') ||
-    relToPkg.startsWith('tool/') ||
-    relToPkg.startsWith('hook/') ||
-    relToPkg.startsWith('web/');
+/// Mirrors firehose's Publish validate: any added, modified, or deleted file
+/// in the package requires a `-wip` bump on an already-published version,
+/// except the package's own `CHANGELOG.md` and anything under `.github/`.
+bool _requiresWipBump(String relToPkg) =>
+    relToPkg != 'CHANGELOG.md' && !p.split(relToPkg).contains('.github');
 
 bool _isFirehoseChangelogWatchedFile(String relToPkg) =>
     relToPkg == 'pubspec.yaml' ||
@@ -875,17 +950,36 @@ bool _isPackageConfigMissingOrStale(String pkgDirPath) {
   return pubspec.lastModifiedSync().isAfter(packageConfig.lastModifiedSync());
 }
 
-PrCheckViolation? _checkCognitiveComplexity(
-  Directory repoRoot,
-  List<String> libBinFiles,
-  String dartBin,
-  SyncProcessRunner runSync,
-) {
+final _complexityThresholdRegex = RegExp(
+  r'fail-threshold:\s*(\d+)|--fail-threshold(?:=|\s+)(\d+)',
+);
+final _complexityDiffModeRegex = RegExp(
+  r'cognitive_complexity@|diff-base:|--git-diff\b',
+);
+final _complexityFailOnIncreaseRegex = RegExp(
+  r'''fail-on-increase:\s*(?:true|['"]true['"])|--fail-on-increase\b''',
+);
+
+PrCheckViolation? _checkCognitiveComplexity({
+  required Directory repoRoot,
+  required String baseRef,
+  required String workflowsText,
+  required List<String> libBinFiles,
+  required String dartBin,
+  required SyncProcessRunner runSync,
+}) {
+  final thresholdMatch = _complexityThresholdRegex.firstMatch(workflowsText);
+  final threshold =
+      thresholdMatch?.group(1) ?? thresholdMatch?.group(2) ?? '15';
+  final useDiff = _complexityDiffModeRegex.hasMatch(workflowsText);
+  final failOnIncrease =
+      useDiff && _complexityFailOnIncreaseRegex.hasMatch(workflowsText);
   final res = runSync(dartBin, [
     'run',
     cognitiveComplexityPackageSpec,
-    '--fail-threshold',
-    '15',
+    if (useDiff) '--git-diff=$baseRef',
+    '--fail-threshold=$threshold',
+    if (failOnIncrease) '--fail-on-increase',
     ...libBinFiles,
   ], workingDirectory: repoRoot.path);
   if (res.exitCode == 0) return null;
@@ -893,10 +987,11 @@ PrCheckViolation? _checkCognitiveComplexity(
   return PrCheckViolation(
     check: 'cognitive-complexity',
     message:
-        'Repository CI enforces cognitive_complexity <= 15, which failed:\n'
+        'Repository CI enforces cognitive_complexity <= $threshold'
+        '${failOnIncrease ? ' (with fail-on-increase)' : ''}, which failed:\n'
         '$out',
     remediation:
-        'Decompose functions exceeding threshold 15 in '
+        'Decompose functions exceeding threshold $threshold in '
         '${libBinFiles.join(', ')}.',
   );
 }

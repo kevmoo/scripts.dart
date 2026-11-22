@@ -12,6 +12,7 @@ import '../gh_view.dart';
 import '../gh_view/models.dart';
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
+import 'fork_branch_scanner.dart';
 import 'models.dart';
 import 'pr_cleanup_options.dart';
 
@@ -26,6 +27,7 @@ Future<PrSweepResult> collectPrSweep({
   required PrCleanupOptions options,
   SyncProcessRunner? syncProcessRunner,
   ProcessRunner? asyncProcessRunner,
+  Future<GerritAnalysisResult?> Function()? gerritAnalyzer,
   void Function(String message)? onProgress,
 }) async {
   final syncRunner = syncProcessRunner ?? defaultSyncProcessRunner;
@@ -40,6 +42,7 @@ Future<PrSweepResult> collectPrSweep({
     dartSdkPath: dartSdkPath,
     syncRunner: syncRunner,
     asyncRunner: asyncRunner,
+    gerritAnalyzer: gerritAnalyzer,
     onProgress: onProgress,
   );
   final localRepos = scanLocalGitRepositories(
@@ -100,7 +103,10 @@ Future<PrSweepResult> _assembleSweepResult({
     gerrit: initialData.gerrit,
     closedUnmergedPrs: landedResolution.closedUnmergedPrs,
     unlinkedWorktrees: unlinkedWorktrees,
+    localRepos: localRepos,
+    options: options,
     syncRunner: syncRunner,
+    onProgress: onProgress,
   );
 }
 
@@ -110,7 +116,10 @@ PrSweepResult _buildSweepResult({
   required GerritAnalysisResult? gerrit,
   required List<ClosedUnmergedPr> closedUnmergedPrs,
   required List<UnlinkedWorktree> unlinkedWorktrees,
+  required List<LocalRepoInfo> localRepos,
+  required PrCleanupOptions options,
   required SyncProcessRunner syncRunner,
+  void Function(String message)? onProgress,
 }) {
   final readyToPrune = <PrunableItem>[];
   final lockedWorktrees = <LockedWorktreeItem>[];
@@ -131,12 +140,28 @@ PrSweepResult _buildSweepResult({
     needsTriage: needsTriage,
     candidateLandedIds: candidateLandedIds,
   );
+  final forkScan = _runForkBranchScan(
+    localRepos: localRepos,
+    options: options,
+    active: active,
+    readyToPrune: readyToPrune,
+    needsTriage: needsTriage,
+    closedUnmergedPrs: closedUnmergedPrs,
+    unlinkedWorktrees: unlinkedWorktrees,
+    syncRunner: syncRunner,
+    onProgress: onProgress,
+  );
+  readyToPrune.addAll(forkScan.readyToPrune);
+  candidateLandedIds.addAll(forkScan.candidateLandedIds);
+
   _processClosedUnmergedAndUnlinked(
     closedUnmergedPrs: closedUnmergedPrs,
     unlinkedWorktrees: unlinkedWorktrees,
+    remoteBranchByKey: forkScan.remoteBranchByKey,
     lockedWorktrees: lockedWorktrees,
     needsTriage: needsTriage,
   );
+  needsTriage.addAll(forkScan.additionalTriage);
   _sortTriageItems(needsTriage);
   _sortLockedWorktrees(lockedWorktrees);
 
@@ -149,6 +174,65 @@ PrSweepResult _buildSweepResult({
     timestamp: DateTime.now(),
   );
 }
+
+ForkBranchScanResult _runForkBranchScan({
+  required List<LocalRepoInfo> localRepos,
+  required PrCleanupOptions options,
+  required List<ActiveItem> active,
+  required List<PrunableItem> readyToPrune,
+  required List<TriageItem> needsTriage,
+  required List<ClosedUnmergedPr> closedUnmergedPrs,
+  required List<UnlinkedWorktree> unlinkedWorktrees,
+  required SyncProcessRunner syncRunner,
+  void Function(String message)? onProgress,
+}) {
+  final handledKeys = _collectHandledForkKeys(
+    active: active,
+    readyToPrune: readyToPrune,
+    needsTriage: needsTriage,
+    unlinkedWorktrees: unlinkedWorktrees,
+  );
+  final existingTriageKeys = _collectExistingTriageForkKeys(
+    closedUnmergedPrs: closedUnmergedPrs,
+    unlinkedWorktrees: unlinkedWorktrees,
+  );
+  return scanForkRemoteBranches(
+    localRepos: localRepos,
+    user: options.user,
+    repoFilter: options.repo,
+    handledBranchKeys: handledKeys,
+    existingTriageBranchKeys: existingTriageKeys,
+    syncRunner: syncRunner,
+    onProgress: onProgress,
+  );
+}
+
+Set<String> _collectHandledForkKeys({
+  required List<ActiveItem> active,
+  required List<PrunableItem> readyToPrune,
+  required List<TriageItem> needsTriage,
+  required List<UnlinkedWorktree> unlinkedWorktrees,
+}) => <String>{
+  for (final a in active)
+    if (a.source == 'github') '${a.repository}#${a.branch}'.toLowerCase(),
+  for (final r in readyToPrune)
+    if (r.source == 'github') '${r.repository}#${r.branch}'.toLowerCase(),
+  for (final t in needsTriage)
+    if (t.source == 'github') '${t.repository}#${t.branch}'.toLowerCase(),
+  for (final u in unlinkedWorktrees)
+    if (u.isLocked) '${u.repository}#${u.branch}'.toLowerCase(),
+};
+
+Set<String> _collectExistingTriageForkKeys({
+  required List<ClosedUnmergedPr> closedUnmergedPrs,
+  required List<UnlinkedWorktree> unlinkedWorktrees,
+}) => <String>{
+  for (final c in closedUnmergedPrs)
+    if ((c.commitsAhead ?? 0) > 0) '${c.repository}#${c.branch}'.toLowerCase(),
+  for (final u in unlinkedWorktrees)
+    if (!u.isLocked && (u.commitsAhead ?? 0) > 0)
+      '${u.repository}#${u.branch}'.toLowerCase(),
+};
 
 String _resolveRootPath(String? localRoot) =>
     localRoot ??
@@ -172,6 +256,7 @@ _fetchInitialData({
   required String dartSdkPath,
   required SyncProcessRunner syncRunner,
   required ProcessRunner asyncRunner,
+  Future<GerritAnalysisResult?> Function()? gerritAnalyzer,
   void Function(String message)? onProgress,
 }) async {
   final landedPrsFuture = fetchLandedPrs(
@@ -185,13 +270,14 @@ _fetchInitialData({
   final activePrsFuture = fetchOpenPullRequests(
     user: options.user,
     repo: options.repo,
-    lastNDays: options.lastNDays,
+    lastNDays: options.openPrLastNDays,
     limit: options.limit,
     processRunner: asyncRunner,
   );
 
-  final gerritFuture =
-      (!options.skipGerrit && Directory(dartSdkPath).existsSync())
+  final gerritFuture = gerritAnalyzer != null
+      ? gerritAnalyzer()
+      : (!options.skipGerrit && Directory(dartSdkPath).existsSync())
       ? analyzeGerritWork(
           gerritRepo: dartSdkPath,
           failSilently: true,
@@ -564,6 +650,8 @@ void _processGithubActivePrs(
         reviewBadge: reviewBadge,
         author: pr.author,
         isDraft: pr.isDraft,
+        unresolvedReviewerThreads: pr.unresolvedReviewerThreads,
+        unresolvedAuthorThreads: pr.unresolvedAuthorThreads,
         createdAt: pr.createdAt,
         updatedAt: pr.updatedAt,
         lastAuthorActivityAt: pr.lastAuthorActivityAt,
@@ -615,6 +703,8 @@ void _processGerritActiveCls(
         reviewBadge: reviewBadge,
         author: 'self',
         isDraft: false,
+        unresolvedReviewerThreads: cl.threads.unresolvedReviewerLeaves,
+        unresolvedAuthorThreads: cl.threads.unresolvedAuthorLeaves,
         createdAt: cl.createdAt,
         updatedAt: cl.updatedAt ?? lastAuthorAt,
         lastAuthorActivityAt: lastAuthorAt,
@@ -635,17 +725,20 @@ String? _findGerritClWorktree(int clNumber, GerritAnalysisResult analysis) {
 void _processClosedUnmergedAndUnlinked({
   required List<ClosedUnmergedPr> closedUnmergedPrs,
   required List<UnlinkedWorktree> unlinkedWorktrees,
+  required Map<String, String> remoteBranchByKey,
   required List<LockedWorktreeItem> lockedWorktrees,
   required List<TriageItem> needsTriage,
 }) {
   for (final c in closedUnmergedPrs) {
     if (c.commitsAhead != null && c.commitsAhead! > 0) {
+      final key = '${c.repository}#${c.branch}'.toLowerCase();
       needsTriage.add(
         TriageItem(
           source: 'github',
           repository: c.repository,
           branch: c.branch,
           worktreePath: c.worktreePath,
+          remoteBranch: remoteBranchByKey[key],
           prOrClNumber: c.number,
           reason:
               'Closed (unmerged) PR #${c.number}, has ${c.commitsAhead} '
@@ -661,7 +754,10 @@ void _processClosedUnmergedAndUnlinked({
     if (u.isLocked) {
       lockedWorktrees.add(_toLockedWorktreeItem(u));
     } else if (u.commitsAhead != null && u.commitsAhead! > 0) {
-      needsTriage.add(_toUnlinkedTriageItem(u));
+      final key = '${u.repository}#${u.branch}'.toLowerCase();
+      needsTriage.add(
+        _toUnlinkedTriageItem(u, remoteBranch: remoteBranchByKey[key]),
+      );
     }
   }
 }
@@ -680,7 +776,7 @@ LockedWorktreeItem _toLockedWorktreeItem(UnlinkedWorktree u) =>
           _readWorktreeModifiedAt(u.worktreePath),
     );
 
-TriageItem _toUnlinkedTriageItem(UnlinkedWorktree u) {
+TriageItem _toUnlinkedTriageItem(UnlinkedWorktree u, {String? remoteBranch}) {
   final dateSuffix = u.lastCommitDate != null
       ? ' (last commit: ${u.lastCommitDate})'
       : '';
@@ -689,6 +785,7 @@ TriageItem _toUnlinkedTriageItem(UnlinkedWorktree u) {
     repository: u.repository,
     branch: u.branch,
     worktreePath: u.worktreePath,
+    remoteBranch: remoteBranch,
     reason:
         'Unlinked worktree `${p.basename(u.worktreePath)}` has '
         '${u.commitsAhead} unpushed commit(s)$dateSuffix',
@@ -804,20 +901,24 @@ String _computeCiBadge(CiStatus status) {
 }
 
 String _computeReviewBadge(GhPr pr) {
-  if (pr.isApproved) return '🟢 Approved';
-  if (pr.isDraft) return '⚪ Work in progress';
-  if (pr.reviewDecision == ReviewDecision.changesRequested) {
-    if (pr.lastAuthorCommentAt != null &&
-        pr.lastReviewerActivityAt != null &&
-        pr.lastAuthorCommentAt!.isAfter(pr.lastReviewerActivityAt!)) {
-      return '🔄 Re-request Review';
-    }
-    return '🔴 Changes Requested';
-  }
-  if (pr.requestedReviewers.isNotEmpty) {
-    return '⏳ In Review Queue';
-  }
-  return '⚪ None';
+  final unresolved = pr.unresolvedReviewerThreads;
+  final isQueuedReReview =
+      pr.requestedReviewers.isNotEmpty && pr.unrequestedActiveReviewers.isEmpty;
+  return switch ((pr.isDraft, unresolved > 0, pr.effectiveReviewDecision)) {
+    (true, true, _) => '⚪ Work in progress ($unresolved unresolved)',
+    (true, false, _) => '⚪ Work in progress',
+    (false, true, ReviewDecision.approved) =>
+      '❌ Unresolved Comments ($unresolved, Approved)',
+    (false, true, ReviewDecision.changesRequested) =>
+      '🔴 Changes Requested ($unresolved unresolved)',
+    (false, true, _) => '❌ Unresolved Comments ($unresolved)',
+    (false, false, ReviewDecision.approved) => '🟢 Approved',
+    (false, false, _) when pr.needsReviewReRequest => '🔄 Re-request Review',
+    (false, false, ReviewDecision.changesRequested) =>
+      isQueuedReReview ? '🟡 Re-review Requested' : '🔴 Changes Requested',
+    (false, false, _) =>
+      pr.requestedReviewers.isNotEmpty ? '⏳ In Review Queue' : '⚪ None',
+  };
 }
 
 String _computeGerritCqBadge(String cqStatus) {
@@ -831,18 +932,24 @@ String _computeGerritCqBadge(String cqStatus) {
 }
 
 String _computeGerritReviewBadge(RemoteCL cl) {
-  if (cl.crVotes.any((v) => v.endsWith(':-1') || v.endsWith(':-2'))) {
-    return '🔴 Changes Requested';
-  }
-  if (cl.crVotes.any((v) => v.endsWith(':+1') || v.endsWith(':+2'))) {
-    if (cl.submittable == false) {
-      final reqs = cl.unsatisfiedRequirements.isNotEmpty
-          ? 'Needs ${cl.unsatisfiedRequirements.join(', ')}'
-          : 'Missing submit requirements';
-      return '🟡 Approved ($reqs)';
-    }
-    return '🟢 Approved';
-  }
-  if (cl.reviewers.isNotEmpty) return '⏳ Awaiting Review';
-  return '⚪ None';
+  final unresolved = cl.threads.unresolvedReviewerLeaves;
+  final hasNegative = cl.crVotes.any(
+    (v) => v.endsWith(':-1') || v.endsWith(':-2'),
+  );
+  final hasPositive = cl.crVotes.any(
+    (v) => v.endsWith(':+1') || v.endsWith(':+2'),
+  );
+  final reqs = cl.unsatisfiedRequirements.isNotEmpty
+      ? 'Needs ${cl.unsatisfiedRequirements.join(', ')}'
+      : 'Missing submit requirements';
+  return switch ((unresolved > 0, hasNegative, hasPositive)) {
+    (true, true, _) => '🔴 Changes Requested ($unresolved unresolved)',
+    (true, false, true) => '❌ Unresolved Comments ($unresolved, Approved)',
+    (true, false, false) => '❌ Unresolved Comments ($unresolved)',
+    (false, true, _) => '🔴 Changes Requested',
+    (false, false, true) =>
+      cl.submittable == false ? '🟡 Approved ($reqs)' : '🟢 Approved',
+    (false, false, false) =>
+      cl.reviewers.isNotEmpty ? '⏳ Awaiting Review' : '⚪ None',
+  };
 }

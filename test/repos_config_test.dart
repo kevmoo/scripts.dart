@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:checks/checks.dart';
 import 'package:io/io.dart';
 import 'package:kevmoo_scripts/src/git_up.dart';
+import 'package:kevmoo_scripts/src/repo_align/models.dart';
 import 'package:kevmoo_scripts/src/repos_config.dart';
 import 'package:kevmoo_scripts/src/testable_print.dart';
 import 'package:path/path.dart' as p;
@@ -15,7 +16,8 @@ void main() {
   test('returns null when repos.yaml is missing or empty', () {
     check(
       loadGitUpRepoConfig(p.join(d.sandbox, 'repo'), homeDirectory: d.sandbox),
-    ).isNull();
+    ).isNull;
+    check(loadRepoAlignConfig(homeDirectory: d.sandbox)).isNull;
 
     File(p.join(d.sandbox, '.config', 'kscripts', 'repos.yaml'))
       ..createSync(recursive: true)
@@ -23,11 +25,12 @@ void main() {
 
     check(
       loadGitUpRepoConfig(p.join(d.sandbox, 'repo'), homeDirectory: d.sandbox),
-    ).isNull();
+    ).isNull;
+    check(loadRepoAlignConfig(homeDirectory: d.sandbox)).isNull;
   });
 
   test(
-    'resolves ~/ paths, symlinks, and ignores other tool sections',
+    'resolves ~/ paths, symlinks, and coexists with repo-align section',
     () async {
       await d.dir('real', [d.dir('sdk')]).create();
       final realSdk = p.join(d.sandbox, 'real', 'sdk');
@@ -37,6 +40,15 @@ void main() {
       File(p.join(d.sandbox, '.config', 'kscripts', 'repos.yaml'))
         ..createSync(recursive: true)
         ..writeAsStringSync('''
+repo-align:
+  owner: example-user
+  baseDir: ~/github/example-user
+  active:
+    - alpha_pkg
+    - beta_tool
+  ignore:
+    - old_archive
+
 ~/real/sdk:
   other-tool:
     enabled: true
@@ -54,22 +66,77 @@ void main() {
 
       final config = loadGitUpRepoConfig(linkSdk, homeDirectory: d.sandbox);
       check(config).isNotNull()
-        ..has((c) => c.allowWorktree, 'allowWorktree').isTrue()
-        ..has((c) => c.branch, 'branch').equals('core-main')
-        ..has((c) => c.upstream, 'upstream').equals('upstream-sdk/main')
-        ..has((c) => c.cleanBranches, 'cleanBranches').isFalse()
-        ..has((c) => c.before, 'before').equals('')
-        ..has((c) => c.post, 'post').equals('echo synced')
-        ..has((c) => c.override, 'override').isNull();
+        ..has('allowWorktree', (c) => c.allowWorktree).isTrue
+        ..has('branch', (c) => c.branch).equals('core-main')
+        ..has('upstream', (c) => c.upstream).equals('upstream-sdk/main')
+        ..has('cleanBranches', (c) => c.cleanBranches).isFalse
+        ..has('before', (c) => c.before).equals('')
+        ..has('post', (c) => c.post).equals('echo synced')
+        ..has('override', (c) => c.override).isNull;
+
+      final alignConfig = loadRepoAlignConfig(homeDirectory: d.sandbox);
+      check(alignConfig).isNotNull()
+        ..has('owner', (c) => c.owner).equals('example-user')
+        ..has(
+          'baseDir',
+          (c) => c.baseDir,
+        ).equals(p.canonicalize(p.join(d.sandbox, 'github', 'example-user')))
+        ..has('active', (c) => c.active).deepEquals(['alpha_pkg', 'beta_tool'])
+        ..has('ignore', (c) => c.ignore).deepEquals(['old_archive']);
 
       check(
         loadGitUpRepoConfig(
           p.join(d.sandbox, 'other', 'repo'),
           homeDirectory: d.sandbox,
         ),
-      ).isNull();
+      ).isNull;
     },
   );
+
+  test('defaults repo-align baseDir to ~/github/<owner> when omitted', () {
+    final configPath = p.join(d.sandbox, 'repos.yaml');
+    File(configPath).writeAsStringSync('''
+repo-align:
+  owner: sample-owner
+  active:
+    - pkg_one
+''');
+
+    final config = loadRepoAlignConfig(
+      configPath: configPath,
+      homeDirectory: d.sandbox,
+    );
+    check(config).isNotNull()
+      ..has('owner', (c) => c.owner).equals('sample-owner')
+      ..has(
+        'baseDir',
+        (c) => c.baseDir,
+      ).equals(p.canonicalize(p.join(d.sandbox, 'github', 'sample-owner')))
+      ..has('active', (c) => c.active).deepEquals(['pkg_one'])
+      ..has('ignore', (c) => c.ignore).isEmpty;
+  });
+
+  test('parses repo-align kinds overrides for active repos', () {
+    final configPath = p.join(d.sandbox, 'repos.yaml');
+    File(configPath).writeAsStringSync('''
+repo-align:
+  owner: sample-owner
+  active:
+    - pkg_one
+    - proto_app
+  kinds:
+    proto_app: experimentalOrPrototype
+''');
+
+    final config = loadRepoAlignConfig(
+      configPath: configPath,
+      homeDirectory: d.sandbox,
+    );
+    check(config)
+        .isNotNull()
+        .has('kinds', (c) => c.kinds)
+        .deepEquals({'proto_app': RepoKind.experimentalOrPrototype});
+  });
 
   test('allowWorktree: true defaults cleanBranches to false unless set', () {
     final configPath = p.join(d.sandbox, 'repos.yaml');
@@ -84,14 +151,14 @@ void main() {
       )?.cleanBranches;
     }
 
-    check(cleanBranchesFor('    branch: main\n')).isNotNull().isTrue();
-    check(cleanBranchesFor('    allowWorktree: true\n')).isNotNull().isFalse();
+    check(cleanBranchesFor('    branch: main\n')).isNotNull().isTrue;
+    check(cleanBranchesFor('    allowWorktree: true\n')).isNotNull().isFalse;
     check(
       cleanBranchesFor('    allowWorktree: true\n    cleanBranches: true\n'),
-    ).isNotNull().isTrue();
+    ).isNotNull().isTrue;
     check(
       cleanBranchesFor('    allowWorktree: false\n    cleanBranches: false\n'),
-    ).isNotNull().isFalse();
+    ).isNotNull().isFalse;
   });
 
   test('rejects unknown keys, bad types, empty branch, duplicates', () async {
@@ -129,6 +196,49 @@ void main() {
         yaml: '~/real_target:\n  git-up: {}\n~/alias_target:\n  git-up: {}\n',
         expectedError: 'Duplicate repository entries',
       ),
+      (
+        yaml: 'repo-align:\n  active: []\n',
+        expectedError: 'Missing required key "owner" under "repo-align".',
+      ),
+      (
+        yaml: 'repo-align:\n  owner: u\n  tier: 1\n',
+        expectedError: 'Unknown key "tier" under "repo-align"',
+      ),
+      (
+        yaml: 'repo-align:\n  owner: u\n  active:\n    - dup\n    - dup\n',
+        expectedError: 'Duplicate repository "dup" in "repo-align" -> "active"',
+      ),
+      (
+        yaml:
+            'repo-align:\n  owner: u\n  active:\n    - same\n'
+            '  ignore:\n    - same\n',
+        expectedError:
+            'Repository "same" cannot appear in both "active" and "ignore"',
+      ),
+      (
+        yaml: 'repo-align:\n  owner: u\n  kinds:\n    - nope\n',
+        expectedError: 'Key "kinds" under "repo-align" must be a YAML map',
+      ),
+      (
+        yaml:
+            'repo-align:\n  owner: u\n  active:\n    - a\n'
+            '  kinds:\n    b: toolOrApp\n',
+        expectedError:
+            'Repository "b" in "repo-align" -> "kinds" must also be listed '
+            'in "active"',
+      ),
+      (
+        yaml:
+            'repo-align:\n  owner: u\n  active:\n    - a\n'
+            '  kinds:\n    a: prototype\n',
+        expectedError: 'Invalid kind "prototype" for "a"',
+      ),
+      (
+        yaml:
+            'repo-align:\n  owner: u\n  active:\n    - a\n'
+            '  kinds:\n    a: legacyOrIgnored\n',
+        expectedError: 'Invalid kind "legacyOrIgnored" for "a"',
+      ),
     ];
 
     final configPath = p.join(d.sandbox, 'bad_repos.yaml');
@@ -144,9 +254,9 @@ void main() {
             );
           }),
         ).throws<GitUpException>(
-          (it) => it
-            ..has((e) => e.exitCode, 'exitCode').equals(ExitCode.config.code)
-            ..has((e) => e.message, 'message').contains(testCase.expectedError),
+          .it()
+            ..has('exitCode', (e) => e.exitCode).equals(ExitCode.config.code)
+            ..has('message', (e) => e.message).contains(testCase.expectedError),
         );
       });
     }

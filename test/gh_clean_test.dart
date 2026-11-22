@@ -8,12 +8,13 @@ import 'package:kevmoo_scripts/src/gh_clean/cleanup_actions.dart';
 import 'package:kevmoo_scripts/src/gh_clean/fetch_landed_prs.dart';
 import 'package:kevmoo_scripts/src/gh_clean/gh_clean_options.dart';
 import 'package:kevmoo_scripts/src/gh_clean/models.dart';
-import 'package:kevmoo_scripts/src/git_extensions.dart';
 import 'package:kevmoo_scripts/src/local_repo_scanner.dart';
 import 'package:kevmoo_scripts/src/process_utils.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
+
+import 'test_helpers.dart';
 
 void main() {
   group('buildLandedSearchQuery', () {
@@ -98,7 +99,7 @@ void main() {
 
     test('returns null when required fields are missing', () {
       final node = {'number': 1063};
-      check(parseLandedPrNode(node)).isNull();
+      check(parseLandedPrNode(node)).isNull;
     });
   });
 
@@ -119,7 +120,7 @@ void main() {
 
     test('returns empty list when repo is not cloned locally', () {
       final plan = planCleanup(samplePr, null);
-      check(plan).isEmpty();
+      check(plan).isEmpty;
     });
 
     test('plans branch deletion and sync when local branch exists and trunk is '
@@ -178,7 +179,7 @@ void main() {
       final plan = planCleanup(samplePr, localRepo);
       check(plan)
         ..contains('Delete local branch `feat-branch`')
-        ..not((it) => it.contains('Sync `main` to `origin/main`'));
+        ..not(.it()..contains('Sync `main` to `origin/main`'));
     });
 
     test('plans worktree pruning when worktree exists', () {
@@ -294,7 +295,7 @@ void main() {
       final wtActNoReason = execNoReason.firstWhere(
         (a) => a.description.contains('worktree'),
       );
-      check(wtActNoReason.success).isFalse();
+      check(wtActNoReason.success).isFalse;
       check(wtActNoReason.error).equals('Worktree is locked.');
 
       final lockedWithReasonRepo = (
@@ -341,7 +342,7 @@ void main() {
       final wtActWithReason = execWithReason.firstWhere(
         (a) => a.description.contains('worktree'),
       );
-      check(wtActWithReason.success).isFalse();
+      check(wtActWithReason.success).isFalse;
       check(wtActWithReason.error)
           .equals('Worktree is locked (Hold for benchmark).');
     });
@@ -414,17 +415,17 @@ void main() {
       );
 
       final actions = executeCleanup(landedPr, localInfo);
-      check(actions.every((a) => a.success)).isTrue();
+      check(actions.every((a) => a.success)).isTrue;
 
       // Worktree directory should be gone
-      check(Directory(wtPath).existsSync()).isFalse();
+      check(Directory(wtPath).existsSync()).isFalse;
 
       // Branch should be deleted
       final branchList = await localGit.runCommand(['branch', '--list']);
-      check(branchList.stdout as String).not((it) => it.contains('feature-x'));
+      check(branchList.stdout as String).not(.it()..contains('feature-x'));
 
       // Main should be fast-forwarded to include merged.txt
-      check(File(p.join(localPath, 'merged.txt')).existsSync()).isTrue();
+      check(File(p.join(localPath, 'merged.txt')).existsSync()).isTrue;
     });
 
     test(
@@ -516,12 +517,12 @@ void main() {
         );
 
         final actions = executeCleanup(landedPr, localInfo);
-        check(actions.every((a) => a.success)).isTrue();
+        check(actions.every((a) => a.success)).isTrue;
 
         // Branch should be deleted successfully without false positive error
         final branchList = await localGit.runCommand(['branch', '--list']);
         check(branchList.stdout as String)
-            .not((it) => it.contains('feature-squash'));
+            .not(.it()..contains('feature-squash'));
       },
     );
 
@@ -606,7 +607,7 @@ void main() {
                 a.error != null &&
                 a.error!.contains('unpushed commits'),
           ),
-        ).isTrue();
+        ).isTrue;
 
         // Branch should NOT be deleted
         final branchList = await localGit.runCommand(['branch', '--list']);
@@ -679,7 +680,7 @@ void main() {
               a.error != null &&
               a.error!.contains('empty headRefOid'),
         ),
-      ).isTrue();
+      ).isTrue;
 
       final branchList = await localGit.runCommand(['branch', '--list']);
       check(branchList.stdout as String).contains('feature-empty-head');
@@ -875,8 +876,8 @@ void main() {
 
       check(prs.map((p) => p.repository))
         ..contains('dart-lang/ecosystem')
-        ..not((it) => it.contains('kevmoo/sdk'))
-        ..not((it) => it.contains('dart-lang/sdk'));
+        ..not(.it()..contains('kevmoo/sdk'))
+        ..not(.it()..contains('dart-lang/sdk'));
     });
 
     test('fetchLandedPrs paginates in chunks of 50 when limit > 50', () async {
@@ -1103,7 +1104,7 @@ void main() {
         },
       );
 
-      check(unlinked).isEmpty();
+      check(unlinked).isEmpty;
     });
 
     test(
@@ -1141,7 +1142,7 @@ void main() {
           {wtPath}, // already matched
         );
 
-        check(unlinked).isEmpty();
+        check(unlinked).isEmpty;
       },
     );
 
@@ -1219,8 +1220,8 @@ void main() {
       );
 
       // Verify worktree and its files are strictly preserved!
-      check(Directory(wtPath).existsSync()).isTrue();
-      check(File(p.join(wtPath, 'precious.txt')).existsSync()).isTrue();
+      check(Directory(wtPath).existsSync()).isTrue;
+      check(File(p.join(wtPath, 'precious.txt')).existsSync()).isTrue;
       check(File(p.join(wtPath, 'precious.txt')).readAsStringSync())
           .equals('valuable unpushed work');
     });
@@ -1267,7 +1268,7 @@ void main() {
           },
         );
 
-        check(unlinked).isEmpty();
+        check(unlinked).isEmpty;
       },
     );
   });
@@ -1381,7 +1382,7 @@ void main() {
         'already-matched',
       });
 
-      check(crossAuthorPrs).isEmpty();
+      check(crossAuthorPrs).isEmpty;
     });
 
     test('filters out PRs merged before lastNDays cutoff', () async {
@@ -1446,7 +1447,7 @@ void main() {
         },
       );
 
-      check(crossAuthorPrs).isEmpty();
+      check(crossAuthorPrs).isEmpty;
     });
 
     test('extracts valid PRs even when gh exits with code 1 on partial batch '
@@ -1673,7 +1674,7 @@ void main() {
           );
         },
       );
-      check(unrelatedPrs).isEmpty();
+      check(unrelatedPrs).isEmpty;
 
       // 2. Closed unmerged PR by unrelated external contributor is also
       // ignored:
@@ -1716,7 +1717,7 @@ void main() {
           );
         },
       );
-      check(unrelatedClosed).isEmpty();
+      check(unrelatedClosed).isEmpty;
     });
   });
 
@@ -1740,10 +1741,10 @@ void main() {
         'baseRefName': 'master',
       })!;
 
-      check(writePr.headRefExists).isTrue();
+      check(writePr.headRefExists).isTrue;
       check(writePr.headRepository).equals('kevmoo/flutter');
       check(writePr.headRepoPermission).equals('ADMIN');
-      check(writePr.canDeleteRemoteHeadBranch).isTrue();
+      check(writePr.canDeleteRemoteHeadBranch).isTrue;
 
       final readOnlyPr = parseLandedPrNode({
         'number': 192711,
@@ -1763,8 +1764,8 @@ void main() {
         'baseRefName': 'master',
       })!;
 
-      check(readOnlyPr.headRefExists).isTrue();
-      check(readOnlyPr.canDeleteRemoteHeadBranch).isFalse();
+      check(readOnlyPr.headRefExists).isTrue;
+      check(readOnlyPr.canDeleteRemoteHeadBranch).isFalse;
 
       final deletedRefPr = parseLandedPrNode({
         'number': 192712,
@@ -1784,8 +1785,8 @@ void main() {
         'baseRefName': 'master',
       })!;
 
-      check(deletedRefPr.headRefExists).isFalse();
-      check(deletedRefPr.canDeleteRemoteHeadBranch).isFalse();
+      check(deletedRefPr.headRefExists).isFalse;
+      check(deletedRefPr.canDeleteRemoteHeadBranch).isFalse;
     });
 
     test(
@@ -1812,7 +1813,7 @@ void main() {
         );
 
         final skipped = planCleanup(pr, null, skipRemoteBranches: true);
-        check(skipped).isEmpty();
+        check(skipped).isEmpty;
 
         final calls = <String>[];
         final executed = executeCleanup(
@@ -1828,7 +1829,7 @@ void main() {
           'gh api -X DELETE repos/kevmoo/dart_firebase_admin/git/refs/heads/release-0.5.5',
         );
         check(executed.length).equals(1);
-        check(executed.first.success).isTrue();
+        check(executed.first.success).isTrue;
         check(executed.first.description).equals(
           'Deleted remote branch `kevmoo/dart_firebase_admin:release-0.5.5`',
         );
@@ -1912,11 +1913,11 @@ void main() {
           },
         );
 
-        check(calls).not((it) => it.any((c) => c.contains('worktree remove')));
+        check(calls).not(.it()..any(.it()..contains('worktree remove')));
         final wtAction = executed.firstWhere(
           (a) => a.description.contains('worktree'),
         );
-        check(wtAction.success).isFalse();
+        check(wtAction.success).isFalse;
         check(wtAction.error).isNotNull().contains(
           'Worktree branch mismatch '
           '(checked out on `web-content-hash-phase-2-5`, '
@@ -1982,7 +1983,7 @@ void main() {
         '(checked out in worktree at /path/to/_codable.dart-rope-chunks)',
       );
       check(planned)
-          .not((it) => it.contains('Delete local branch `bytes-builder-copy`'));
+          .not(.it()..contains('Delete local branch `bytes-builder-copy`'));
 
       final calls = <String>[];
       final executed = executeCleanup(
@@ -1994,12 +1995,12 @@ void main() {
         },
       );
       check(calls)
-        ..not((it) => it.any((c) => c.contains('worktree remove')))
-        ..not((it) => it.any((c) => c.contains('branch -D')));
+        ..not(.it()..any(.it()..contains('worktree remove')))
+        ..not(.it()..any(.it()..contains('branch -D')));
       final branchAction = executed.firstWhere(
         (a) => a.description.contains('Delete local branch'),
       );
-      check(branchAction.success).isFalse();
+      check(branchAction.success).isFalse;
       check(branchAction.error).isNotNull().contains(
         'checked out in worktree at /path/to/_codable.dart-rope-chunks',
       );
@@ -2161,7 +2162,7 @@ void main() {
       check(c.number).equals(74);
       check(c.branch).equals('rope-chunks');
       check(c.worktreePath).equals('/path/to/_codable.dart-rope-chunks');
-      check(c.shaMatchesPrHead).isTrue();
+      check(c.shaMatchesPrHead).isTrue;
       check(c.commitsAhead).equals(2);
 
       final md = formatMarkdownReport(

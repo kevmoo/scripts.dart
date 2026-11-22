@@ -6,9 +6,9 @@ description: >-
   api_summary (api.txt + test/api_test.dart), and GitHub remote branch
   protection rulesets. Use when checking or fixing CI workflows
   (lower_bound.yml, complexity.yml, autosubmit.yml, dependabot.yml,
-  markdown.yml), .prettierrc.json, analysis_options.yaml lints, api.txt, or
-  remote auto-merge and status-check rulesets across one or all personal
-  repositories. Don't use for non-kevmoo repositories (dart-lang/*, flutter/*,
+  markdown.yml, examples.yml), .prettierrc.json, analysis_options.yaml lints,
+  api.txt, or remote auto-merge and status-check rulesets across one or all
+  personal repositories. Don't use for non-kevmoo repositories (dart-lang/*, flutter/*,
   google/*), Dart source code refactoring (use dart-cleanup), or PR and worktree
   branch pruning (use pr-cleanup).
 compatibility: "Requires kscripts (kevmoo_scripts via dart install) and local checkouts in ~/github/kevmoo"
@@ -46,7 +46,44 @@ from the same remote.
 > the remote. Only use a path install to test uncommitted work, and reinstall
 > from Git afterwards.
 
-## 1. Read-Only Alignment Audit (`check`)
+## 1. Portfolio Configuration (`~/.config/kscripts/repos.yaml`)
+
+When `~/.config/kscripts/repos.yaml` defines a top-level `repo-align:` block,
+`kscripts repo-align check` queries the `active` repositories' `HEAD` trees and
+branch rulesets in a batched GitHub GraphQL pass (even when an `active`
+repository is not cloned on the current machine), skips `ignore` repositories,
+and lists any newly created non-fork, non-archived repositories in an
+`Unclassified Repositories` footer:
+
+```yaml
+repo-align:
+  owner: kevmoo
+  baseDir: ~/github/kevmoo
+  active:
+    - build_cli
+    - scripts.dart
+  ignore:
+    - personal_dotfiles
+  kinds:
+    dartpad_mcp: experimentalOrPrototype
+```
+
+Repository capabilities are derived directly from repository contents
+(`publish_to` and `version` in `pubspec.yaml` vs. `skills/*/SKILL.md`). The
+optional `kinds` map overrides that derived kind for an `active` repository (any
+`RepoKind` except `legacyOrIgnored`; use `ignore` for that), such as marking a
+prototype that carries a `pubspec.yaml` as `experimentalOrPrototype` so it skips
+`complexity.yml`, `autosubmit.yml`, `lower_bound.yml`, and `api_summary`:
+
+- **Published packages & workspaces** (`publish_to != 'none'` and
+  `version != null`): require `lower_bound.yml` and `api_summary` (`api.txt` +
+  `test/api_test.dart`).
+- **Unpublished tools, demos & harnesses** (`publish_to: none` or omitted
+  `version`): require `analysis_options.yaml`, `complexity.yml`,
+  `autosubmit.yml`, `dependabot.yml`, `.prettierrc.json`, `markdown.yml`, and
+  branch rulesets, while skipping `lower_bound.yml` and `api_summary`.
+
+## 2. Read-Only Alignment Audit (`check`)
 
 Always begin with a non-destructive check to identify drift across local files
 and remote GitHub settings:
@@ -75,6 +112,12 @@ and remote GitHub settings:
   - Standard workflow templates (`lower_bound.yml`, `complexity.yml`,
     `autosubmit.yml`, `dependabot.yml`, `publish.yaml`, `health.yaml`,
     `post_summaries.yml`, `markdown.yml`).
+  - `examples.yml` ([`pkg:example`](https://pub.dev/packages/example)
+    validation) wherever a Markdown fence's info string contains `@example`
+    (such as `dart @example example/foo.dart#region`), byte-for-byte against the
+    canonical template including the pinned reusable-workflow SHA. Remote checks
+    read the root and package `README.md` files via GraphQL, plus every tracked
+    `.md` file at `origin/HEAD` when the repository is cloned locally.
   - Canonical `.prettierrc.json` and absence of stray `.prettierignore` files
     (applies across all `RepoKind`s, including `agentSkills`).
   - Flags deprecated root `uses: kevmoo/analytica.dart@...` workflow references
@@ -84,8 +127,11 @@ and remote GitHub settings:
   - Presence of the `autosubmit` repository label.
   - Branch protection rulesets and required status checks matching the workflow
     matrix jobs (detects critical ungated auto-merge configurations).
+  - `markdown.yml` and `examples.yml`, when present, are required checks
+    (`markdown` and `examples / Validate markdown examples`; the latter is the
+    reusable workflow's `<caller job> / <callee job name>` check-run name).
 
-## 2. Step 1 of Remediation: Local Repository File Fixes (`--ci --lints` via Worktree PR)
+## 3. Step 1 of Remediation: Local Repository File Fixes (`--ci --lints` via Worktree PR)
 
 Always land local workflow and lint file fixes on `main` via a Pull Request
 **before** applying remote GitHub branch rulesets (`--github`). Requiring a
@@ -126,7 +172,7 @@ Never modify files directly on `main`. For each target repository:
      empty `## <version>-wip` section header in `CHANGELOG.md`.
    - Push the feature branch and open a PR via `gh pr create --body-file -`.
 
-## 3. Step 2 of Remediation: Remote GitHub Settings (`--github`)
+## 4. Step 2 of Remediation: Remote GitHub Settings (`--github`)
 
 Once the workflow files exist on `main` (or if only remote settings are
 drifted), confirm with the user via `ask_question` and apply remote ruleset,

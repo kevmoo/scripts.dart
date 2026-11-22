@@ -16,15 +16,16 @@ class RepoAlignRunner {
 
   new({RepoAlignScanner? scanner}) : scanner = scanner ?? RepoAlignScanner();
 
-  void runCheck({
+  Future<void> runCheck({
     String? targetRepo,
     String? targetDir,
     bool jsonOutput = false,
-  }) {
-    final results = scanner.scanAll(
+  }) async {
+    final report = await scanner.scanPortfolioAsync(
       targetRepo: targetRepo,
       targetDir: targetDir,
     );
+    final results = report.repos;
 
     if (jsonOutput) {
       final jsonStr = const JsonEncoder.withIndent('  ')
@@ -34,7 +35,9 @@ class RepoAlignRunner {
     }
 
     print('');
-    print(styleBold.wrap('📊 kevmoo Repositories Alignment Audit Report'));
+    print(
+      styleBold.wrap('📊 ${scanner.owner} Repositories Alignment Audit Report'),
+    );
     print(
       'Scanned ${results.length} repositories under '
       '${targetDir ?? scanner.baseDirPath}\n',
@@ -50,6 +53,7 @@ class RepoAlignRunner {
     _printSummaryTable(activeResults);
     _printIssues(activeResults);
     _printLegacySummary(legacyResults);
+    _printUnclassifiedSummary(report.unclassifiedRepos);
   }
 
   void _printSummaryTable(List<RepoAlignmentStatus> activeResults) {
@@ -97,7 +101,7 @@ class RepoAlignRunner {
 
   String _lowerBoundIcon(RepoAlignmentStatus r) {
     if (r.hasLowerBound) return '✅';
-    if (r.kind == RepoKind.publishedPackage) return '❌';
+    if (r.requiresLowerBound) return '❌';
     return '-';
   }
 
@@ -140,6 +144,16 @@ class RepoAlignRunner {
     print('\n${styleDim.wrap(msg)}\n');
   }
 
+  void _printUnclassifiedSummary(List<String> unclassifiedRepos) {
+    if (unclassifiedRepos.isEmpty) return;
+    final names = unclassifiedRepos.join(', ');
+    final count = unclassifiedRepos.length;
+    final msg =
+        '❓ Unclassified Repositories ($count — add to active or ignore in '
+        '~/.config/kscripts/repos.yaml): $names';
+    print('\n${yellow.wrap(msg)}\n');
+  }
+
   void runFix({
     String? targetRepo,
     String? targetDir,
@@ -171,16 +185,34 @@ class RepoAlignRunner {
       ),
     );
 
+    final needsLocalDir = domains.any((d) => d != 'github');
     for (final r in targets) {
       print('\nProcessing ${cyan.wrap(r.name)} (${r.kind.name})...');
-      if (domains.contains('lints')) _fixAnalysisOptions(r, dryRun: dryRun);
-      if (domains.contains('api_summary')) _fixApiSummary(r, dryRun: dryRun);
-      if (domains.contains('ci')) _fixCiWorkflows(r, dryRun: dryRun);
-      if (domains.contains('spot')) _fixSpotBlocks(r, dryRun: dryRun);
-      if (domains.contains('github')) _fixGitHubSettings(r, dryRun: dryRun);
+      _fixRepoDomains(r, domains, needsLocalDir: needsLocalDir, dryRun: dryRun);
     }
 
     print('\n${green.wrap('✅ Remediation pass completed.')}\n');
+  }
+
+  void _fixRepoDomains(
+    RepoAlignmentStatus r,
+    Set<String> domains, {
+    required bool needsLocalDir,
+    required bool dryRun,
+  }) {
+    if (domains.contains('github')) _fixGitHubSettings(r, dryRun: dryRun);
+    if (!needsLocalDir) return;
+    if (!Directory(r.path).existsSync()) {
+      print(
+        '  ⚠️ Skipping local file fixes for ${r.name}: '
+        'not cloned at ${r.path}',
+      );
+      return;
+    }
+    if (domains.contains('lints')) _fixAnalysisOptions(r, dryRun: dryRun);
+    if (domains.contains('api_summary')) _fixApiSummary(r, dryRun: dryRun);
+    if (domains.contains('ci')) _fixCiWorkflows(r, dryRun: dryRun);
+    if (domains.contains('spot')) _fixSpotBlocks(r, dryRun: dryRun);
   }
 
   static Set<String> _resolveFixDomains({
@@ -356,11 +388,27 @@ class RepoAlignRunner {
       return;
     }
 
+    final existingExcludes = _readExistingAnalyzerExcludes(analysisFile);
     final action = dryRun ? 'Would update' : 'Updating';
     print('  📝 $action analysis_options.yaml to canonical standard');
     if (!dryRun) {
-      analysisFile.writeAsStringSync(canonicalAnalysisOptions);
+      analysisFile.writeAsStringSync(
+        renderCanonicalAnalysisOptions(excludes: existingExcludes),
+      );
     }
+  }
+
+  List<String> _readExistingAnalyzerExcludes(File analysisFile) {
+    if (!analysisFile.existsSync()) return const [];
+    try {
+      final doc = loadYaml(analysisFile.readAsStringSync());
+      final analyzer = doc is YamlMap ? doc['analyzer'] : null;
+      final exclude = analyzer is YamlMap ? analyzer['exclude'] : null;
+      if (exclude is YamlList) {
+        return exclude.map((e) => e.toString()).toList();
+      }
+    } catch (_) {}
+    return const [];
   }
 
   void _fixCiWorkflows(RepoAlignmentStatus r, {required bool dryRun}) {
@@ -374,6 +422,31 @@ class RepoAlignRunner {
     _fixAutosubmit(r, workflowsDir, dryRun: dryRun);
     _fixDependabot(r, dryRun: dryRun);
     _fixMarkdown(r, workflowsDir, dryRun: dryRun);
+    _fixExamples(r, workflowsDir, dryRun: dryRun);
+  }
+
+  /// Creates `examples.yml` where markdown uses `pkg:example` fences, and
+  /// rewrites an existing one that drifted from the canonical template.
+  void _fixExamples(
+    RepoAlignmentStatus r,
+    Directory workflowsDir, {
+    required bool dryRun,
+  }) {
+    final String verb;
+    if (!r.hasExamplesWorkflow) {
+      if (!r.hasExampleFences) return;
+      verb = dryRun ? 'Would create' : 'Creating';
+    } else if (!r.hasCanonicalExamplesWorkflow) {
+      verb = dryRun ? 'Would update' : 'Updating';
+    } else {
+      return;
+    }
+    print('  🚀 $verb .github/workflows/examples.yml');
+    if (dryRun) return;
+    // An existing `examples.yaml` is rewritten in place rather than duplicated.
+    final yaml = File(p.join(workflowsDir.path, 'examples.yaml'));
+    (yaml.existsSync() ? yaml : File(p.join(workflowsDir.path, 'examples.yml')))
+        .writeAsStringSync(canonicalExamplesWorkflow);
   }
 
   /// Markdown standardization applies to every repo kind -- there is no
@@ -412,7 +485,7 @@ class RepoAlignRunner {
     Directory workflowsDir, {
     required bool dryRun,
   }) {
-    if (r.kind != RepoKind.publishedPackage || r.hasLowerBound) return;
+    if (!r.requiresLowerBound || r.hasLowerBound) return;
     final lbFile = File(p.join(workflowsDir.path, 'lower_bound.yml'));
     print(
       '  🚀 ${dryRun ? 'Would create' : 'Creating'} .github/workflows/lower_bound.yml',
@@ -461,9 +534,9 @@ class RepoAlignRunner {
   }
 
   void _fixGitHubSettings(RepoAlignmentStatus r, {required bool dryRun}) {
-    // Markdown gating, auto-merge, and the autosubmit label run for every
-    // active repo kind (including agentSkills).
-    _fixMarkdownRequiredCheck(r, dryRun: dryRun);
+    // Markdown/examples gating, auto-merge, and the autosubmit label run for
+    // every active repo kind (including agentSkills).
+    _fixRequiredChecks(r, dryRun: dryRun);
     _fixAutoMerge(r, dryRun: dryRun);
     _fixAutosubmitLabel(r, dryRun: dryRun);
   }
@@ -472,13 +545,13 @@ class RepoAlignRunner {
     if (r.autoMergeAllowed) return;
     print(
       '  🌐 ${dryRun ? 'Would enable' : 'Enabling'} auto-merge on '
-      'GitHub (kevmoo/${r.name})',
+      'GitHub (${scanner.owner}/${r.name})',
     );
     if (!dryRun) {
       Process.runSync('gh', [
         'repo',
         'edit',
-        'kevmoo/${r.name}',
+        '${scanner.owner}/${r.name}',
         '--enable-auto-merge',
       ]);
     }
@@ -488,7 +561,7 @@ class RepoAlignRunner {
     if ((!r.hasAutosubmit && !r.hasDependabot) || r.hasAutosubmitLabel) return;
     print(
       '  🏷️  ${dryRun ? 'Would create' : 'Creating'} "autosubmit" label on '
-      'GitHub (kevmoo/${r.name})',
+      'GitHub (${scanner.owner}/${r.name})',
     );
     if (!dryRun) {
       Process.runSync('gh', [
@@ -496,7 +569,7 @@ class RepoAlignRunner {
         'create',
         'autosubmit',
         '--repo',
-        'kevmoo/${r.name}',
+        '${scanner.owner}/${r.name}',
         '--color',
         '0E8A16',
         '--description',
@@ -506,22 +579,24 @@ class RepoAlignRunner {
     }
   }
 
-  /// Appends [markdownCheckContext] to the default-branch ruleset's required
-  /// status checks. A check that runs but does not gate is decoration.
+  /// Appends [markdownCheckContext] and [examplesCheckContext] (for each
+  /// workflow present on the default branch) to the default-branch ruleset's
+  /// required status checks. A check that runs but does not gate is
+  /// decoration.
   ///
   /// The rulesets API cannot PATCH-merge `required_status_checks`, so the whole
-  /// `rules` array has to be read, amended, and PUT back.
-  void _fixMarkdownRequiredCheck(
-    RepoAlignmentStatus r, {
-    required bool dryRun,
-  }) {
-    if (!r.hasMarkdownWorkflow) return;
-    if (r.defaultBranchRequiredChecks.contains(markdownCheckContext)) return;
+  /// `rules` array has to be read, amended, and PUT back -- once, so that two
+  /// missing contexts never produce two rulesets or two racing writes.
+  void _fixRequiredChecks(RepoAlignmentStatus r, {required bool dryRun}) {
+    final missing = missingGatingContexts(r);
+    if (missing.isEmpty) return;
 
-    print(
-      '  🔒 ${dryRun ? 'Would require' : 'Requiring'} '
-      '"$markdownCheckContext" check on ${r.defaultBranch}',
-    );
+    for (final context in missing) {
+      print(
+        '  🔒 ${dryRun ? 'Would require' : 'Requiring'} '
+        '"$context" check on ${r.defaultBranch}',
+      );
+    }
     if (dryRun) return;
 
     final rulesetId = r.defaultBranchRulesetId;
@@ -532,7 +607,7 @@ class RepoAlignRunner {
 
     final read = Process.runSync('gh', [
       'api',
-      'repos/kevmoo/${r.name}/rulesets/$rulesetId',
+      'repos/${scanner.owner}/${r.name}/rulesets/$rulesetId',
     ]);
     if (read.exitCode != 0) {
       print('  ${red.wrap('⚠️  Failed to read ruleset $rulesetId')}');
@@ -541,16 +616,21 @@ class RepoAlignRunner {
 
     final ruleset = jsonDecode(read.stdout as String) as Map<String, dynamic>;
 
-    if (rulesetRequiresContext(ruleset, markdownCheckContext)) {
-      print('  ✓ Already required (added since scan)');
-      return;
+    Map<String, dynamic>? payload;
+    for (final context in missing) {
+      if (rulesetRequiresContext(ruleset, context)) {
+        print('  ✓ "$context" already required (added since scan)');
+        continue;
+      }
+      payload = appendRequiredCheck(ruleset, context);
+      if (payload == null) {
+        print(
+          '  ${red.wrap('⚠️  Ruleset has no required_status_checks rule')}',
+        );
+        return;
+      }
     }
-
-    final payload = appendRequiredCheck(ruleset, markdownCheckContext);
-    if (payload == null) {
-      print('  ${red.wrap('⚠️  Ruleset has no required_status_checks rule')}');
-      return;
-    }
+    if (payload == null) return;
 
     final tmpDir = Directory.systemTemp.createTempSync('repo_align_');
     try {
@@ -560,7 +640,7 @@ class RepoAlignRunner {
         'api',
         '--method',
         'PUT',
-        'repos/kevmoo/${r.name}/rulesets/$rulesetId',
+        'repos/${scanner.owner}/${r.name}/rulesets/$rulesetId',
         '--input',
         tmp.path,
       ]);
@@ -579,13 +659,10 @@ class RepoAlignRunner {
     );
     if (dryRun) return;
 
-    final checks = <Map<String, dynamic>>[];
-    if (r.hasMarkdownWorkflow) {
-      checks.add({
-        'context': markdownCheckContext,
-        'integration_id': githubActionsAppId,
-      });
-    }
+    final checks = <Map<String, dynamic>>[
+      for (final context in missingGatingContexts(r))
+        {'context': context, 'integration_id': githubActionsAppId},
+    ];
     for (final check in r.expectedCiCheckPrefixes) {
       checks.add({'context': check, 'integration_id': githubActionsAppId});
     }
@@ -622,7 +699,7 @@ class RepoAlignRunner {
         'api',
         '--method',
         'POST',
-        'repos/kevmoo/${r.name}/rulesets',
+        'repos/${scanner.owner}/${r.name}/rulesets',
         '--input',
         tmp.path,
       ]);
@@ -637,6 +714,36 @@ class RepoAlignRunner {
     }
   }
 }
+
+/// Renders [canonicalAnalysisOptions], preserving any existing
+/// `analyzer: exclude:` entries from [excludes].
+String renderCanonicalAnalysisOptions({List<String> excludes = const []}) {
+  if (excludes.isEmpty) return canonicalAnalysisOptions;
+  final block = [
+    'analyzer:',
+    '  exclude:',
+    for (final item in excludes) '    - ${_formatYamlScalar(item)}',
+  ].join('\n');
+  return canonicalAnalysisOptions.replaceFirst('analyzer:', block);
+}
+
+String _formatYamlScalar(String value) {
+  if (RegExp(r'[*:#{}\[\]&!|>%@`\s]').hasMatch(value)) {
+    return "'${value.replaceAll("'", "''")}'";
+  }
+  return value;
+}
+
+/// The gating contexts whose workflow exists in [r] but which the
+/// default-branch ruleset does not yet require.
+List<String> missingGatingContexts(RepoAlignmentStatus r) => [
+  if (r.hasMarkdownWorkflow &&
+      !r.defaultBranchRequiredChecks.contains(markdownCheckContext))
+    markdownCheckContext,
+  if (r.hasExamplesWorkflow &&
+      !r.defaultBranchRequiredChecks.contains(examplesCheckContext))
+    examplesCheckContext,
+];
 
 /// Whether [ruleset] already requires [context].
 bool rulesetRequiresContext(Map<String, dynamic> ruleset, String context) {

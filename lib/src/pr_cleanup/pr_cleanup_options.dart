@@ -9,10 +9,12 @@ class PrCleanupOptions {
   final String? repo;
   final int limit;
   final int? lastNDays;
+  final bool wasLastNDaysExplicit;
   final String? localRoot;
   final String? dartSdkPath;
   final bool skipGerrit;
   final bool apply;
+  final List<String> excludeWorktrees;
   final bool markdown;
   final bool json;
 
@@ -21,13 +23,19 @@ class PrCleanupOptions {
     this.repo,
     this.limit = 50,
     this.lastNDays = 14,
+    this.wasLastNDaysExplicit = false,
     this.localRoot,
     this.dartSdkPath,
     this.skipGerrit = false,
     this.apply = false,
+    this.excludeWorktrees = const [],
     this.markdown = true,
     this.json = false,
   });
+
+  /// Activity window applied to open PRs (`null` unless `-d` was explicitly
+  /// passed on the CLI so older open PRs are never hidden by default).
+  int? get openPrLastNDays => wasLastNDaysExplicit ? lastNDays : null;
 
   static ArgParser createArgParser() => ArgParser()
     ..addOption(
@@ -54,8 +62,8 @@ class PrCleanupOptions {
       abbr: 'd',
       defaultsTo: '14',
       help:
-          'Include PRs and activity from the last N days (default 14; '
-          'pass empty/0 to query all).',
+          'Include landed PRs from the last N days (default 14; open PRs '
+          'are unbounded unless -d is explicitly passed; pass 0 for all).',
     )
     ..addOption(
       'local-root',
@@ -82,6 +90,11 @@ class PrCleanupOptions {
           'Execute pruning of ready-to-prune worktrees and branches across '
           'GitHub and Gerrit.',
     )
+    ..addMultiOption(
+      'exclude-worktree',
+      splitCommas: false,
+      help: 'Worktree path(s) to skip during --apply.',
+    )
     ..addFlag(
       'markdown',
       defaultsTo: true,
@@ -105,6 +118,7 @@ class PrCleanupOptions {
       );
     }
 
+    final wasLastNDaysExplicit = results.wasParsed('last-n-days');
     final daysRaw = results['last-n-days'] as String?;
     int? lastNDays = 14;
     if (daysRaw != null && daysRaw.isNotEmpty) {
@@ -123,10 +137,15 @@ class PrCleanupOptions {
       repo: parseRepoOption(results),
       limit: parsedLimit,
       lastNDays: lastNDays,
+      wasLastNDaysExplicit: wasLastNDaysExplicit,
       localRoot: results['local-root'] as String?,
       dartSdkPath: results['dart-sdk'] as String?,
       skipGerrit: results['skip-gerrit'] as bool? ?? false,
       apply: results['apply'] as bool? ?? false,
+      excludeWorktrees: (results['exclude-worktree'] as List<String>)
+          .map((s) => s.trim())
+          .where((s) => s.isNotEmpty)
+          .toList(),
       markdown: results['markdown'] as bool? ?? true,
       json: results['json'] as bool? ?? false,
     );

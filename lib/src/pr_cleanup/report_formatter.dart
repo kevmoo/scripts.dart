@@ -6,7 +6,11 @@ import '../gh_view.dart' show formatTouchedMarkdown;
 import 'models.dart';
 
 /// Formats the PR sweep report as concise Markdown.
-String formatMarkdownReport(PrSweepResult result, {bool applied = false}) {
+String formatMarkdownReport(
+  PrSweepResult result, {
+  bool applied = false,
+  PrCleanupApplyResult? applyResult,
+}) {
   final buffer = StringBuffer();
 
   final header = applied
@@ -17,6 +21,9 @@ String formatMarkdownReport(PrSweepResult result, {bool applied = false}) {
     ..writeln();
 
   _formatSummaryTable(buffer, result);
+  if (applyResult != null) {
+    _formatApplyResultSection(buffer, applyResult);
+  }
   _formatReadyToPruneSection(buffer, result.readyToPrune);
   _formatActiveSection(buffer, result.active, now: result.timestamp);
   _formatNeedsTriageSection(buffer, result.needsTriage);
@@ -67,6 +74,32 @@ void _formatSummaryTable(StringBuffer buffer, PrSweepResult result) {
     ..writeln();
 }
 
+void _formatApplyResultSection(
+  StringBuffer buffer,
+  PrCleanupApplyResult applyResult,
+) {
+  buffer
+    ..writeln(
+      '*Pruning summary: ${applyResult.prunedWorktrees} worktree(s) pruned, '
+      '${applyResult.deletedBranches} local branch(es) deleted, '
+      '${applyResult.deletedRemoteBranches} remote branch(es) deleted.*',
+    )
+    ..writeln();
+  if (applyResult.skippedWorktrees.isNotEmpty) {
+    final skipped = applyResult.skippedWorktrees.map((w) => '`$w`').join(', ');
+    buffer
+      ..writeln('*Skipped excluded worktree(s): $skipped*')
+      ..writeln();
+  }
+  if (applyResult.errors.isNotEmpty) {
+    buffer.writeln('*Pruning error(s):*');
+    for (final err in applyResult.errors) {
+      buffer.writeln('- $err');
+    }
+    buffer.writeln();
+  }
+}
+
 void _formatReadyToPruneSection(
   StringBuffer buffer,
   List<PrunableItem> readyToPrune,
@@ -97,9 +130,12 @@ String _formatPrunableItemLine(PrunableItem item) {
       ? ' [`${p.basename(item.worktreePath!)}`](file://${item.worktreePath})'
       : '';
   final branchPart = ' branch `${item.branch}`';
+  final remotePart = item.remoteBranch != null
+      ? ' (remote `${item.remoteBranch}`)'
+      : '';
   final prPart = _formatItemPrOrCl(item.source, item.prOrClNumber);
   final idPrefix = prPart.isNotEmpty ? '**$prPart**: ' : '';
-  return '  - $idPrefix$wtPart$branchPart';
+  return '  - $idPrefix$wtPart$branchPart$remotePart';
 }
 
 String _formatItemPrOrCl(String source, int? number) {
@@ -239,13 +275,21 @@ void _formatNeedsTriageSection(
     final idLabel = item.prOrClNumber != null
         ? _formatItemPrOrCl(item.source, item.prOrClNumber)
         : '⚪';
-    final loc = item.worktreePath != null
-        ? '[`${p.basename(item.worktreePath!)}`](file://${item.worktreePath})'
-        : '`${item.branch}`';
+    final loc = _formatTriageLocation(item);
     buffer.writeln(
       '| $idLabel | `${item.repository}` | $loc | ${item.reason} |',
     );
   }
+}
+
+String _formatTriageLocation(TriageItem item) {
+  if (item.worktreePath != null) {
+    final wt =
+        '[`${p.basename(item.worktreePath!)}`](file://${item.worktreePath})';
+    return item.remoteBranch != null ? '$wt (`${item.remoteBranch}`)' : wt;
+  }
+  if (item.remoteBranch != null) return '`${item.remoteBranch}`';
+  return '`${item.branch}`';
 }
 
 void _formatLandedIdsSection(
@@ -262,7 +306,15 @@ void _formatLandedIdsSection(
 }
 
 /// Formats the PR sweep report as JSON.
-String formatJsonReport(PrSweepResult result, {bool applied = false}) {
-  final map = {'applied': applied, ...result.toJson()};
+String formatJsonReport(
+  PrSweepResult result, {
+  bool applied = false,
+  PrCleanupApplyResult? applyResult,
+}) {
+  final map = {
+    'applied': applied,
+    if (applyResult != null) 'applyResult': applyResult.toJson(),
+    ...result.toJson(),
+  };
   return const JsonEncoder.withIndent('  ').convert(map);
 }

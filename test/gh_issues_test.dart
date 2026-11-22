@@ -66,9 +66,8 @@ void main() {
     });
 
     test('returns null when number or url is missing', () {
-      check(parseLinkedPr({'url': 'https://github.com/foo/bar/pull/1'}))
-          .isNull();
-      check(parseLinkedPr({'number': 1})).isNull();
+      check(parseLinkedPr({'url': 'https://github.com/foo/bar/pull/1'})).isNull;
+      check(parseLinkedPr({'number': 1})).isNull;
     });
   });
 
@@ -115,10 +114,10 @@ void main() {
     });
 
     test('returns null for missing required fields', () {
-      check(parseIssueNode({'number': 123})).isNull();
-      check(parseIssueNode({'title': 'test'})).isNull();
+      check(parseIssueNode({'number': 123})).isNull;
+      check(parseIssueNode({'title': 'test'})).isNull;
       check(parseIssueNode({'url': 'https://github.com/foo/bar/issues/1'}))
-          .isNull();
+          .isNull;
     });
   });
 
@@ -183,7 +182,7 @@ void main() {
       check(output).contains(
         '🟣 [other-org/other-repo#55](https://github.com/other-org/other-repo/pull/55)',
       );
-      check(output).not((it) => it.contains('<!-- mdformat'));
+      check(output).not(.it()..contains('<!-- mdformat'));
     });
   });
 

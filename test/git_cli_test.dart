@@ -1,0 +1,320 @@
+@TestOn('vm')
+library;
+
+import 'dart:io';
+
+import 'package:checks/checks.dart';
+import 'package:git/git.dart';
+import 'package:kevmoo_scripts/src/process_utils.dart';
+import 'package:kevmoo_scripts/src/shared/git_cli.dart';
+import 'package:path/path.dart' as p;
+import 'package:test/test.dart';
+import 'package:test_descriptor/test_descriptor.dart' as d;
+
+void main() {
+  group('WorktreeEntry.fromPorcelain', () {
+    test('parses bare, branch, detached, and locked worktree stanzas', () {
+      const porcelain = '''
+worktree /repos/sdk/.bare
+bare
+
+worktree /repos/sdk/core/main/sdk
+HEAD 1111aaaa
+branch refs/heads/main
+
+worktree /repos/sdk/core/feat/sdk
+HEAD 2222bbbb
+branch refs/heads/agent/feat-x
+locked Active local benchmark
+
+worktree /repos/_repo-plain-lock
+HEAD 3333cccc
+branch refs/heads/plain-lock
+locked
+
+worktree /repos/_repo-detached
+HEAD 4444dddd
+detached
+''';
+
+      final records = WorktreeEntry.fromPorcelain(porcelain);
+      check(records).length.equals(5);
+
+      check(records[0])
+        ..has('path', (w) => w.path).equals('/repos/sdk/.bare')
+        ..has('branch', (w) => w.branch).isEmpty
+        ..has('sha', (w) => w.sha).isNull
+        ..has('isBare', (w) => w.isBare).isTrue
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isFalse
+        ..has('lockReason', (w) => w.lockReason).isNull;
+
+      check(records[1])
+        ..has('path', (w) => w.path).equals('/repos/sdk/core/main/sdk')
+        ..has('branch', (w) => w.branch).equals('main')
+        ..has('sha', (w) => w.sha).equals('1111aaaa')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isFalse
+        ..has('lockReason', (w) => w.lockReason).isNull;
+
+      check(records[2])
+        ..has('path', (w) => w.path).equals('/repos/sdk/core/feat/sdk')
+        ..has('branch', (w) => w.branch).equals('agent/feat-x')
+        ..has('sha', (w) => w.sha).equals('2222bbbb')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isTrue
+        ..has(
+          'lockReason',
+          (w) => w.lockReason,
+        ).equals('Active local benchmark');
+
+      check(records[3])
+        ..has('path', (w) => w.path).equals('/repos/_repo-plain-lock')
+        ..has('branch', (w) => w.branch).equals('plain-lock')
+        ..has('sha', (w) => w.sha).equals('3333cccc')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isTrue
+        ..has('lockReason', (w) => w.lockReason).isNull;
+
+      check(records[4])
+        ..has('path', (w) => w.path).equals('/repos/_repo-detached')
+        ..has('branch', (w) => w.branch).isEmpty
+        ..has('sha', (w) => w.sha).equals('4444dddd')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isTrue
+        ..has('isLocked', (w) => w.isLocked).isFalse
+        ..has('lockReason', (w) => w.lockReason).isNull;
+    });
+
+    test('handles empty output and stanzas without trailing newline', () {
+      check(WorktreeEntry.fromPorcelain('')).isEmpty;
+      check(WorktreeEntry.fromPorcelain('   \n\n  ')).isEmpty;
+
+      final single = WorktreeEntry.fromPorcelain(
+        'worktree /tmp/single\nHEAD abcd1234\nbranch refs/heads/dev',
+      );
+      check(single).single
+        ..has('path', (w) => w.path).equals('/tmp/single')
+        ..has('branch', (w) => w.branch).equals('dev')
+        ..has('sha', (w) => w.sha).equals('abcd1234')
+        ..has('isBare', (w) => w.isBare).isFalse
+        ..has('isDetached', (w) => w.isDetached).isFalse
+        ..has('isLocked', (w) => w.isLocked).isFalse
+        ..has('lockReason', (w) => w.lockReason).isNull;
+    });
+  });
+
+  group('parseOriginHeadBranchOutput', () {
+    test('strips origin/ prefix and rejects unresolved HEAD outputs', () {
+      check(parseOriginHeadBranchOutput('origin/main\n')).equals('main');
+      check(parseOriginHeadBranchOutput('origin/release/2.x'))
+          .equals('release/2.x');
+      check(parseOriginHeadBranchOutput('trunk\n')).equals('trunk');
+      check(parseOriginHeadBranchOutput('')).isNull;
+      check(parseOriginHeadBranchOutput('   ')).isNull;
+      check(parseOriginHeadBranchOutput('HEAD\n')).isNull;
+      check(parseOriginHeadBranchOutput('origin/HEAD\n')).isNull;
+      check(parseOriginHeadBranchOutput('origin/')).isNull;
+    });
+  });
+
+  group('GitCli against real git repositories', () {
+    Future<String> createRepo(
+      String name, {
+      String initialBranch = 'main',
+    }) async {
+      await d.dir(name, [d.file('README.md', '# $name\n')]).create();
+      final repoPath = p.join(d.sandbox, name);
+      defaultGitCli
+        ..runSync(['init', '-b', initialBranch], workingDirectory: repoPath)
+        ..runSync([
+          'config',
+          'user.email',
+          'test@example.com',
+        ], workingDirectory: repoPath)
+        ..runSync(['config', 'user.name', 'Tester'], workingDirectory: repoPath)
+        ..runSync([
+          'config',
+          'commit.gpgsign',
+          'false',
+        ], workingDirectory: repoPath)
+        ..runSync(['add', '.'], workingDirectory: repoPath)
+        ..runSync(['commit', '-m', 'init'], workingDirectory: repoPath);
+      return repoPath;
+    }
+
+    test('propagates GIT_TERMINAL_PROMPT=0, BatchMode=yes, and read-only '
+        'GIT_OPTIONAL_LOCKS=0', () async {
+      final repoPath = await createRepo('env_repo');
+      const aliasSpec =
+          r'alias.envprobe=!sh -c "printf %s:%s:%s '
+          r'\"${GIT_TERMINAL_PROMPT:-unset}\" '
+          r'\"${GIT_OPTIONAL_LOCKS:-unset}\" '
+          r'\"${GIT_SSH_COMMAND:-unset}\""';
+      const probeArgs = ['-c', aliasSpec, 'envprobe'];
+
+      final rwSync = defaultGitCli.runSync(
+        probeArgs,
+        workingDirectory: repoPath,
+      );
+      check(rwSync.stdout.toString())
+        ..startsWith('0:unset:')
+        ..contains('BatchMode=yes');
+
+      final roSync = defaultGitCli.runSync(
+        probeArgs,
+        workingDirectory: repoPath,
+        readOnly: true,
+      );
+      check(roSync.stdout.toString())
+        ..startsWith('0:0:')
+        ..contains('BatchMode=yes');
+
+      final rwAsync = await defaultGitCli.run(
+        probeArgs,
+        workingDirectory: repoPath,
+      );
+      check(rwAsync.stdout.toString())
+        ..startsWith('0:unset:')
+        ..contains('BatchMode=yes');
+
+      final roAsync = await defaultGitCli.run(
+        probeArgs,
+        workingDirectory: repoPath,
+        readOnly: true,
+      );
+      check(roAsync.stdout.toString())
+        ..startsWith('0:0:')
+        ..contains('BatchMode=yes');
+
+      final viaProcessUtils = defaultSyncProcessRunner(
+        'git',
+        probeArgs,
+        workingDirectory: repoPath,
+      );
+      check(viaProcessUtils.stdout.toString()).startsWith('0:unset:');
+    }, onPlatform: const {'windows': Skip('Uses POSIX sh alias probe')});
+
+    test(
+      'resolves currentBranch, config, defaultBranch, dirty, and worktrees',
+      () async {
+        final originPath = await createRepo(
+          'origin_master',
+          initialBranch: 'master',
+        );
+        final clonePath = p.join(d.sandbox, 'clone_repo');
+        defaultGitCli.runSync(['clone', originPath, clonePath]);
+
+        check(defaultGitCli.currentBranchSync(clonePath)).equals('master');
+        check(await defaultGitCli.currentBranch(clonePath)).equals('master');
+        check(
+          defaultGitCli.configGetSync(
+            'remote.origin.url',
+            workingDirectory: clonePath,
+          ),
+        ).equals(originPath);
+        check(
+          defaultGitCli.configGetSync(
+            'nonexistent.key',
+            workingDirectory: clonePath,
+          ),
+        ).isNull;
+
+        // 1. origin/HEAD set -> resolves 'master'
+        check(defaultGitCli.defaultBranchSync(clonePath)).equals('master');
+
+        // 2. Delete origin/HEAD -> sniffs refs/remotes/origin/master
+        defaultGitCli.runSync(const [
+          'remote',
+          'set-head',
+          'origin',
+          '-d',
+        ], workingDirectory: clonePath);
+        check(defaultGitCli.defaultBranchSync(clonePath)).equals('master');
+
+        // 3. Repo with no origin remote -> returns fallback
+        check(defaultGitCli.defaultBranchSync(originPath, fallback: 'custom'))
+            .equals('custom');
+
+        // 4. Detached HEAD -> currentBranch returns null
+        defaultGitCli.runSync(const [
+          'checkout',
+          '--detach',
+          'HEAD',
+        ], workingDirectory: clonePath);
+        check(defaultGitCli.currentBranchSync(clonePath)).isNull;
+        check(await defaultGitCli.currentBranch(clonePath)).isNull;
+
+        // 5. Worktrees & dirty state
+        final wtPath = p.join(d.sandbox, '_clone_repo-feat');
+        defaultGitCli
+          ..runSync([
+            'worktree',
+            'add',
+            '-b',
+            'feat',
+            wtPath,
+          ], workingDirectory: clonePath)
+          ..runSync([
+            'worktree',
+            'lock',
+            '--reason',
+            'Keep me',
+            wtPath,
+          ], workingDirectory: clonePath);
+
+        final worktrees = defaultGitCli.listWorktreesSync(clonePath);
+        check(worktrees).length.equals(2);
+        final primaryWt = worktrees.firstWhere((w) => w.isDetached);
+        check(primaryWt.branch).isEmpty;
+        final linkedWt = worktrees.firstWhere((w) => w.branch == 'feat');
+        check(linkedWt.isLocked).isTrue;
+        check(linkedWt.lockReason).equals('Keep me');
+
+        check(defaultGitCli.isDirtySync(wtPath)).isFalse;
+        File(p.join(wtPath, 'untracked.txt')).writeAsStringSync('scratch');
+        check(defaultGitCli.isDirtySync(wtPath)).isFalse;
+        check(defaultGitCli.isDirtySync(wtPath, includeUntracked: true)).isTrue;
+        check(await defaultGitCli.isDirty(wtPath, includeUntracked: true))
+            .isTrue;
+      },
+    );
+
+    test('supports custom injected runners and handles exceptions', () async {
+      final recorded = <List<String>>[];
+      final fakeCli = GitCli(
+        syncRunner: (exe, args, {workingDirectory}) {
+          check(exe).equals('git');
+          recorded.add(args);
+          if (args.contains('boom')) {
+            throw const ProcessException('git', ['boom'], 'failed');
+          }
+          return ProcessResult(0, 0, '  hello-sync  \n', '');
+        },
+        asyncRunner: (exe, args, {workingDirectory}) async {
+          check(exe).equals('git');
+          recorded.add(args);
+          if (args.contains('boom')) {
+            throw const ProcessException('git', ['boom'], 'failed');
+          }
+          return ProcessResult(0, 0, '  hello-async  \n', '');
+        },
+      );
+
+      check(fakeCli.stdoutOrNullSync(const ['rev-parse', 'HEAD']))
+          .equals('hello-sync');
+      check(await fakeCli.stdoutOrNull(const ['rev-parse', 'HEAD']))
+          .equals('hello-async');
+      check(fakeCli.stdoutOrNullSync(const ['boom'])).isNull;
+      check(await fakeCli.stdoutOrNull(const ['boom'])).isNull;
+      check(fakeCli.checkSync(const ['boom'])).isFalse;
+      check(await fakeCli.check(const ['boom'])).isFalse;
+      check(fakeCli.isDirtySync('/fake', failClosedOnProcessError: true))
+          .isTrue;
+      check(recorded).length.equals(7);
+    });
+  });
+}

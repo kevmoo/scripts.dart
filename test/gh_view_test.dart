@@ -105,7 +105,7 @@ void main() {
     });
 
     test('returns null for non-github URLs', () {
-      check(normalizeRepoName('https://gitlab.com/foo/bar')).isNull();
+      check(normalizeRepoName('https://gitlab.com/foo/bar')).isNull;
     });
   });
 
@@ -147,7 +147,7 @@ void main() {
       check(pr.ciStatus).equals(CiStatus.failure);
       check(pr.mergeable).equals(MergeableState.mergeable);
       check(pr.mergeStateStatus).equals(MergeStateStatus.unknown);
-      check(pr.isDraft).isFalse();
+      check(pr.isDraft).isFalse;
     });
 
     test('detects tree-status failure for flutter/flutter as TREE_BROKEN', () {
@@ -269,7 +269,8 @@ void main() {
       List<String> requestedReviewers = const [],
       List<String> activeReviewers = const [],
       int totalReviewThreads = 0,
-      int unresolvedReviewThreads = 0,
+      int unresolvedReviewerThreads = 0,
+      int unresolvedAuthorThreads = 0,
       DateTime? lastAuthorCommentAt,
       DateTime? lastReviewerActivityAt,
       CiStatus ciStatus = CiStatus.success,
@@ -285,7 +286,8 @@ void main() {
       requestedReviewers: requestedReviewers,
       activeReviewers: activeReviewers,
       totalReviewThreads: totalReviewThreads,
-      unresolvedReviewThreads: unresolvedReviewThreads,
+      unresolvedReviewerThreads: unresolvedReviewerThreads,
+      unresolvedAuthorThreads: unresolvedAuthorThreads,
       lastAuthorCommentAt: lastAuthorCommentAt,
       lastReviewerActivityAt: lastReviewerActivityAt,
       mergeable: mergeable,
@@ -344,6 +346,60 @@ void main() {
         check(cat.archived.map((p) => p.number)).deepEquals([7]);
       },
     );
+
+    test(
+      'routes unanswered reviewer threads to actionNeeded even when APPROVED',
+      () {
+        final prs = [
+          makePr(
+            number: 10,
+            reviewDecision: ReviewDecision.approved,
+            totalReviewThreads: 2,
+            unresolvedReviewerThreads: 2,
+          ),
+          makePr(
+            number: 11,
+            reviewDecision: ReviewDecision.approved,
+            mergeStateStatus: MergeStateStatus.blocked,
+            totalReviewThreads: 2,
+            unresolvedReviewerThreads: 2,
+          ),
+          makePr(
+            number: 12,
+            reviewDecision: ReviewDecision.reviewRequired,
+            requestedReviewers: ['alice'],
+            totalReviewThreads: 3,
+            unresolvedReviewerThreads: 2,
+          ),
+          makePr(
+            number: 13,
+            totalReviewThreads: 1,
+            unresolvedReviewerThreads: 1,
+          ),
+          makePr(
+            number: 14,
+            reviewDecision: ReviewDecision.reviewRequired,
+            requestedReviewers: ['alice'],
+            totalReviewThreads: 3,
+            unresolvedAuthorThreads: 1,
+          ),
+          makePr(
+            number: 15,
+            isDraft: true,
+            totalReviewThreads: 2,
+            unresolvedReviewerThreads: 2,
+          ),
+        ];
+
+        check(prs[1].isBlockedByProtection).isFalse;
+        final cat = categorizePullRequests(prs);
+        check(cat.readyToMerge).isEmpty;
+        check(cat.actionNeeded.map((p) => p.number))
+            .deepEquals([10, 11, 12, 13]);
+        check(cat.inReview.map((p) => p.number)).deepEquals([14]);
+        check(cat.drafts.map((p) => p.number)).deepEquals([15]);
+      },
+    );
   });
 
   group('renderJsonOutput', () {
@@ -358,7 +414,8 @@ void main() {
         reviewDecision: ReviewDecision.approved,
         requestedReviewers: ['alice'],
         totalReviewThreads: 5,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         mergeable: MergeableState.mergeable,
         mergeStateStatus: MergeStateStatus.clean,
         isInMergeQueue: false,
@@ -395,7 +452,7 @@ void main() {
       check((readyList[0]['requestedReviewers'] as List).cast<String>())
           .deepEquals(['alice']);
       check(readyList[0]['totalReviewThreads']).equals(5);
-      check(readyList[0]['unresolvedReviewThreads']).equals(0);
+      check(readyList[0]['unresolvedReviewerThreads']).equals(0);
       check(readyList[0]['areAllReviewThreadsResolved']).equals(true);
       check(readyList[0]['isRepoArchived']).equals(false);
       check(readyList[0]['isInMergeQueue']).equals(false);
@@ -417,7 +474,8 @@ void main() {
         reviewDecision: ReviewDecision.approved,
         requestedReviewers: <String>[],
         totalReviewThreads: 0,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         mergeable: MergeableState.mergeable,
         mergeStateStatus: MergeStateStatus.clean,
         isInMergeQueue: true,
@@ -464,7 +522,8 @@ void main() {
         reviewDecision: ReviewDecision.approved,
         requestedReviewers: <String>[],
         totalReviewThreads: 0,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         mergeable: MergeableState.mergeable,
         mergeStateStatus: MergeStateStatus.blocked,
         isInMergeQueue: false,
@@ -497,7 +556,8 @@ void main() {
           reviewDecision: ReviewDecision.changesRequested,
           requestedReviewers: <String>[],
           totalReviewThreads: 12,
-          unresolvedReviewThreads: 0,
+          unresolvedReviewerThreads: 0,
+          unresolvedAuthorThreads: 0,
           mergeable: MergeableState.mergeable,
           mergeStateStatus: MergeStateStatus.unknown,
           isInMergeQueue: false,
@@ -528,7 +588,8 @@ void main() {
         reviewDecision: ReviewDecision.changesRequested,
         requestedReviewers: ['harryterkelsen'],
         totalReviewThreads: 12,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         mergeable: MergeableState.mergeable,
         mergeStateStatus: MergeStateStatus.unknown,
         isInMergeQueue: false,
@@ -561,7 +622,8 @@ void main() {
         reviewAuthors: ['flutter-zl', 'chunhtai'],
         approvedReviewers: ['chunhtai'],
         totalReviewThreads: 1,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         mergeable: MergeableState.mergeable,
         mergeStateStatus: MergeStateStatus.blocked,
         isInMergeQueue: false,
@@ -608,7 +670,8 @@ void main() {
         reviewDecision: ReviewDecision.reviewRequired,
         requestedReviewers: ['natebosch'],
         totalReviewThreads: 3,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         mergeable: MergeableState.mergeable,
         mergeStateStatus: MergeStateStatus.unknown,
         isInMergeQueue: false,
@@ -645,7 +708,8 @@ void main() {
         ],
         activeReviewers: ['liamappelbe', 'natebosch'],
         totalReviewThreads: 16,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         lastAuthorCommentAt: DateTime.parse('2026-09-14T16:09:46Z'),
         lastReviewerActivityAt: DateTime.parse('2026-09-14T02:01:55Z'),
         mergeable: MergeableState.mergeable,
@@ -684,7 +748,8 @@ void main() {
         requestedReviewers: const [],
         activeReviewers: const ['harryterkelsen'],
         totalReviewThreads: 4,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         lastAuthorCommentAt: DateTime.parse('2026-09-23T20:10:00Z'),
         lastReviewerActivityAt: DateTime.parse('2026-09-23T18:00:00Z'),
         mergeable: MergeableState.mergeable,
@@ -701,7 +766,7 @@ void main() {
       );
 
       check(pr.unrequestedActiveReviewers).deepEquals(['harryterkelsen']);
-      check(pr.needsReviewReRequest).isTrue();
+      check(pr.needsReviewReRequest).isTrue;
       final categorized = categorizePullRequests([pr]);
       check(categorized.actionNeeded.map((p) => p.number)).deepEquals([193187]);
 
@@ -725,7 +790,8 @@ void main() {
         requestedReviewers: ['brianquinlan'],
         activeReviewers: ['brianquinlan'],
         totalReviewThreads: 4,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         lastAuthorCommentAt: now.subtract(const Duration(days: 10)),
         lastReviewerActivityAt: now.subtract(const Duration(days: 12)),
         mergeable: MergeableState.mergeable,
@@ -743,6 +809,149 @@ void main() {
 
       final md = renderMarkdownReport([pr], currentTime: now);
       check(md).contains('🔔 **Ping Reviewer** (@brianquinlan)');
+    });
+
+    test('surfaces unanswered reviewer comments across Markdown, Terminal, '
+        'and JSON outputs', () {
+      final now = DateTime.parse('2026-10-23T17:00:00Z');
+      final approvedUnanswered = GhPr(
+        number: 2633,
+        title: 'Approved with unanswered comments',
+        url: 'https://github.com/dart-lang/tools/pull/2633',
+        author: 'kevmoo',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: ReviewDecision.approved,
+        requestedReviewers: const [],
+        approvedReviewers: const ['natebosch'],
+        totalReviewThreads: 2,
+        unresolvedReviewerThreads: 2,
+        unresolvedAuthorThreads: 0,
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.blocked,
+        isInMergeQueue: false,
+        headRefName: 'feat-approved',
+        headRefOid: 'abc1111',
+        baseRefName: 'main',
+        repository: 'dart-lang/tools',
+        repoUrl: 'https://github.com/dart-lang/tools',
+        isRepoArchived: false,
+        ciStatus: CiStatus.success,
+        updatedAt: now.subtract(const Duration(hours: 1)),
+      );
+      final reviewRequiredUnanswered = GhPr(
+        number: 2638,
+        title: 'Review required with unanswered comments',
+        url: 'https://github.com/dart-lang/tools/pull/2638',
+        author: 'kevmoo',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: ReviewDecision.reviewRequired,
+        requestedReviewers: const ['jakemac53'],
+        totalReviewThreads: 5,
+        unresolvedReviewerThreads: 5,
+        unresolvedAuthorThreads: 0,
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.blocked,
+        isInMergeQueue: false,
+        headRefName: 'feat-review-req',
+        headRefOid: 'abc2222',
+        baseRefName: 'main',
+        repository: 'dart-lang/tools',
+        repoUrl: 'https://github.com/dart-lang/tools',
+        isRepoArchived: false,
+        ciStatus: CiStatus.success,
+        updatedAt: now.subtract(const Duration(hours: 2)),
+      );
+      final crQueuedUnanswered = GhPr(
+        number: 2640,
+        title: 'CR re-requested but new comment unanswered',
+        url: 'https://github.com/dart-lang/tools/pull/2640',
+        author: 'kevmoo',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: ReviewDecision.changesRequested,
+        requestedReviewers: const ['jakemac53'],
+        totalReviewThreads: 2,
+        unresolvedReviewerThreads: 1,
+        unresolvedAuthorThreads: 1,
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.blocked,
+        isInMergeQueue: false,
+        headRefName: 'feat-cr',
+        headRefOid: 'abc3333',
+        baseRefName: 'main',
+        repository: 'dart-lang/tools',
+        repoUrl: 'https://github.com/dart-lang/tools',
+        isRepoArchived: false,
+        ciStatus: CiStatus.success,
+        updatedAt: now.subtract(const Duration(hours: 3)),
+      );
+      final authorRepliedOpen = GhPr(
+        number: 18855,
+        title: 'Author already replied to open thread',
+        url: 'https://github.com/firebase/flutterfire/pull/18855',
+        author: 'kevmoo',
+        isDraft: false,
+        state: 'OPEN',
+        reviewDecision: ReviewDecision.reviewRequired,
+        requestedReviewers: const ['Lyokone'],
+        totalReviewThreads: 3,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 1,
+        mergeable: MergeableState.mergeable,
+        mergeStateStatus: MergeStateStatus.blocked,
+        isInMergeQueue: false,
+        headRefName: 'feat-replied',
+        headRefOid: 'abc4444',
+        baseRefName: 'main',
+        repository: 'firebase/flutterfire',
+        repoUrl: 'https://github.com/firebase/flutterfire',
+        isRepoArchived: false,
+        ciStatus: CiStatus.success,
+        updatedAt: now.subtract(const Duration(hours: 4)),
+      );
+
+      final prs = [
+        approvedUnanswered,
+        reviewRequiredUnanswered,
+        crQueuedUnanswered,
+        authorRepliedOpen,
+      ];
+      final md = renderMarkdownReport(prs, currentTime: now);
+      check(md)
+        ..not(.it()..contains('## 🚀 1. Ready to Merge'))
+        ..not(.it()..contains('Blocked by ruleset/branch protection'))
+        ..contains('Review:&nbsp;🟠&nbsp;Approved&nbsp;(2&nbsp;unresolved)')
+        ..contains('❌ **Address 2 unresolved comment(s)**')
+        ..contains('Review:&nbsp;❌&nbsp;Unresolved&nbsp;Comments&nbsp;(5)')
+        ..contains('❌ **Address 5 unresolved comment(s)**')
+        ..contains(
+          'Review:&nbsp;🔴&nbsp;Changes&nbsp;Requested&nbsp;'
+          '(1&nbsp;unresolved)',
+        )
+        ..contains('⏳ **Awaiting @Lyokone**')
+        ..not(.it()..contains('🔔 **Ping Reviewer** (@Lyokone)'));
+
+      final term = renderTerminalReport(prs, currentTime: now);
+      check(term)
+        ..contains('Approved (2 unresolved)')
+        ..contains('Unresolved Comments (5)')
+        ..contains('Changes Requested (1 unresolved)');
+
+      final jsonMap = jsonDecode(
+        renderJsonOutput(prs, currentTime: now),
+      ) as Map<String, dynamic>;
+      final actionItems = (jsonMap['actionNeeded'] as List)
+          .cast<Map<String, dynamic>>();
+      check(actionItems.map((i) => i['number'])).deepEquals([2633, 2638, 2640]);
+      final inReviewItems = (jsonMap['inReview'] as List)
+          .cast<Map<String, dynamic>>();
+      check(inReviewItems).length.equals(1);
+      check(inReviewItems.single['number']).equals(18855);
+      check(inReviewItems.single['unresolvedReviewerThreads']).equals(0);
+      check(inReviewItems.single['unresolvedAuthorThreads']).equals(1);
+      check(inReviewItems.single['areAllReviewThreadsResolved']).equals(false);
     });
   });
 
@@ -906,7 +1115,7 @@ void main() {
 
       final output = prints.join('\n');
       check(output).contains('dart-lang/build#101');
-      check(output).not((c) => c.contains('dart-lang/build#102'));
+      check(output).not(.it()..contains('dart-lang/build#102'));
     });
 
     test('throws GhViewException when gh command fails', () async {
@@ -1045,7 +1254,8 @@ void main() {
       reviewDecision: ReviewDecision.approved,
       requestedReviewers: <String>[],
       totalReviewThreads: 0,
-      unresolvedReviewThreads: 0,
+      unresolvedReviewerThreads: 0,
+      unresolvedAuthorThreads: 0,
       mergeable: MergeableState.mergeable,
       mergeStateStatus: MergeStateStatus.unknown,
       isInMergeQueue: false,
@@ -1085,7 +1295,7 @@ void main() {
         prs: [pr],
         enricherRunner: (cmd, payload) async => null,
       );
-      check(result).isEmpty();
+      check(result).isEmpty;
     });
 
     test('handles malformed JSON gracefully', () async {
@@ -1094,7 +1304,7 @@ void main() {
         prs: [pr],
         enricherRunner: (cmd, payload) async => 'invalid json',
       );
-      check(result).isEmpty();
+      check(result).isEmpty;
     });
   });
 
@@ -1111,7 +1321,8 @@ void main() {
         reviewDecision: ReviewDecision.approved,
         requestedReviewers: <String>[],
         totalReviewThreads: 0,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         mergeable: MergeableState.mergeable,
         mergeStateStatus: MergeStateStatus.unknown,
         isInMergeQueue: false,
@@ -1149,7 +1360,8 @@ void main() {
           reviewDecision: ReviewDecision.approved,
           requestedReviewers: <String>[],
           totalReviewThreads: 0,
-          unresolvedReviewThreads: 0,
+          unresolvedReviewerThreads: 0,
+          unresolvedAuthorThreads: 0,
           mergeable: MergeableState.mergeable,
           mergeStateStatus: MergeStateStatus.unknown,
           isInMergeQueue: false,
@@ -1165,7 +1377,7 @@ void main() {
         );
         final output = renderMarkdownReport([prWithPipe], currentTime: now);
         check(output).contains('Project: Foo / Bar');
-        check(output).not((c) => c.contains('Project: Foo | Bar'));
+        check(output).not(.it()..contains('Project: Foo | Bar'));
       });
     },
   );
@@ -1184,7 +1396,7 @@ void main() {
 
       final status = extractCiStatus('example-org/example-repo', commitNode);
       check(status).equals(CiStatus.actionRequired);
-      check(status.isPassing).isFalse();
+      check(status.isPassing).isFalse;
     });
 
     test(
@@ -1343,7 +1555,8 @@ void main() {
         reviewDecision: ReviewDecision.reviewRequired,
         requestedReviewers: const ['reviewer1'],
         totalReviewThreads: 0,
-        unresolvedReviewThreads: 0,
+        unresolvedReviewerThreads: 0,
+        unresolvedAuthorThreads: 0,
         mergeable: MergeableState.mergeable,
         mergeStateStatus: MergeStateStatus.blocked,
         isInMergeQueue: false,
@@ -1534,7 +1747,7 @@ void main() {
 
       final pr = parsePrNode(node)!;
       check(pr.author).equals('kevmoo');
-      check(pr.isAlreadyPinged).isTrue();
+      check(pr.isAlreadyPinged).isTrue;
       check(pr.activeReviewers).deepEquals(['liamappelbe', 'natebosch']);
       check(pr.targetReviewers).deepEquals(['liamappelbe', 'natebosch']);
     });
@@ -1608,16 +1821,16 @@ void main() {
       check(unaddressedPr.approvedReviewers).deepEquals(['alice']);
       check(unaddressedPr.activeReviewers).deepEquals(['alice', 'bob']);
       check(unaddressedPr.unrequestedActiveReviewers).deepEquals(['bob']);
-      check(unaddressedPr.hasAuthorRespondedSinceLastReview).isFalse();
-      check(unaddressedPr.needsReviewReRequest).isFalse();
+      check(unaddressedPr.hasAuthorRespondedSinceLastReview).isFalse;
+      check(unaddressedPr.needsReviewReRequest).isFalse;
 
       // After author pushes a new commit after bob's CHANGES_REQUESTED:
       final addressedPr = parsePrNode(
         buildNode(committedDate: '2026-09-14T04:00:00Z'),
       )!;
       check(addressedPr.unrequestedActiveReviewers).deepEquals(['bob']);
-      check(addressedPr.hasAuthorRespondedSinceLastReview).isTrue();
-      check(addressedPr.needsReviewReRequest).isTrue();
+      check(addressedPr.hasAuthorRespondedSinceLastReview).isTrue;
+      check(addressedPr.needsReviewReRequest).isTrue;
     });
 
     test('keeps Changes Requested when reviewer submitted top-level '
@@ -1675,13 +1888,13 @@ void main() {
       };
 
       final pr = parsePrNode(node)!;
-      check(pr.needsReviewReRequest).isFalse();
+      check(pr.needsReviewReRequest).isFalse;
       final md = renderMarkdownReport([pr], currentTime: now);
       check(md).contains(
         'Review:&nbsp;🔴&nbsp;Changes&nbsp;Requested&nbsp;(@flutter-zl)',
       );
       check(md).contains('🔴 **Changes Requested** (@flutter-zl)');
-      check(md).not((it) => it.contains('Re-request Review'));
+      check(md).not(.it()..contains('Re-request Review'));
     });
 
     test('does not flag issue-comment-only or mentioned users as dropped '
@@ -1734,7 +1947,7 @@ void main() {
       final pr = parsePrNode(node)!;
       check(pr.reviewAuthors).isNotNull().deepEquals(const <String>[]);
       check(pr.unrequestedActiveReviewers).deepEquals(const <String>[]);
-      check(pr.needsReviewReRequest).isFalse();
+      check(pr.needsReviewReRequest).isFalse;
     });
 
     test('preserves top-level issue comment mentions and isAlreadyPinged even '
@@ -1788,10 +2001,10 @@ void main() {
 
       final pr = parsePrNode(node)!;
       check(pr.activeReviewers).deepEquals(['alice', 'bob']);
-      check(pr.isAlreadyPinged).isTrue();
+      check(pr.isAlreadyPinged).isTrue;
       check(pr.lastAuthorReviewAt)
           .equals(DateTime.parse('2026-09-24T03:00:00Z'));
-      check(pr.hasAuthorRespondedSinceLastReview).isTrue();
+      check(pr.hasAuthorRespondedSinceLastReview).isTrue;
     });
 
     test(
@@ -1867,8 +2080,8 @@ void main() {
         check(pr.changesRequestedReviewers).deepEquals(['bob']);
         // Fix 2: author committed at 02:00 (after bob's 01:00 review), even
         // though alice approved at 03:00 and bystander commented at 04:00.
-        check(pr.hasAuthorRespondedSinceLastReview).isTrue();
-        check(pr.needsReviewReRequest).isTrue();
+        check(pr.hasAuthorRespondedSinceLastReview).isTrue;
+        check(pr.needsReviewReRequest).isTrue;
       },
     );
 
@@ -1914,7 +2127,7 @@ void main() {
 
         check(extractCiStatus('dart-lang/tools', commits))
             .equals(CiStatus.success);
-        check(extractCiDetail(commits)).isNull();
+        check(extractCiDetail(commits)).isNull;
       },
     );
 
@@ -1949,7 +2162,253 @@ void main() {
 
       check(extractCiStatus('dart-lang/tools', commits))
           .equals(CiStatus.pending);
-      check(extractCiDetail(commits)).isNull();
+      check(extractCiDetail(commits)).isNull;
+    });
+
+    test('attributes unresolved threads by last speaker and ignores Bot '
+        'threads', () {
+      Map<String, dynamic> thread({
+        required bool isResolved,
+        required String login,
+        String typename = 'User',
+      }) => {
+        'isResolved': isResolved,
+        'comments': {
+          'nodes': [
+            {
+              'author': {'__typename': typename, 'login': login},
+            },
+          ],
+        },
+      };
+
+      final mixedNode = <String, dynamic>{
+        'number': 528,
+        'title': 'Mixed reviewer, author, and bot threads',
+        'url': 'https://github.com/google/mono_repo.dart/pull/528',
+        'author': {'login': 'kevmoo'},
+        'isDraft': false,
+        'state': 'OPEN',
+        'reviewDecision': 'REVIEW_REQUIRED',
+        'reviewRequests': {
+          'nodes': [
+            {
+              'requestedReviewer': {'login': 'jakemac53'},
+            },
+          ],
+        },
+        'reviewThreads': {
+          'totalCount': 5,
+          'nodes': [
+            thread(isResolved: false, login: 'jakemac53'),
+            thread(isResolved: false, login: 'kevmoo'),
+            thread(isResolved: true, login: 'jakemac53'),
+            thread(
+              isResolved: false,
+              login: 'copilot-pull-request-reviewer',
+              typename: 'Bot',
+            ),
+            thread(isResolved: true, login: 'gemini-code-assist'),
+          ],
+        },
+        'mergeable': 'MERGEABLE',
+        'mergeStateStatus': 'CLEAN',
+        'headRefName': 'mixed-threads',
+        'headRefOid': 'abc',
+        'baseRefName': 'main',
+        'updatedAt': '2026-10-23T16:00:00Z',
+        'repository': {
+          'nameWithOwner': 'google/mono_repo.dart',
+          'url': 'https://github.com/google/mono_repo.dart',
+          'isArchived': false,
+        },
+      };
+
+      final mixedPr = parsePrNode(mixedNode)!;
+      check(mixedPr.totalReviewThreads).equals(3);
+      check(mixedPr.unresolvedReviewerThreads).equals(1);
+      check(mixedPr.unresolvedAuthorThreads).equals(1);
+
+      final botOnlyNode = <String, dynamic>{
+        ...mixedNode,
+        'number': 517,
+        'reviewThreads': {
+          'totalCount': 4,
+          'nodes': [
+            thread(
+              isResolved: true,
+              login: 'gemini-code-assist',
+              typename: 'Bot',
+            ),
+            thread(
+              isResolved: true,
+              login: 'gemini-code-assist',
+              typename: 'Bot',
+            ),
+            thread(
+              isResolved: false,
+              login: 'gemini-code-assist',
+              typename: 'Bot',
+            ),
+            thread(
+              isResolved: false,
+              login: 'copilot-pull-request-reviewer',
+              typename: 'Bot',
+            ),
+          ],
+        },
+      };
+
+      final botOnlyPr = parsePrNode(botOnlyNode)!;
+      check(botOnlyPr.totalReviewThreads).equals(0);
+      check(botOnlyPr.unresolvedReviewerThreads).equals(0);
+      check(botOnlyPr.unresolvedAuthorThreads).equals(0);
+      final md = renderMarkdownReport([
+        botOnlyPr,
+      ], currentTime: DateTime.parse('2026-10-23T17:00:00Z'));
+      check(md).contains('⏳ **Awaiting @jakemac53**');
+      check(md).not(.it()..contains('Ping Reviewer'));
+    });
+
+    test('infers effectiveReviewDecision from reviews when GraphQL returns '
+        'empty reviewDecision on unprotected repositories', () {
+      final now = DateTime.parse('2026-10-28T18:00:00Z');
+      Map<String, dynamic> unprotectedNode({
+        required int number,
+        required List<Map<String, dynamic>> reviews,
+        required List<Map<String, dynamic>> threadNodes,
+      }) => {
+        'number': number,
+        'title': 'PR $number on unprotected repo',
+        'url': 'https://github.com/google/source_helper.dart/pull/$number',
+        'author': {'login': 'kevmoo'},
+        'isDraft': false,
+        'state': 'OPEN',
+        'reviewDecision': '',
+        'reviewRequests': {'nodes': <Object>[]},
+        'reviews': {'nodes': reviews},
+        'reviewThreads': {
+          'totalCount': threadNodes.length,
+          'nodes': threadNodes,
+        },
+        'commits': {
+          'nodes': [
+            {
+              'commit': {
+                'committedDate': '2026-10-28T12:00:00Z',
+                'statusCheckRollup': {'state': 'SUCCESS'},
+              },
+            },
+          ],
+        },
+        'mergeable': 'MERGEABLE',
+        'mergeStateStatus': 'CLEAN',
+        'isInMergeQueue': false,
+        'headRefName': 'branch-$number',
+        'headRefOid': 'sha-$number',
+        'baseRefName': 'main',
+        'updatedAt': '2026-10-28T17:00:00Z',
+        'repository': {
+          'nameWithOwner': 'google/source_helper.dart',
+          'url': 'https://github.com/google/source_helper.dart',
+          'isArchived': false,
+        },
+      };
+
+      Map<String, dynamic> openThread(String login) => {
+        'isResolved': false,
+        'comments': {
+          'nodes': [
+            {
+              'author': {'__typename': 'User', 'login': login},
+            },
+          ],
+        },
+      };
+
+      final approvedWithUnresolved = parsePrNode(
+        unprotectedNode(
+          number: 78,
+          reviews: [
+            {
+              'author': {'login': 'davidmorgan'},
+              'submittedAt': '2026-10-28T16:00:00Z',
+              'state': 'APPROVED',
+            },
+          ],
+          threadNodes: List.filled(4, openThread('davidmorgan')),
+        ),
+      )!;
+      check(approvedWithUnresolved.reviewDecision).equals(ReviewDecision.none);
+      check(approvedWithUnresolved.effectiveReviewDecision)
+          .equals(ReviewDecision.approved);
+      check(approvedWithUnresolved.isApproved).isTrue;
+
+      final approvedClean = parsePrNode(
+        unprotectedNode(
+          number: 79,
+          reviews: [
+            {
+              'author': {'login': 'davidmorgan'},
+              'submittedAt': '2026-10-28T16:00:00Z',
+              'state': 'APPROVED',
+            },
+          ],
+          threadNodes: const [],
+        ),
+      )!;
+
+      final changesRequestedPr = parsePrNode(
+        unprotectedNode(
+          number: 80,
+          reviews: [
+            {
+              'author': {'login': 'carol'},
+              'submittedAt': '2026-10-28T15:00:00Z',
+              'state': 'COMMENTED',
+            },
+            {
+              'author': {'login': 'bob'},
+              'submittedAt': '2026-10-28T16:00:00Z',
+              'state': 'CHANGES_REQUESTED',
+            },
+            {
+              'author': {'login': 'bob'},
+              'submittedAt': '2026-10-28T16:05:00Z',
+              'state': 'COMMENTED',
+            },
+          ],
+          threadNodes: const [],
+        ),
+      )!;
+      check(changesRequestedPr.changesRequestedByReviewers).deepEquals(['bob']);
+      check(changesRequestedPr.effectiveReviewDecision)
+          .equals(ReviewDecision.changesRequested);
+      check(changesRequestedPr.changesRequestedReviewers).deepEquals(['bob']);
+
+      final prs = [approvedWithUnresolved, approvedClean, changesRequestedPr];
+      final categorized = categorizePullRequests(prs);
+      check(categorized.readyToMerge.map((p) => p.number)).deepEquals([79]);
+      check(categorized.actionNeeded.map((p) => p.number)).deepEquals([78, 80]);
+
+      final md = renderMarkdownReport(prs, currentTime: now);
+      check(md)
+        ..contains('Review:&nbsp;🟠&nbsp;Approved&nbsp;(4&nbsp;unresolved)')
+        ..contains('❌ **Address 4 unresolved comment(s)**')
+        ..contains('Review:&nbsp;🟢&nbsp;Approved')
+        ..contains('🔴 **Changes Requested** (@bob)');
+
+      final term = renderTerminalReport(prs, currentTime: now);
+      check(term)
+        ..contains('Approved (4 unresolved)')
+        ..contains('Changes Requested (@bob)');
+
+      final jsonMap = jsonDecode(
+        renderJsonOutput(prs, currentTime: now),
+      ) as Map<String, dynamic>;
+      final items = (jsonMap['items'] as List).cast<Map<String, dynamic>>();
+      final json78 = items.firstWhere((i) => i['number'] == 78);
+      check(json78['reviewDecision']).equals('APPROVED');
     });
   });
 }

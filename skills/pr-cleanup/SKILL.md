@@ -53,12 +53,12 @@ view of `~/github` and `~/github/dart-sdk`:
    ```bash
    kscripts pr-cleanup --markdown
    ```
-   _(Concurrently queries landed GitHub PRs, open GitHub PRs, cross-author and
-   closed-unmerged branches, unlinked local worktrees, and Dart SDK Gerrit CLs,
-   rendering `✅ Ready to Prune`, `🚫 Active / Hands-Off` with
-   `Opened / Touched` dates sorted by last `Touched` descending,
-   `⚠️ Needs Triage`, and `📌 Locked Worktrees (FYI — Safe-Kept Local Work)`
-   last)._
+   _(Concurrently queries landed GitHub PRs, all open GitHub PRs, user-authored
+   remote branches on forked repositories, cross-author and closed-unmerged
+   branches, unlinked local worktrees, and Dart SDK Gerrit CLs, rendering
+   `✅ Ready to Prune`, `🚫 Active / Hands-Off` with `Opened / Touched` dates
+   sorted by last `Touched` descending, `⚠️ Needs Triage`, and
+   `📌 Locked Worktrees (FYI — Safe-Kept Local Work)` last)._
 2. **Targeted Individual Collectors** _(optional when scoping to a single
    view)_:
    - **Merged/Closed PRs, Stale Worktrees & Dangling Remote Branches**:
@@ -83,49 +83,10 @@ view of `~/github` and `~/github/dart-sdk`:
 
 ### Ad-Hoc Sorting & Filtering with DuckDB (`--json`)
 
-When the user asks for custom sorting, age calculations, or filtering (for
-example, oldest open PRs by `createdAt`, stalest `updatedAt`, or specific
-reviewer/CI states), pipe `--json` into `duckdb -markdown` instead of adding new
-CLI flags:
-
-```bash
-# Project & sort active GitHub PRs + Gerrit CLs (active) by opened/touched date:
-kscripts pr-cleanup --json | duckdb -markdown -c "
-  WITH a AS (
-    SELECT unnest(active, recursive := true)
-    FROM read_json_auto('/dev/stdin')
-  )
-  SELECT
-    '[' || CASE WHEN source='github' THEN '#' ELSE 'CL ' END || number || '](' || url || ')' AS Target,
-    repository AS Repo,
-    left(title, 42) AS Title,
-    ciBadge AS CI,
-    reviewBadge AS Review,
-    strftime(createdAt::TIMESTAMPTZ, '%Y-%m-%d') AS Opened,
-    strftime(updatedAt::TIMESTAMPTZ, '%Y-%m-%d') AS Touched,
-    date_diff('day', createdAt::TIMESTAMPTZ, now()) AS AgeDays
-  FROM a
-  ORDER BY createdAt ASC;
-"
-
-# Project & filter rich open GitHub PR telemetry from gh-view --json:
-kscripts gh-view --json | duckdb -markdown -c "
-  WITH prs AS (
-    SELECT unnest(items, recursive := true)
-    FROM read_json_auto('/dev/stdin')
-  )
-  SELECT
-    '[#' || number || '](' || url || ')' AS PR,
-    repository AS Repo,
-    category AS Bucket,
-    ciStatus AS CI,
-    strftime(createdAt::TIMESTAMPTZ, '%Y-%m-%d') AS Opened,
-    touched AS Touched
-  FROM prs
-  WHERE NOT isDraft
-  ORDER BY updatedAt ASC;
-"
-```
+For custom sorting, age calculations, or filtering across `pr-cleanup --json`
+and `gh-view --json` (such as oldest `createdAt` or stalest `updatedAt`), pipe
+`--json` into `duckdb -markdown` using the SQL queries in
+[`references/duckdb_recipes.md`](references/duckdb_recipes.md).
 
 ## 2. Active Worktree & Session Ownership Cross-Reference
 
@@ -162,11 +123,13 @@ Before proposing to delete any worktree, local branch, or unpushed commit:
 Present the findings in a structured Markdown report (or artifact for large
 sweeps) organized into four descriptive categories:
 
-- **`✅ Ready to Prune` (JSON field: `readyToPrune` — Merged PRs/CLs & Clean
-  Worktrees)**:
+- **`✅ Ready to Prune` (JSON field: `readyToPrune` — Merged PRs/CLs, Stale
+  Merged Fork Branches & Clean Worktrees)**:
   - Clean unlocked worktrees (`git worktree remove`), merged local feature
-    branches (`git branch -D`), dangling remote head branches on writable repos,
-    and trunk fast-forwards (`--ff-only`).
+    branches (`git branch -D`), dangling remote head branches on writable repos
+    and forks (`<fork_owner>/<fork_repo>:<branch>`, including older merged PRs
+    and branches duplicating a preserved `DO-NOT-DELETE` archive ref), and trunk
+    fast-forwards (`--ff-only`).
   - List any linked tasks or waiting sessions whose PRs have landed so they can
     be reconciled after VCS cleanup.
 - **`🚫 Active / Hands-Off` (JSON field: `active` — Open PRs, Active Gerrit CLs,
@@ -176,7 +139,7 @@ sweeps) organized into four descriptive categories:
     `kscripts gerrit-view` interleaved and sorted by last `Touched`
     (`updatedAt`) descending, with their CI status, reviewer state
     (`⏳ Awaiting` vs `🔔 Ping Reviewer` vs `🔄 Re-request Review` vs
-    `❌ Action Needed`), and local worktree mapping (active open/draft PR
+    `❌ Unresolved Comments`), and local worktree mapping (active open/draft PR
     worktrees remain here even when they have local unpushed commits).
   - When `kscripts gh-view` flags `🔄 **Re-request Review** (@reviewer)`, that
     human reviewer previously submitted a review (`COMMENTED`,
@@ -198,14 +161,20 @@ sweeps) organized into four descriptive categories:
        `CHANGES_REQUESTED` review is a stale veto on an older commit, surface
        the option (gated via `ask_question`) to dismiss the stale review.
 - **`⚠️ Needs Triage` (JSON field: `needsTriage` — Unlocked Unlinked Worktrees,
-  Closed-Unmerged PRs, Dirty Worktrees)**:
+  Closed-Unmerged PRs, Unlinked Fork Branches, Dirty Worktrees)**:
   - Detail the exact modified/untracked files (`git status -s`) or unmerged
     commits so the user can decide how to handle each item.
-  - Dangling unlinked worktrees must always be triaged carefully—never bulk
-    force-removed. Recommend triaging each dangling worktree to **either
-    delete** (`git -C <parent_repo> worktree remove --force <worktree_path>` and
+  - Dangling unlinked worktrees and unmerged fork remote branches
+    (`<fork_owner>/<fork_repo>:<branch>`, filtered to branches authored or
+    committed by the user while preserving `DO-NOT-DELETE` archive refs) must
+    always be triaged carefully—never bulk force-removed. Recommend triaging
+    each dangling worktree to **either delete**
+    (`git -C <parent_repo> worktree remove --force <worktree_path>` and
     `git -C <parent_repo> branch -D <branch>`) **OR lock for safekeeping**
-    (`git -C <parent_repo> worktree lock --reason "<descriptive reason with project, context, and why kept>" <worktree_path>`).
+    (`git -C <parent_repo> worktree lock --reason "<descriptive reason with project, context, and why kept>" <worktree_path>`),
+    and triaging confirmed stale fork remote branches via
+    `gh api -X DELETE repos/<fork_owner>/<fork_repo>/git/refs/heads/<branch>`
+    followed by `git -C <parent_repo> fetch <fork_remote> --prune`.
   - Explicitly encourage the human to provide a descriptive `--reason` that
     includes project context, ticket/goal, and why the worktree is being kept.
 - **`📌 Locked Worktrees (FYI — Safe-Kept Local Work)` (JSON field:

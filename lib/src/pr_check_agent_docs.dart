@@ -9,7 +9,7 @@ const maxSkillMdChars = 25000;
 const maxAgentsMdChars = 15000;
 
 /// Maximum character length for a `SKILL.md` YAML `description` field.
-const maxSkillDescriptionChars = 1024;
+const _maxSkillDescriptionChars = 1024;
 
 const _alwaysOnAgentDocNames = {'AGENTS.md', 'CLAUDE.md', 'GEMINI.md'};
 
@@ -200,7 +200,7 @@ List<PrCheckViolation> checkRawMarkdownDiodeAndSpot(
 /// `GEMINI.md`, `skills/**/*.md`, and `references/*.md`) for line budgets,
 /// frontmatter contracts, internal link integrity, raw-line diode rules, and
 /// SPOT block synchronization.
-List<PrCheckViolation> checkAgentDocFiles(
+List<PrCheckViolation> _checkAgentDocFiles(
   Directory repoRoot,
   List<String> changedFiles, {
   Map<String, String>? canonicalSpotDefs,
@@ -399,16 +399,16 @@ List<PrCheckViolation> _validateSkillDescription(String relPath, String desc) {
   }
 
   final violations = <PrCheckViolation>[];
-  if (desc.length > maxSkillDescriptionChars) {
+  if (desc.length > _maxSkillDescriptionChars) {
     violations.add(
       PrCheckViolation(
         check: 'skill-frontmatter',
         message:
             '$relPath description is ${desc.length} chars '
-            '(exceeds $maxSkillDescriptionChars chars).',
+            '(exceeds $_maxSkillDescriptionChars chars).',
         remediation:
             'Trim $relPath frontmatter description to <= '
-            '$maxSkillDescriptionChars characters.',
+            '$_maxSkillDescriptionChars characters.',
       ),
     );
   }

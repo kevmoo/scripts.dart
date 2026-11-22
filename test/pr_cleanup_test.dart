@@ -3,11 +3,16 @@ import 'dart:io';
 
 import 'package:args/command_runner.dart';
 import 'package:checks/checks.dart';
+import 'package:kevmoo_scripts/src/gerrit_view.dart';
 import 'package:kevmoo_scripts/src/gerrit_view/gerrit_queries.dart';
+import 'package:kevmoo_scripts/src/gerrit_view/models.dart';
+import 'package:kevmoo_scripts/src/gh_clean/models.dart';
+import 'package:kevmoo_scripts/src/local_repo_scanner.dart';
+import 'package:kevmoo_scripts/src/pr_cleanup.dart';
+import 'package:kevmoo_scripts/src/pr_cleanup/cleanup_executor.dart';
 import 'package:kevmoo_scripts/src/pr_cleanup/collector.dart';
-import 'package:kevmoo_scripts/src/pr_cleanup/models.dart';
-import 'package:kevmoo_scripts/src/pr_cleanup/pr_cleanup_options.dart';
-import 'package:kevmoo_scripts/src/pr_cleanup/report_formatter.dart';
+import 'package:kevmoo_scripts/src/process_utils.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 
 void main() {
@@ -18,13 +23,14 @@ void main() {
       final options = PrCleanupOptions.parse(results);
 
       check(options.user).equals('@me');
-      check(options.repo).isNull();
+      check(options.repo).isNull;
       check(options.limit).equals(50);
       check(options.lastNDays).equals(14);
-      check(options.skipGerrit).isFalse();
-      check(options.apply).isFalse();
-      check(options.markdown).isTrue();
-      check(options.json).isFalse();
+      check(options.skipGerrit).isFalse;
+      check(options.apply).isFalse;
+      check(options.excludeWorktrees).isEmpty;
+      check(options.markdown).isTrue;
+      check(options.json).isFalse;
       check(parser.usage).contains(
         'Execute pruning of ready-to-prune worktrees and branches across '
         'GitHub and Gerrit.',
@@ -50,6 +56,10 @@ void main() {
         '/custom/sdk',
         '--skip-gerrit',
         '--apply',
+        '--exclude-worktree',
+        '/custom/root/_demo-hold',
+        '--exclude-worktree',
+        ' /custom/root/_demo-second ',
         '--json',
       ]);
       final options = PrCleanupOptions.parse(results);
@@ -60,9 +70,11 @@ void main() {
       check(options.lastNDays).equals(30);
       check(options.localRoot).equals('/custom/root');
       check(options.dartSdkPath).equals('/custom/sdk');
-      check(options.skipGerrit).isTrue();
-      check(options.apply).isTrue();
-      check(options.json).isTrue();
+      check(options.skipGerrit).isTrue;
+      check(options.apply).isTrue;
+      check(options.excludeWorktrees)
+          .deepEquals(['/custom/root/_demo-hold', '/custom/root/_demo-second']);
+      check(options.json).isTrue;
     });
 
     test('throws UsageException on invalid limit', () {
@@ -90,7 +102,24 @@ void main() {
       final parser = PrCleanupOptions.createArgParser();
       final results = parser.parse(['--last-n-days', '0']);
       final options = PrCleanupOptions.parse(results);
-      check(options.lastNDays).isNull();
+      check(options.lastNDays).isNull;
+      check(options.wasLastNDaysExplicit).isTrue;
+      check(options.openPrLastNDays).isNull;
+    });
+
+    test('openPrLastNDays is null by default and bounded only when -d is '
+        'explicitly passed', () {
+      final parser = PrCleanupOptions.createArgParser();
+
+      final defaults = PrCleanupOptions.parse(parser.parse([]));
+      check(defaults.lastNDays).equals(14);
+      check(defaults.wasLastNDaysExplicit).isFalse;
+      check(defaults.openPrLastNDays).isNull;
+
+      final explicit = PrCleanupOptions.parse(parser.parse(['-d', '21']));
+      check(explicit.lastNDays).equals(21);
+      check(explicit.wasLastNDaysExplicit).isTrue;
+      check(explicit.openPrLastNDays).equals(21);
     });
   });
 
@@ -126,11 +155,11 @@ void main() {
         ..contains('## 🚫 Active / Hands-Off')
         ..contains('Zero worktrees or branches ready for immediate pruning.')
         ..contains('Zero open PRs or active CLs found.')
-        ..not((it) => it.contains('Bucket A'))
-        ..not((it) => it.contains('Bucket B'))
-        ..not((it) => it.contains('Bucket C'))
-        ..not((it) => it.contains('## 📌 Locked Worktrees'))
-        ..not((it) => it.contains('## ⚠️ Needs Triage'));
+        ..not(.it()..contains('Bucket A'))
+        ..not(.it()..contains('Bucket B'))
+        ..not(.it()..contains('Bucket C'))
+        ..not(.it()..contains('## 📌 Locked Worktrees'))
+        ..not(.it()..contains('## ⚠️ Needs Triage'));
     });
 
     test('renders populated sweep with all sections and locked worktrees', () {
@@ -310,12 +339,34 @@ void main() {
       final decoded = jsonDecode(jsonStr) as Map<String, dynamic>;
 
       check(decoded['applied']).equals(true);
+      check(decoded.containsKey('applyResult')).isFalse;
       check((decoded['active'] as List).length).equals(1);
       check((decoded['readyToPrune'] as List).length).equals(1);
       check((decoded['lockedWorktrees'] as List).length).equals(1);
       check((decoded['needsTriage'] as List).length).equals(0);
       check((decoded['candidateLandedIds'] as List).cast<int>())
           .deepEquals([41]);
+
+      final withApplyStr = formatJsonReport(
+        result,
+        applied: true,
+        applyResult: const PrCleanupApplyResult(
+          prunedWorktrees: 2,
+          deletedBranches: 3,
+          deletedRemoteBranches: 1,
+          skippedWorktrees: ['/tmp/_demo-busy'],
+          errors: ['failed branch delete'],
+        ),
+      );
+      final withApply = jsonDecode(withApplyStr) as Map<String, dynamic>;
+      final applyMap = withApply['applyResult'] as Map<String, dynamic>;
+      check(applyMap['prunedWorktrees']).equals(2);
+      check(applyMap['deletedBranches']).equals(3);
+      check(applyMap['deletedRemoteBranches']).equals(1);
+      check((applyMap['skippedWorktrees'] as List).cast<String>())
+          .deepEquals(['/tmp/_demo-busy']);
+      check((applyMap['errors'] as List).cast<String>())
+          .deepEquals(['failed branch delete']);
     });
 
     test('includes createdAt, updatedAt, and activity timestamps in Markdown '
@@ -439,7 +490,7 @@ void main() {
       final withoutReason = sweep.lockedWorktrees.firstWhere(
         (w) => w.worktreePath == lockedNoReasonWt.path,
       );
-      check(withoutReason.lockReason).isNull();
+      check(withoutReason.lockReason).isNull;
       check(withoutReason.commitsAhead).equals(0);
       check(withoutReason.updatedAt).isNotNull();
 
@@ -453,6 +504,72 @@ void main() {
         ..contains('⚠️ *(No --reason provided)*')
         ..contains('_demo-unlocked-dangling');
     });
+
+    test('surfaces unanswered reviewer comments and thread counts across '
+        'GitHub PRs and Gerrit CLs', () async {
+      final sweep = await collectPrSweep(
+        options: PrCleanupOptions(localRoot: tempRoot.path),
+        syncProcessRunner: (exe, args, {workingDirectory}) => ProcessResult(
+          0,
+          0,
+          exe == 'gh'
+              ? jsonEncode({
+                  'data': {
+                    'search': {'nodes': <Object?>[]},
+                  },
+                })
+              : '',
+          '',
+        ),
+        asyncProcessRunner: (exe, args, {workingDirectory}) async =>
+            _mockUntriagedGithubPrsRunner(),
+        gerritAnalyzer: () async => _mockGerritAnalysisResult(tempRoot.path),
+      );
+
+      final byNumber = {for (final item in sweep.active) item.number: item};
+
+      check(byNumber[2633]!.reviewBadge)
+          .equals('❌ Unresolved Comments (2, Approved)');
+      check(byNumber[2633]!.unresolvedReviewerThreads).equals(2);
+      check(byNumber[2633]!.unresolvedAuthorThreads).equals(0);
+
+      check(byNumber[78]!.reviewBadge)
+          .equals('❌ Unresolved Comments (4, Approved)');
+
+      check(byNumber[2638]!.reviewBadge).equals('❌ Unresolved Comments (5)');
+      check(byNumber[2638]!.unresolvedReviewerThreads).equals(5);
+
+      check(byNumber[2640]!.reviewBadge)
+          .equals('🔴 Changes Requested (1 unresolved)');
+
+      check(byNumber[18855]!.reviewBadge).equals('🔄 Re-request Review');
+      check(byNumber[18855]!.unresolvedReviewerThreads).equals(0);
+      check(byNumber[18855]!.unresolvedAuthorThreads).equals(1);
+
+      check(byNumber[517]!.reviewBadge)
+          .equals('⚪ Work in progress (2 unresolved)');
+
+      check(byNumber[567604]!.reviewBadge).equals('❌ Unresolved Comments (1)');
+      check(byNumber[567604]!.unresolvedReviewerThreads).equals(1);
+
+      check(byNumber[567582]!.reviewBadge)
+          .equals('❌ Unresolved Comments (1, Approved)');
+
+      check(byNumber[563381]!.reviewBadge)
+          .equals('🔴 Changes Requested (2 unresolved)');
+
+      check(byNumber[507265]!.reviewBadge).equals('⏳ Awaiting Review');
+      check(byNumber[507265]!.unresolvedReviewerThreads).equals(0);
+      check(byNumber[507265]!.unresolvedAuthorThreads).equals(1);
+
+      final decoded =
+          jsonDecode(formatJsonReport(sweep)) as Map<String, dynamic>;
+      final activeJson = (decoded['active'] as List)
+          .cast<Map<String, dynamic>>();
+      final gerritJson = activeJson.firstWhere((i) => i['number'] == 567604);
+      check(gerritJson['unresolvedReviewerThreads']).equals(1);
+      check(gerritJson['unresolvedAuthorThreads']).equals(0);
+    });
   });
 
   group('parseGerritTimestamp', () {
@@ -460,11 +577,717 @@ void main() {
       final parsed = parseGerritTimestamp('2026-10-08 02:30:11.000000000');
       check(parsed).isNotNull();
       check(parsed!.toUtc()).equals(DateTime.utc(2026, 10, 8, 2, 30, 11));
-      check(parseGerritTimestamp(null)).isNull();
-      check(parseGerritTimestamp('')).isNull();
+      check(parseGerritTimestamp(null)).isNull;
+      check(parseGerritTimestamp('')).isNull;
+    });
+  });
+
+  group('executeReadyToPrune and runPrCleanup --apply', () {
+    late Directory tempRoot;
+
+    setUp(() {
+      tempRoot = Directory.systemTemp.createTempSync('pr_cleanup_apply_test_');
+    });
+
+    tearDown(() {
+      if (tempRoot.existsSync()) {
+        tempRoot.deleteSync(recursive: true);
+      }
+    });
+
+    test('canonicalizeWorktreePath resolves symlinks, file URIs, tilde, and '
+        'relative paths', () {
+      final realDir = Directory('${tempRoot.path}/real/_demo-wt')
+        ..createSync(recursive: true);
+      final symlink = Link('${tempRoot.path}/links/wt_link')
+        ..createSync(realDir.path, recursive: true);
+
+      final expected = canonicalizeWorktreePath(realDir.path);
+      check(canonicalizeWorktreePath('${symlink.path}/')).equals(expected);
+      check(canonicalizeWorktreePath(Uri.directory(realDir.path).toString()))
+          .equals(expected);
+      final relative = p.relative(realDir.path, from: Directory.current.path);
+      check(canonicalizeWorktreePath(relative)).equals(expected);
+
+      final home = Platform.environment['HOME'] ?? '';
+      if (home.isNotEmpty) {
+        check(canonicalizeWorktreePath('~/sub/example_wt'))
+            .equals(canonicalizeWorktreePath('$home/sub/example_wt'));
+      }
+      check(canonicalizeWorktreePath('   ')).equals('');
+    });
+
+    test(
+      'prunes real GitHub and bare-clone Gerrit worktrees while preserving '
+      'symlink-excluded worktrees and deduplicating skippedWorktrees',
+      () async {
+        final ghFixture = _createRealGithubFixture(tempRoot);
+        final gerritFixture = _createRealBareGerritFixture(tempRoot);
+        final holdSymlink = Link('${tempRoot.path}/links/hold_symlink')
+          ..createSync(ghFixture.wtHold, recursive: true);
+
+        final scannedRepos = scanLocalGitRepositories(
+          Directory('${tempRoot.path}/repos'),
+        );
+        final ghCommands = <String>[];
+
+        final applyResult = await executeReadyToPrune(
+          items: [
+            PrunableItem(
+              source: 'github',
+              repository: 'kevmoo/demo',
+              branch: 'feat-hold',
+              worktreePath: ghFixture.wtHold,
+              remoteBranch: 'kevmoo/demo:feat-hold',
+              prOrClNumber: 10,
+              description: 'Landed PR #10',
+              landedPr: _buildTestLandedPr(
+                number: 10,
+                branch: 'feat-hold',
+                sha: ghFixture.shaHold,
+              ),
+            ),
+            PrunableItem(
+              source: 'github',
+              repository: 'kevmoo/demo',
+              branch: 'feat-hold',
+              worktreePath: ghFixture.wtHold,
+              remoteBranch: 'kevmoo/demo:feat-hold',
+              prOrClNumber: 12,
+              description: 'Follow-up PR #12 on same branch',
+              landedPr: _buildTestLandedPr(
+                number: 12,
+                branch: 'feat-hold',
+                sha: ghFixture.shaHold,
+              ),
+            ),
+            PrunableItem(
+              source: 'github',
+              repository: 'kevmoo/demo',
+              branch: 'feat-prune',
+              worktreePath: ghFixture.wtPrune,
+              remoteBranch: 'kevmoo/demo:feat-prune',
+              prOrClNumber: 11,
+              description: 'Landed PR #11',
+              landedPr: _buildTestLandedPr(
+                number: 11,
+                branch: 'feat-prune',
+                sha: ghFixture.shaPrune,
+              ),
+            ),
+            PrunableItem(
+              source: 'gerrit',
+              repository: 'dart-sdk',
+              branch: 'cl-99',
+              worktreePath: gerritFixture.wtHold,
+              prOrClNumber: 99,
+              description: 'CL 99 (merged)',
+            ),
+            PrunableItem(
+              source: 'gerrit',
+              repository: 'dart-sdk',
+              branch: 'cl-100',
+              worktreePath: gerritFixture.wtPrune,
+              prOrClNumber: 100,
+              description: 'CL 100 (merged)',
+            ),
+          ],
+          localRepos: scannedRepos,
+          excludedWorktrees: [
+            '${holdSymlink.path}/',
+            Uri.directory(gerritFixture.wtHold).toString(),
+          ],
+          dartSdkPath: gerritFixture.containerPath,
+          syncProcessRunner: (exe, args, {workingDirectory}) {
+            if (exe == 'gh') {
+              ghCommands.add('$exe ${args.join(' ')}');
+              return ProcessResult(0, 0, '', '');
+            }
+            return defaultSyncProcessRunner(
+              exe,
+              args,
+              workingDirectory: workingDirectory,
+            );
+          },
+        );
+
+        check(applyResult.errors).isEmpty;
+        check(applyResult.skippedWorktrees)
+            .deepEquals([ghFixture.wtHold, gerritFixture.wtHold]);
+        check(applyResult.prunedWorktrees).equals(2);
+        check(applyResult.deletedBranches).equals(2);
+        check(applyResult.deletedRemoteBranches).equals(1);
+
+        check(Directory(ghFixture.wtHold).existsSync()).isTrue;
+        check(Directory(ghFixture.wtPrune).existsSync()).isFalse;
+        check(_gitBranches(ghFixture.repoPath))
+          ..contains('feat-hold')
+          ..not(.it()..contains('feat-prune'));
+        check(ghCommands)
+          ..any(
+            .it()
+              ..contains('DELETE repos/kevmoo/demo/git/refs/heads/feat-prune'),
+          )
+          ..every(.it()..not(.it()..contains('feat-hold')));
+
+        check(Directory(gerritFixture.wtHold).existsSync()).isTrue;
+        check(Directory(gerritFixture.wtPrune).existsSync()).isFalse;
+        check(_gitBranches(gerritFixture.mainSdkPath))
+          ..contains('cl-99')
+          ..not(.it()..contains('cl-100'));
+        check(_gitConfig(gerritFixture.mainSdkPath, 'branch.cl-99.gerritissue'))
+            .equals('99');
+        check(
+          _gitConfig(gerritFixture.mainSdkPath, 'branch.cl-100.gerritissue'),
+        ).isNull;
+      },
+    );
+
+    test('protects excluded primary repository checkouts from branch switch '
+        'and skips git pull when pruning sibling worktrees', () async {
+      final ghFixture = _createRealGithubFixture(tempRoot);
+      final rootCheckout = _createPrimaryRootBranchFixture(tempRoot);
+
+      // Advance origin/main ahead of ghFixture.repoPath so an unskipped
+      // `git pull --ff-only` would advance HEAD in ghFixture.repoPath.
+      final headBefore = _gitRevParse(ghFixture.repoPath, 'HEAD');
+      _advanceOriginMainAhead(tempRoot, ghFixture.originBarePath);
+
+      final scannedRepos = [
+        ...scanLocalGitRepositories(Directory('${tempRoot.path}/repos')),
+        ...scanLocalGitRepositories(Directory('${tempRoot.path}/root_repos')),
+      ];
+
+      final applyResult = await executeReadyToPrune(
+        items: [
+          PrunableItem(
+            source: 'github',
+            repository: 'kevmoo/root-demo',
+            branch: 'feat-root',
+            prOrClNumber: 20,
+            description: 'Landed PR #20 checked out in primary root',
+            landedPr: LandedPr(
+              number: 20,
+              title: 'PR 20',
+              url: 'https://github.com/kevmoo/root-demo/pull/20',
+              repository: 'kevmoo/root-demo',
+              repoUrl: 'https://github.com/kevmoo/root-demo',
+              headRefName: 'feat-root',
+              headRefOid: rootCheckout.shaRootBranch,
+              baseRefName: 'main',
+              headRefExists: true,
+              headRepository: 'kevmoo/root-demo',
+              headRepoPermission: 'ADMIN',
+            ),
+          ),
+          PrunableItem(
+            source: 'github',
+            repository: 'kevmoo/demo',
+            branch: 'feat-prune',
+            worktreePath: ghFixture.wtPrune,
+            prOrClNumber: 11,
+            description: 'Landed sibling PR #11',
+            landedPr: _buildTestLandedPr(
+              number: 11,
+              branch: 'feat-prune',
+              sha: ghFixture.shaPrune,
+            ),
+          ),
+        ],
+        localRepos: scannedRepos,
+        excludedWorktrees: [rootCheckout.repoPath, ghFixture.repoPath],
+        syncProcessRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') return ProcessResult(0, 0, '', '');
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      check(applyResult.errors).isEmpty;
+      check(applyResult.skippedWorktrees).deepEquals([rootCheckout.repoPath]);
+      check(applyResult.prunedWorktrees).equals(1);
+      check(applyResult.deletedBranches).equals(1);
+
+      check(_gitCurrentBranch(rootCheckout.repoPath)).equals('feat-root');
+      check(_gitBranches(rootCheckout.repoPath)).contains('feat-root');
+      check(Directory(ghFixture.wtPrune).existsSync()).isFalse;
+      check(_gitRevParse(ghFixture.repoPath, 'HEAD')).equals(headBefore);
+    });
+
+    test('records error when Gerrit repository cannot be found', () async {
+      final res = await executeReadyToPrune(
+        items: const [
+          PrunableItem(
+            source: 'gerrit',
+            repository: 'dart-sdk',
+            branch: 'cl-404',
+            prOrClNumber: 404,
+            description: 'CL 404',
+          ),
+        ],
+        localRepos: const [],
+        localRoot: tempRoot.path,
+        dartSdkPath: '${tempRoot.path}/missing-dart-sdk',
+      );
+      check(res.prunedWorktrees).equals(0);
+      check(res.errors).any(.it()..contains('cl-404'));
+    });
+
+    test('runPrCleanup writes applyResult in JSON cache and Markdown summary '
+        'when apply is true', () async {
+      final cacheFile = File('${tempRoot.path}/sweep_cache.json');
+      ProcessResult emptyGhSync(
+        String exe,
+        List<String> args, {
+        String? workingDirectory,
+      }) => ProcessResult(
+        0,
+        0,
+        exe == 'gh'
+            ? jsonEncode({
+                'data': {
+                  'search': {'nodes': <Object?>[]},
+                },
+              })
+            : '',
+        '',
+      );
+      Future<ProcessResult> emptyGhAsync(
+        String exe,
+        List<String> args, {
+        String? workingDirectory,
+      }) async => emptyGhSync(exe, args, workingDirectory: workingDirectory);
+
+      await runPrCleanup(
+        options: PrCleanupOptions(
+          localRoot: tempRoot.path,
+          skipGerrit: true,
+          json: true,
+        ),
+        syncProcessRunner: emptyGhSync,
+        asyncProcessRunner: emptyGhAsync,
+        jsonCachePath: cacheFile.path,
+      );
+      final dryRunJson =
+          jsonDecode(cacheFile.readAsStringSync()) as Map<String, dynamic>;
+      check(dryRunJson['applied']).equals(false);
+      check(dryRunJson.containsKey('applyResult')).isFalse;
+
+      await runPrCleanup(
+        options: PrCleanupOptions(
+          localRoot: tempRoot.path,
+          skipGerrit: true,
+          apply: true,
+          json: true,
+        ),
+        syncProcessRunner: emptyGhSync,
+        asyncProcessRunner: emptyGhAsync,
+        jsonCachePath: cacheFile.path,
+      );
+      final applyJson =
+          jsonDecode(cacheFile.readAsStringSync()) as Map<String, dynamic>;
+      check(applyJson['applied']).equals(true);
+      final applyResult = applyJson['applyResult'] as Map<String, dynamic>;
+      check(applyResult['prunedWorktrees']).equals(0);
+      check(applyResult['deletedBranches']).equals(0);
+      check(applyResult['deletedRemoteBranches']).equals(0);
+      check(applyResult['skippedWorktrees'] as List).isEmpty;
+      check(applyResult['errors'] as List).isEmpty;
+
+      final mdWithApply = formatMarkdownReport(
+        PrSweepResult(
+          active: const [],
+          readyToPrune: const [],
+          lockedWorktrees: const [],
+          needsTriage: const [],
+          candidateLandedIds: const [],
+          timestamp: DateTime(2026, 10, 29),
+        ),
+        applied: true,
+        applyResult: const PrCleanupApplyResult(
+          prunedWorktrees: 1,
+          deletedBranches: 1,
+          skippedWorktrees: ['/tmp/_demo-busy'],
+          errors: ['branch delete failed'],
+        ),
+      );
+      check(mdWithApply)
+        ..contains('Pruning summary: 1 worktree(s) pruned')
+        ..contains('Skipped excluded worktree(s): `/tmp/_demo-busy`')
+        ..contains('- branch delete failed');
+    });
+
+    test('scans fork remote branches, filters non-user and DO-NOT-DELETE refs, '
+        'and prunes branch-only fork items safely', () async {
+      final forkFixture = _createForkRepositoryFixture(tempRoot);
+      String? openPrSearchQuery;
+      String? landedPrSearchQuery;
+
+      final sweep = await collectPrSweep(
+        options: PrCleanupOptions(
+          localRoot: forkFixture.reposDirPath,
+          skipGerrit: true,
+        ),
+        asyncProcessRunner: (exe, args, {workingDirectory}) async {
+          for (var i = 0; i < args.length; i++) {
+            if (args[i].startsWith('q=')) {
+              openPrSearchQuery = args[i].substring(2);
+            }
+          }
+          return ProcessResult(
+            0,
+            0,
+            jsonEncode({
+              'data': {
+                'search': {'nodes': <Object?>[]},
+              },
+            }),
+            '',
+          );
+        },
+        syncProcessRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            for (var i = 0; i < args.length; i++) {
+              if (args[i].startsWith('q=')) {
+                landedPrSearchQuery ??= args[i].substring(2);
+              }
+            }
+            return _mockForkGraphQLSync(args, forkFixture);
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      // Default PrCleanupOptions queries all open PRs (no updated:>= filter)
+      // while keeping merged:>= on landed PRs.
+      check(openPrSearchQuery).isNotNull();
+      check(openPrSearchQuery!).not(.it()..contains('updated:>='));
+      check(landedPrSearchQuery).isNotNull();
+      check(landedPrSearchQuery!).contains('merged:>=');
+
+      final prunableByBranch = {
+        for (final p in sweep.readyToPrune) p.branch: p,
+      };
+      check(prunableByBranch.keys.toList()..sort())
+          .deepEquals(['merged-old-fork', 'wimp-dup-sprint']);
+      check(prunableByBranch['merged-old-fork']!.remoteBranch)
+          .equals('kevmoo/flutter:merged-old-fork');
+      check(prunableByBranch['merged-old-fork']!.prOrClNumber).equals(180001);
+      check(prunableByBranch['wimp-dup-sprint']!.remoteBranch)
+          .equals('kevmoo/flutter:wimp-dup-sprint');
+      check(sweep.candidateLandedIds).contains(180001);
+
+      final triageByBranch = {for (final t in sweep.needsTriage) t.branch: t};
+      check(triageByBranch.keys.toList()..sort())
+          .deepEquals(['closed-remote-only', 'unlinked-spike', 'wt-with-fork']);
+      check(triageByBranch['closed-remote-only']!.remoteBranch)
+          .equals('kevmoo/flutter:closed-remote-only');
+      check(triageByBranch['closed-remote-only']!.prOrClNumber).equals(180002);
+      check(triageByBranch['unlinked-spike']!.remoteBranch)
+          .equals('kevmoo/flutter:unlinked-spike');
+      // Unlocked worktree + matching fork branch deduplicate into one row!
+      check(triageByBranch['wt-with-fork']!.worktreePath)
+          .equals(forkFixture.wtWithForkPath);
+      check(triageByBranch['wt-with-fork']!.remoteBranch)
+          .equals('kevmoo/flutter:wt-with-fork');
+
+      final md = formatMarkdownReport(sweep);
+      check(md)
+        ..contains(
+          'branch `wimp-dup-sprint` (remote `kevmoo/flutter:wimp-dup-sprint`)',
+        )
+        ..contains('`kevmoo/flutter:closed-remote-only`')
+        ..not(.it()..contains('dependabot'))
+        ..not(.it()..contains('DO-NOT-DELETE-sprint\n'));
+
+      // Execute branch-only pruning (including a synthetic unsafe local branch
+      // and a protected DO-NOT-DELETE guard check).
+      final deletedRemoteApis = <String>[];
+      final scannedRepos = scanLocalGitRepositories(
+        Directory(forkFixture.reposDirPath),
+      );
+      final applyRes = await executeReadyToPrune(
+        items: [
+          prunableByBranch['wimp-dup-sprint']!,
+          const PrunableItem(
+            source: 'github',
+            repository: 'flutter/flutter',
+            branch: 'unlinked-spike',
+            remoteBranch: 'kevmoo/flutter:unlinked-spike',
+            description: 'Synthetic test with unmerged local branch',
+          ),
+          const PrunableItem(
+            source: 'github',
+            repository: 'flutter/flutter',
+            branch: 'archive/DO-NOT-DELETE-sprint',
+            remoteBranch: 'kevmoo/flutter:archive/DO-NOT-DELETE-sprint',
+            description: 'Protected archive ref',
+          ),
+        ],
+        localRepos: scannedRepos,
+        syncProcessRunner: (exe, args, {workingDirectory}) {
+          if (exe == 'gh') {
+            deletedRemoteApis.add(args.join(' '));
+            return ProcessResult(0, 0, '', '');
+          }
+          return defaultSyncProcessRunner(
+            exe,
+            args,
+            workingDirectory: workingDirectory,
+          );
+        },
+      );
+
+      check(applyRes.deletedRemoteBranches).equals(2);
+      // wimp-dup-sprint local branch (matching DO-NOT-DELETE tag SHA) deleted;
+      // unlinked-spike local branch (unmerged) preserved!
+      check(applyRes.deletedBranches).equals(1);
+      check(applyRes.errors)
+        ..any(.it()..contains('Skipped local branch `unlinked-spike`'))
+        ..any(.it()..contains('Refusing to delete protected remote branch'));
+      check(_gitBranches(forkFixture.repoPath))
+        ..not(.it()..contains('wimp-dup-sprint'))
+        ..contains('unlinked-spike')
+        ..contains('archive/DO-NOT-DELETE-sprint');
+      check(deletedRemoteApis)
+          .not(.it()..any(.it()..contains('DO-NOT-DELETE')));
     });
   });
 }
+
+typedef _RealGithubFixture = ({
+  String originBarePath,
+  String repoPath,
+  String wtHold,
+  String wtPrune,
+  String shaHold,
+  String shaPrune,
+});
+
+typedef _RealBareGerritFixture = ({
+  String containerPath,
+  String mainSdkPath,
+  String wtHold,
+  String wtPrune,
+});
+
+void _runGit(List<String> args, {String? cwd}) {
+  final res = Process.runSync('git', [
+    '-c',
+    'user.name=Test User',
+    '-c',
+    'user.email=test@example.com',
+    '-c',
+    'commit.gpgsign=false',
+    '-c',
+    'tag.gpgSign=false',
+    '-c',
+    'core.hooksPath=/dev/null',
+    ...args,
+  ], workingDirectory: cwd);
+  if (res.exitCode != 0) {
+    throw StateError(
+      'git ${args.join(' ')} failed (${res.exitCode}): ${res.stderr}',
+    );
+  }
+}
+
+String _gitRevParse(String repoPath, String rev) =>
+    (Process.runSync('git', ['-C', repoPath, 'rev-parse', rev]).stdout
+            as String)
+        .trim();
+
+String _gitCurrentBranch(String repoPath) =>
+    (Process.runSync('git', ['-C', repoPath, 'branch', '--show-current']).stdout
+            as String)
+        .trim();
+
+List<String> _gitBranches(String repoPath) =>
+    (Process.runSync('git', [
+              '-C',
+              repoPath,
+              'for-each-ref',
+              '--format=%(refname:short)',
+              'refs/heads/',
+            ]).stdout
+            as String)
+        .trim()
+        .split('\n')
+        .where((s) => s.isNotEmpty)
+        .toList();
+
+String? _gitConfig(String repoPath, String key) {
+  final res = Process.runSync('git', ['-C', repoPath, 'config', '--get', key]);
+  if (res.exitCode != 0) return null;
+  return (res.stdout as String).trim();
+}
+
+_RealGithubFixture _createRealGithubFixture(Directory tempRoot) {
+  final originBare = Directory('${tempRoot.path}/remotes/demo.git')
+    ..createSync(recursive: true);
+  _runGit(['init', '--bare', '-b', 'main', originBare.path]);
+
+  final reposDir = Directory('${tempRoot.path}/repos')
+    ..createSync(recursive: true);
+  final repoDir = Directory('${reposDir.path}/demo')..createSync();
+  _runGit(['init', '-b', 'main'], cwd: repoDir.path);
+  _runGit(['remote', 'add', 'origin', originBare.path], cwd: repoDir.path);
+  _runGit([
+    'remote',
+    'add',
+    'upstream',
+    'https://github.com/kevmoo/demo.git',
+  ], cwd: repoDir.path);
+
+  File('${repoDir.path}/README.md').writeAsStringSync('init\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'init'], cwd: repoDir.path);
+  _runGit(['push', '-u', 'origin', 'main'], cwd: repoDir.path);
+
+  _runGit(['checkout', '-b', 'feat-hold'], cwd: repoDir.path);
+  File('${repoDir.path}/hold.txt').writeAsStringSync('hold\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'hold'], cwd: repoDir.path);
+  final shaHold = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit(['push', '-u', 'origin', 'feat-hold'], cwd: repoDir.path);
+
+  _runGit(['checkout', 'main'], cwd: repoDir.path);
+  _runGit(['merge', '--ff-only', 'feat-hold'], cwd: repoDir.path);
+
+  _runGit(['checkout', '-b', 'feat-prune'], cwd: repoDir.path);
+  File('${repoDir.path}/prune.txt').writeAsStringSync('prune\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'prune'], cwd: repoDir.path);
+  final shaPrune = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit(['push', '-u', 'origin', 'feat-prune'], cwd: repoDir.path);
+
+  _runGit(['checkout', 'main'], cwd: repoDir.path);
+  _runGit(['merge', '--ff-only', 'feat-prune'], cwd: repoDir.path);
+  _runGit(['push', 'origin', 'main'], cwd: repoDir.path);
+
+  final wtHold = '${reposDir.path}/_demo-feat-hold';
+  final wtPrune = '${reposDir.path}/_demo-feat-prune';
+  _runGit(['worktree', 'add', wtHold, 'feat-hold'], cwd: repoDir.path);
+  _runGit(['worktree', 'add', wtPrune, 'feat-prune'], cwd: repoDir.path);
+
+  return (
+    originBarePath: canonicalizeWorktreePath(originBare.path),
+    repoPath: canonicalizeWorktreePath(repoDir.path),
+    wtHold: canonicalizeWorktreePath(wtHold),
+    wtPrune: canonicalizeWorktreePath(wtPrune),
+    shaHold: shaHold,
+    shaPrune: shaPrune,
+  );
+}
+
+({String repoPath, String shaRootBranch}) _createPrimaryRootBranchFixture(
+  Directory tempRoot,
+) {
+  final originBare = Directory('${tempRoot.path}/remotes/root_demo.git')
+    ..createSync(recursive: true);
+  _runGit(['init', '--bare', '-b', 'main', originBare.path]);
+
+  final repoDir = Directory('${tempRoot.path}/root_repos/root-demo')
+    ..createSync(recursive: true);
+  _runGit(['init', '-b', 'main'], cwd: repoDir.path);
+  _runGit(['remote', 'add', 'origin', originBare.path], cwd: repoDir.path);
+  _runGit([
+    'remote',
+    'add',
+    'upstream',
+    'https://github.com/kevmoo/root-demo.git',
+  ], cwd: repoDir.path);
+
+  File('${repoDir.path}/README.md').writeAsStringSync('root\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'init'], cwd: repoDir.path);
+  _runGit(['push', '-u', 'origin', 'main'], cwd: repoDir.path);
+
+  _runGit(['checkout', '-b', 'feat-root'], cwd: repoDir.path);
+  File('${repoDir.path}/feat.txt').writeAsStringSync('feat\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'feat'], cwd: repoDir.path);
+  final shaRoot = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit(['push', 'origin', 'HEAD:main'], cwd: repoDir.path);
+
+  return (
+    repoPath: canonicalizeWorktreePath(repoDir.path),
+    shaRootBranch: shaRoot,
+  );
+}
+
+void _advanceOriginMainAhead(Directory tempRoot, String originBarePath) {
+  final cloneDir = Directory('${tempRoot.path}/pusher')..createSync();
+  _runGit(['clone', originBarePath, cloneDir.path]);
+  File('${cloneDir.path}/ahead.txt').writeAsStringSync('ahead\n');
+  _runGit(['add', '.'], cwd: cloneDir.path);
+  _runGit(['commit', '-m', 'ahead on origin'], cwd: cloneDir.path);
+  _runGit(['push', 'origin', 'main'], cwd: cloneDir.path);
+}
+
+_RealBareGerritFixture _createRealBareGerritFixture(Directory tempRoot) {
+  final container = Directory('${tempRoot.path}/dart-sdk')..createSync();
+  final bareDir = Directory('${container.path}/.bare')..createSync();
+  _runGit(['init', '--bare', '-b', 'main', bareDir.path]);
+
+  final seed = Directory('${tempRoot.path}/gerrit_seed')..createSync();
+  _runGit(['init', '-b', 'main'], cwd: seed.path);
+  File('${seed.path}/README.md').writeAsStringSync('sdk\n');
+  _runGit(['add', '.'], cwd: seed.path);
+  _runGit(['commit', '-m', 'sdk init'], cwd: seed.path);
+  _runGit(['push', bareDir.path, 'main:main'], cwd: seed.path);
+
+  final mainSdk = '${container.path}/core/main/sdk';
+  Directory(p.dirname(mainSdk)).createSync(recursive: true);
+  _runGit(['--git-dir=${bareDir.path}', 'worktree', 'add', mainSdk, 'main']);
+  final mainSha = _gitRevParse(mainSdk, 'HEAD');
+  _runGit([
+    'update-ref',
+    'refs/remotes/upstream-sdk/main',
+    mainSha,
+  ], cwd: mainSdk);
+
+  final wtHold = '${container.path}/core/cl-99/sdk';
+  final wtPrune = '${container.path}/core/cl-100/sdk';
+  Directory(p.dirname(wtHold)).createSync(recursive: true);
+  Directory(p.dirname(wtPrune)).createSync(recursive: true);
+  _runGit(['worktree', 'add', '-b', 'cl-99', wtHold, 'main'], cwd: mainSdk);
+  _runGit(['config', 'branch.cl-99.gerritissue', '99'], cwd: mainSdk);
+  _runGit(['worktree', 'add', '-b', 'cl-100', wtPrune, 'main'], cwd: mainSdk);
+  _runGit(['config', 'branch.cl-100.gerritissue', '100'], cwd: mainSdk);
+
+  return (
+    containerPath: canonicalizeWorktreePath(container.path),
+    mainSdkPath: canonicalizeWorktreePath(mainSdk),
+    wtHold: canonicalizeWorktreePath(wtHold),
+    wtPrune: canonicalizeWorktreePath(wtPrune),
+  );
+}
+
+LandedPr _buildTestLandedPr({
+  required int number,
+  required String branch,
+  required String sha,
+}) => LandedPr(
+  number: number,
+  title: 'PR $number',
+  url: 'https://github.com/kevmoo/demo/pull/$number',
+  repository: 'kevmoo/demo',
+  repoUrl: 'https://github.com/kevmoo/demo',
+  headRefName: branch,
+  headRefOid: sha,
+  baseRefName: 'main',
+  headRefExists: true,
+  headRepository: 'kevmoo/demo',
+  headRepoPermission: 'ADMIN',
+);
 
 ProcessResult _mockAsyncOpenPrsRunner() {
   final payload = {
@@ -633,4 +1456,429 @@ ProcessResult _mockSyncRunner(
     return ProcessResult(0, 0, '2026-10-18|WIP commit\n', '');
   }
   return ProcessResult(0, 0, 'main\n', '');
+}
+
+Map<String, dynamic> _mockPrNode({
+  required int number,
+  required String? reviewDecision,
+  bool isDraft = false,
+  List<String> requestedReviewers = const [],
+  List<Map<String, dynamic>> reviews = const [],
+  List<Map<String, dynamic>> threadNodes = const [],
+  String? committedDate,
+}) => {
+  'number': number,
+  'title': 'PR $number',
+  'url': 'https://github.com/dart-lang/tools/pull/$number',
+  'author': {'login': 'kevmoo'},
+  'isDraft': isDraft,
+  'state': 'OPEN',
+  'reviewDecision': reviewDecision,
+  'reviewRequests': {
+    'nodes': [
+      for (final r in requestedReviewers)
+        {
+          'requestedReviewer': {'login': r},
+        },
+    ],
+  },
+  'reviews': {'nodes': reviews},
+  'reviewThreads': {'totalCount': threadNodes.length, 'nodes': threadNodes},
+  'comments': {'nodes': <Object?>[]},
+  'commits': {
+    'nodes': [
+      if (committedDate != null)
+        {
+          'commit': {
+            'committedDate': committedDate,
+            'statusCheckRollup': {'state': 'SUCCESS'},
+          },
+        },
+    ],
+  },
+  'mergeable': 'MERGEABLE',
+  'mergeStateStatus': 'CLEAN',
+  'headRefName': 'branch-$number',
+  'headRefOid': 'sha-$number',
+  'baseRefName': 'main',
+  'repository': {
+    'nameWithOwner': 'dart-lang/tools',
+    'url': 'https://github.com/dart-lang/tools',
+    'isArchived': false,
+  },
+  'createdAt': '2026-10-20T00:00:00Z',
+  'updatedAt': '2026-10-23T00:00:00Z',
+};
+
+Map<String, dynamic> _mockThread(String login, {bool isResolved = false}) => {
+  'isResolved': isResolved,
+  'comments': {
+    'nodes': [
+      {
+        'author': {'__typename': 'User', 'login': login},
+      },
+    ],
+  },
+};
+
+ProcessResult _mockUntriagedGithubPrsRunner() {
+  final payload = {
+    'data': {
+      'search': {
+        'nodes': [
+          _mockPrNode(
+            number: 2633,
+            reviewDecision: 'APPROVED',
+            threadNodes: [_mockThread('natebosch'), _mockThread('natebosch')],
+          ),
+          _mockPrNode(
+            number: 2638,
+            reviewDecision: 'REVIEW_REQUIRED',
+            requestedReviewers: ['jakemac53'],
+            threadNodes: List.filled(5, _mockThread('jakemac53')),
+          ),
+          _mockPrNode(
+            number: 2640,
+            reviewDecision: 'CHANGES_REQUESTED',
+            threadNodes: [_mockThread('jakemac53')],
+          ),
+          _mockPrNode(
+            number: 18855,
+            reviewDecision: 'REVIEW_REQUIRED',
+            requestedReviewers: ['Lyokone'],
+            reviews: [
+              {
+                'author': {'login': 'SelaseKay'},
+                'submittedAt': '2026-10-21T01:00:00Z',
+                'state': 'COMMENTED',
+              },
+            ],
+            threadNodes: [_mockThread('kevmoo')],
+            committedDate: '2026-10-22T01:00:00Z',
+          ),
+          _mockPrNode(
+            number: 517,
+            reviewDecision: null,
+            isDraft: true,
+            threadNodes: [_mockThread('alice'), _mockThread('alice')],
+          ),
+          _mockPrNode(
+            number: 78,
+            reviewDecision: '',
+            reviews: [
+              {
+                'author': {'login': 'davidmorgan'},
+                'submittedAt': '2026-10-22T12:00:00Z',
+                'state': 'APPROVED',
+              },
+            ],
+            threadNodes: List.filled(4, _mockThread('davidmorgan')),
+          ),
+        ],
+      },
+    },
+  };
+  return ProcessResult(0, 0, jsonEncode(payload), '');
+}
+
+RemoteCL _mockGerritCl({
+  required int number,
+  List<String> reviewers = const ['reviewer@google.com'],
+  List<String> crVotes = const [],
+  int unresolvedReviewerLeaves = 0,
+  int unresolvedAuthorLeaves = 0,
+}) => (
+  number: number,
+  changeId: 'I$number',
+  subject: 'CL $number',
+  status: 'NEW',
+  currentRevision: 'rev-$number',
+  currentRevisionNumber: 1,
+  lastAuthorTouch: '2026-10-23T00:00:00Z',
+  createdAt: DateTime.utc(2026, 10, 20),
+  updatedAt: DateTime.utc(2026, 10, 23),
+  reviewers: reviewers,
+  crVotes: crVotes,
+  cqStatus: 'PASS',
+  threads: (
+    totalThreads: unresolvedReviewerLeaves + unresolvedAuthorLeaves,
+    unresolvedReviewerLeaves: unresolvedReviewerLeaves,
+    unresolvedAuthorLeaves: unresolvedAuthorLeaves,
+  ),
+  nextAction: '',
+  submittable: true,
+  unsatisfiedRequirements: const [],
+);
+
+GerritAnalysisResult _mockGerritAnalysisResult(String rootPath) {
+  final cls = <int, RemoteCL>{
+    567604: _mockGerritCl(number: 567604, unresolvedReviewerLeaves: 1),
+    567582: _mockGerritCl(
+      number: 567582,
+      crVotes: ['reviewer:+1'],
+      unresolvedReviewerLeaves: 1,
+    ),
+    563381: _mockGerritCl(
+      number: 563381,
+      crVotes: ['reviewer:-1'],
+      unresolvedReviewerLeaves: 2,
+    ),
+    507265: _mockGerritCl(number: 507265, unresolvedAuthorLeaves: 1),
+  };
+  return (
+    actualRepoRoot: rootPath,
+    defaultBranch: 'main',
+    currentBranch: 'main',
+    gerritHost: 'dart-review.googlesource.com',
+    gerritProject: 'sdk',
+    gerritRemote: 'origin',
+    remoteCLs: cls,
+    branchDetails: const {},
+    alignedBranches: const {},
+    closedClBranches: const {},
+    conflatedBranches: const {},
+    mismatchedChangeIdBranches: const {},
+    remoteOnlyCLs: cls,
+    worktreeBranches: const {},
+  );
+}
+
+typedef _ForkFixture = ({
+  String reposDirPath,
+  String repoPath,
+  String wtWithForkPath,
+  String wtLockedPath,
+  String trunkSha,
+  String archiveSha,
+  String mergedOldSha,
+  String closedSha,
+  String unlinkedSha,
+});
+
+_ForkFixture _createForkRepositoryFixture(Directory tempRoot) {
+  final reposDir = Directory('${tempRoot.path}/fork_repos')
+    ..createSync(recursive: true);
+  final repoDir = Directory('${reposDir.path}/flutter')..createSync();
+  _runGit(['init', '-b', 'master'], cwd: repoDir.path);
+  _runGit([
+    'remote',
+    'add',
+    'origin',
+    'https://github.com/flutter/flutter.git',
+  ], cwd: repoDir.path);
+  _runGit([
+    'remote',
+    'add',
+    'kevmoo',
+    'https://github.com/kevmoo/flutter.git',
+  ], cwd: repoDir.path);
+
+  File('${repoDir.path}/README.md').writeAsStringSync('base\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'base'], cwd: repoDir.path);
+  final trunkSha = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit([
+    'update-ref',
+    'refs/remotes/origin/master',
+    trunkSha,
+  ], cwd: repoDir.path);
+
+  _runGit([
+    'checkout',
+    '-b',
+    'archive/DO-NOT-DELETE-sprint',
+  ], cwd: repoDir.path);
+  File('${repoDir.path}/sprint.txt').writeAsStringSync('sprint\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'sprint'], cwd: repoDir.path);
+  final archiveSha = _gitRevParse(repoDir.path, 'HEAD');
+  _runGit([
+    'tag',
+    'archive/tag-DO-NOT-DELETE-sprint',
+    archiveSha,
+  ], cwd: repoDir.path);
+  _runGit(['branch', 'wimp-dup-sprint', archiveSha], cwd: repoDir.path);
+
+  _runGit(['checkout', '-b', 'unlinked-spike', 'master'], cwd: repoDir.path);
+  File('${repoDir.path}/spike.txt').writeAsStringSync('spike\n');
+  _runGit(['add', '.'], cwd: repoDir.path);
+  _runGit(['commit', '-m', 'spike'], cwd: repoDir.path);
+  final unlinkedSha = _gitRevParse(repoDir.path, 'HEAD');
+
+  _runGit(['checkout', 'master'], cwd: repoDir.path);
+
+  final wtWithFork = '${reposDir.path}/_flutter-wt-with-fork';
+  _runGit([
+    'worktree',
+    'add',
+    '-b',
+    'wt-with-fork',
+    wtWithFork,
+    'master',
+  ], cwd: repoDir.path);
+  File('$wtWithFork/wt.txt').writeAsStringSync('wt\n');
+  _runGit(['add', '.'], cwd: wtWithFork);
+  _runGit(['commit', '-m', 'wt commit'], cwd: wtWithFork);
+
+  final wtLocked = '${reposDir.path}/_flutter-locked-fork';
+  _runGit([
+    'worktree',
+    'add',
+    '-b',
+    'locked-fork',
+    wtLocked,
+    'master',
+  ], cwd: repoDir.path);
+  _runGit([
+    'worktree',
+    'lock',
+    '--reason',
+    'Keep locked spike',
+    wtLocked,
+  ], cwd: repoDir.path);
+
+  return (
+    reposDirPath: canonicalizeWorktreePath(reposDir.path),
+    repoPath: canonicalizeWorktreePath(repoDir.path),
+    wtWithForkPath: canonicalizeWorktreePath(wtWithFork),
+    wtLockedPath: canonicalizeWorktreePath(wtLocked),
+    trunkSha: trunkSha,
+    archiveSha: archiveSha,
+    mergedOldSha: '1111111111111111111111111111111111111111',
+    closedSha: '2222222222222222222222222222222222222222',
+    unlinkedSha: unlinkedSha,
+  );
+}
+
+ProcessResult _mockForkGraphQLSync(List<String> args, _ForkFixture f) {
+  final queryArg = args.firstWhere(
+    (a) => a.startsWith('query='),
+    orElse: () => '',
+  );
+  if (queryArg.contains('search(')) {
+    return ProcessResult(
+      0,
+      0,
+      jsonEncode({
+        'data': {
+          'search': {'nodes': <Object?>[]},
+        },
+      }),
+      '',
+    );
+  }
+  if (queryArg.contains('refs(refPrefix: "refs/heads/"')) {
+    Map<String, dynamic> ref(String name, String oid, String login) => {
+      'name': name,
+      'target': {
+        'oid': oid,
+        'committedDate': '2026-09-01T12:00:00Z',
+        'author': {
+          'user': {'login': login},
+        },
+        'committer': {
+          'user': {'login': login},
+        },
+      },
+    };
+    return ProcessResult(
+      0,
+      0,
+      jsonEncode({
+        'data': {
+          'viewer': {'login': 'kevmoo'},
+          'r0': {
+            'nameWithOwner': 'kevmoo/flutter',
+            'isFork': true,
+            'viewerPermission': 'ADMIN',
+            'defaultBranchRef': {'name': 'master'},
+            'parent': {'nameWithOwner': 'flutter/flutter'},
+            'refs': {
+              'pageInfo': {'hasNextPage': false, 'endCursor': null},
+              'nodes': [
+                ref('master', f.trunkSha, 'kevmoo'),
+                ref('dependabot/cargo/foo', '3333333333', 'dependabot[bot]'),
+                ref('other-author-branch', '4444444444', 'someone-else'),
+                ref('archive/DO-NOT-DELETE-sprint', f.archiveSha, 'kevmoo'),
+                ref('locked-fork', f.trunkSha, 'kevmoo'),
+                ref('open-on-upstream', '5555555555', 'kevmoo'),
+                ref('merged-old-fork', f.mergedOldSha, 'kevmoo'),
+                ref('wimp-dup-sprint', f.archiveSha, 'kevmoo'),
+                ref('closed-remote-only', f.closedSha, 'kevmoo'),
+                ref('unlinked-spike', f.unlinkedSha, 'kevmoo'),
+                ref('wt-with-fork', f.unlinkedSha, 'kevmoo'),
+              ],
+            },
+          },
+        },
+      }),
+      '',
+    );
+  }
+
+  final data = <String, dynamic>{};
+  final aliasRe = RegExp(
+    r'(q\d+):\s*repository\([^)]*\)\s*\{[\s\S]*?headRefName:\s*"([^"]+)"',
+  );
+  for (final m in aliasRe.allMatches(queryArg)) {
+    final alias = m.group(1)!;
+    final branch = m.group(2)!;
+    data[alias] = _mockUpstreamBranchLookup(branch, f);
+  }
+  return ProcessResult(0, 0, jsonEncode({'data': data}), '');
+}
+
+Map<String, dynamic> _mockUpstreamBranchLookup(String branch, _ForkFixture f) {
+  final empty = <Object?>[];
+  return {
+    'nameWithOwner': 'flutter/flutter',
+    'url': 'https://github.com/flutter/flutter',
+    'pullRequests': {'nodes': empty},
+    'openPrs': {
+      'nodes': branch == 'open-on-upstream'
+          ? [
+              {
+                'number': 195000,
+                'author': {'login': 'kevmoo'},
+                'headRepository': {'nameWithOwner': 'kevmoo/flutter'},
+              },
+            ]
+          : empty,
+    },
+    'mergedPrs': {
+      'nodes': branch == 'merged-old-fork'
+          ? [
+              {
+                'number': 180001,
+                'title': 'Old merged fork PR',
+                'url': 'https://github.com/flutter/flutter/pull/180001',
+                'baseRefName': 'master',
+                'headRefOid': f.mergedOldSha,
+                'createdAt': '2026-08-01T00:00:00Z',
+                'mergedAt': '2026-08-02T00:00:00Z',
+                'closedAt': '2026-08-02T00:00:00Z',
+                'author': {'login': 'kevmoo'},
+                'headRepository': {'nameWithOwner': 'kevmoo/flutter'},
+                'mergeCommit': {'oid': 'abcdef1234'},
+              },
+            ]
+          : empty,
+    },
+    'closedPrs': {
+      'nodes': branch == 'closed-remote-only'
+          ? [
+              {
+                'number': 180002,
+                'title': 'Closed remote-only fork PR',
+                'url': 'https://github.com/flutter/flutter/pull/180002',
+                'headRefOid': f.closedSha,
+                'createdAt': '2026-08-10T00:00:00Z',
+                'closedAt': '2026-08-12T00:00:00Z',
+                'author': {'login': 'kevmoo'},
+                'headRepository': {'nameWithOwner': 'kevmoo/flutter'},
+              },
+            ]
+          : empty,
+    },
+  };
 }

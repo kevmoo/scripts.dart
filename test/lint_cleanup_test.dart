@@ -55,12 +55,12 @@ linter:
     final updatedContent = aoFile.readAsStringSync();
 
     // strict-casts and strict-inference should be removed (in include)
-    check(updatedContent).not((c) => c.contains('strict-casts'));
-    check(updatedContent).not((c) => c.contains('strict-inference'));
+    check(updatedContent).not(.it()..contains('strict-casts'));
+    check(updatedContent).not(.it()..contains('strict-inference'));
     check(updatedContent).contains('strict-raw-types: true');
 
     // prefer_single_quotes is in include and should be removed
-    check(updatedContent).not((c) => c.contains('prefer_single_quotes'));
+    check(updatedContent).not(.it()..contains('prefer_single_quotes'));
 
     // require_trailing_commas is NOT in include and should be kept
     check(updatedContent).contains('require_trailing_commas');
@@ -89,8 +89,8 @@ analyzer:
     );
 
     final updatedContent = aoFile.readAsStringSync();
-    check(updatedContent).not((c) => c.contains('analyzer:'));
-    check(updatedContent).not((c) => c.contains('language:'));
+    check(updatedContent).not(.it()..contains('analyzer:'));
+    check(updatedContent).not(.it()..contains('language:'));
     check(updatedContent).contains(
       'include: package:dart_flutter_team_lints/analysis_options.yaml',
     );

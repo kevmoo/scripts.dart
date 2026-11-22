@@ -194,7 +194,14 @@ _extractTriageReviewerQueue(TriageData data) {
   return (requested: requested, unrequestedHumans: unrequestedHumans);
 }
 
-final _prUrlRepoRegex = RegExp(r'github\.com/([^/]+/[^/]+)/pull/\d+');
+String _repoFlagFromPrUrl(String url) {
+  final parsed = parsePrUrl(url);
+  if (parsed == null) return '';
+  final slug = parsed.host != 'github.com'
+      ? '${parsed.host}/${parsed.owner}/${parsed.repo}'
+      : '${parsed.owner}/${parsed.repo}';
+  return ' -R $slug';
+}
 
 ({String line, String warningBlock}) _formatReviewerQueueSection(
   ({List<String> requested, List<String> unrequestedHumans}) queue,
@@ -203,8 +210,7 @@ final _prUrlRepoRegex = RegExp(r'github\.com/([^/]+/[^/]+)/pull/\d+');
   final unrequested = queue.unrequestedHumans;
   final unrequestedMentions = unrequested.map((r) => '@$r').join(', ');
   final url = prData['url']?.toString() ?? '';
-  final match = _prUrlRepoRegex.firstMatch(url);
-  final repoFlag = match != null ? ' -R ${match.group(1)}' : '';
+  final repoFlag = _repoFlagFromPrUrl(url);
   final warningBlock = unrequested.isEmpty
       ? ''
       : '> [!IMPORTANT]\n'

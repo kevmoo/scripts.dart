@@ -9,15 +9,15 @@ library;
 
 /// A repository whose recent merged PRs come from this many distinct humans or
 /// fewer is treated as owner-triaged.
-const ownerRepoMaxDistinctAuthors = 3;
+const _ownerRepoMaxDistinctAuthors = 3;
 
 /// A mid-sized repository still counts as owner-triaged when one author
 /// dominates the referenced paths.
-const dominantAuthorRepoMaxDistinctAuthors = 6;
+const _dominantAuthorRepoMaxDistinctAuthors = 6;
 
 /// Minimum share of recent commits on the referenced paths for one author to
 /// count as dominant.
-const dominantAuthorMinShare = 0.5;
+const _dominantAuthorMinShare = 0.5;
 
 /// Whether the likely reader already knows the code under discussion.
 class AudienceSignal {
@@ -86,13 +86,13 @@ AudienceSignal deriveAudience({
       .toList();
   final distinctPathAuthors = pathAuthorCounts.length;
 
-  final manyPathAuthors = distinctPathAuthors > ownerRepoMaxDistinctAuthors;
+  final manyPathAuthors = distinctPathAuthors > _ownerRepoMaxDistinctAuthors;
   final smallRepo =
-      distinctPrAuthors <= ownerRepoMaxDistinctAuthors && !manyPathAuthors;
+      distinctPrAuthors <= _ownerRepoMaxDistinctAuthors && !manyPathAuthors;
   final dominant =
       topShare != null &&
-      topShare >= dominantAuthorMinShare &&
-      distinctPrAuthors <= dominantAuthorRepoMaxDistinctAuthors;
+      topShare >= _dominantAuthorMinShare &&
+      distinctPrAuthors <= _dominantAuthorRepoMaxDistinctAuthors;
 
   final prSummary =
       '$distinctPrAuthors distinct merged-PR author'

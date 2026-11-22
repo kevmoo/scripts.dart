@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 import 'relay_whoami/relay_environment.dart';
 import 'relay_whoami/relay_models.dart';
 import 'relay_whoami/relay_whoami_options.dart';
+import 'shared/git_cli.dart';
 import 'testable_print.dart';
 
 export 'relay_whoami/relay_models.dart';
@@ -30,7 +31,7 @@ Future<void> runRelayWhoamiCli(List<String> args) async {
     return;
   }
 
-  final env = await detectRelayEnvironment();
+  final env = await _detectRelayEnvironment();
   final resolvedChannel = _resolveChannel(options.channel, env);
 
   if (options.mode == 'header') {
@@ -98,7 +99,7 @@ Future<void> runRelayWhoamiCli(List<String> args) async {
 
 /// Detects the current machine persona, available CLIs (`ggh`, `gh`), and
 /// repository paths without any hardcoded corporate strings.
-Future<RelayEnvironment> detectRelayEnvironment() async {
+Future<RelayEnvironment> _detectRelayEnvironment() async {
   final sysEnv = Platform.environment;
   final home = sysEnv['HOME'] ?? '';
   final unameM = await _runCapture('uname', const ['-m']) ?? 'x86_64';
@@ -284,13 +285,11 @@ Future<({String repo, String dir})> _discoverFogRelayClone(String home) async {
         !Directory(p.join(entity.path, '.git')).existsSync()) {
       continue;
     }
-    final remote = await _runCapture('git', [
-      '-C',
-      entity.path,
+    final remote = await defaultGitCli.stdoutOrNull(const [
       'remote',
       'get-url',
       'origin',
-    ]);
+    ], workingDirectory: entity.path);
     final match = RegExp(r'[:/]([^/:]+/[^/:]+?)(\.git)?$')
         .firstMatch(remote ?? '');
     return (repo: match?.group(1) ?? '', dir: entity.path);
@@ -301,7 +300,7 @@ Future<({String repo, String dir})> _discoverFogRelayClone(String home) async {
 Future<({String workspace, String publicGithubRepo})>
 _detectWorkspaceInfo() async {
   final cwdName = p.basename(Directory.current.path);
-  final insideGit = await _runCapture('git', const [
+  final insideGit = await defaultGitCli.stdoutOrNull(const [
     'rev-parse',
     '--is-inside-work-tree',
   ]);
@@ -309,19 +308,30 @@ _detectWorkspaceInfo() async {
     return (workspace: cwdName, publicGithubRepo: '');
   }
   final topLevel =
-      await _runCapture('git', const ['rev-parse', '--show-toplevel']) ??
+      await defaultGitCli.stdoutOrNull(const [
+        'rev-parse',
+        '--show-toplevel',
+      ]) ??
       Directory.current.path;
   final repoRoot = p.basename(topLevel);
-  final branch =
-      await _runCapture('git', const ['rev-parse', '--abbrev-ref', 'HEAD']) ??
-      'HEAD';
+  final branch = await defaultGitCli.currentBranch(topLevel) ?? 'HEAD';
   final sha =
-      await _runCapture('git', const ['rev-parse', '--short', 'HEAD']) ?? '';
+      await defaultGitCli.stdoutOrNull(const [
+        'rev-parse',
+        '--short',
+        'HEAD',
+      ], workingDirectory: topLevel) ??
+      '';
   final shaSuffix = sha.isNotEmpty ? ' @ $sha' : '';
   final workspace = '$repoRoot ($branch$shaSuffix)';
 
   final originUrl =
-      await _runCapture('git', const ['remote', 'get-url', 'origin']) ?? '';
+      await defaultGitCli.stdoutOrNull(const [
+        'remote',
+        'get-url',
+        'origin',
+      ], workingDirectory: topLevel) ??
+      '';
   final ghMatch = RegExp(r'github\.com[:/]([^/:]+/[^/:]+?)(\.git)?$')
       .firstMatch(originUrl);
   final publicRepo = ghMatch != null ? '${ghMatch.group(1)!}$shaSuffix' : '';
@@ -488,24 +498,6 @@ Map<String, Object?> _loadPreviousSyncState(
   return defaultState;
 }
 
-/// Environment overrides that prevent Git and OpenSSH from hanging on
-/// interactive passphrase or credential prompts during background syncs.
-Map<String, String> nonInteractiveGitEnv([Map<String, String>? baseEnv]) {
-  final rawSsh = (baseEnv ?? Platform.environment)['GIT_SSH_COMMAND']?.trim();
-  final sshCmd = switch (rawSsh) {
-    null || '' => 'ssh -o BatchMode=yes -o ConnectTimeout=10',
-    final s when s.contains('BatchMode=') => s,
-    final s => '$s -o BatchMode=yes -o ConnectTimeout=10',
-  };
-  return {
-    'GIT_TERMINAL_PROMPT': '0',
-    'GCM_INTERACTIVE': 'never',
-    'GIT_SSH_COMMAND': sshCmd,
-    'GIT_HTTP_LOW_SPEED_LIMIT': '1000',
-    'GIT_HTTP_LOW_SPEED_TIME': '15',
-  };
-}
-
 /// Fetches and fast-forwards a local relay clone without blocking on
 /// interactive SSH/HTTPS credential prompts, preserving [prevSha] if `git
 /// fetch` fails.
@@ -529,18 +521,26 @@ Future<({List<String> lines, String afterSha})> syncRelayGitRepo({
       ? '~${dir.substring(home.length)}'
       : dir;
   final beforeSha =
-      await _runCapture('git', ['-C', dir, 'rev-parse', 'HEAD']) ?? '';
+      await defaultGitCli.stdoutOrNull(const [
+        'rev-parse',
+        'HEAD',
+      ], workingDirectory: dir) ??
+      '';
   final effectivePrev = prevSha.isNotEmpty ? prevSha : beforeSha;
 
   final fetchResult = await _runProcessBounded(
     'git',
     ['-C', dir, 'fetch', 'origin', '--quiet'],
-    environment: nonInteractiveGitEnv(baseEnv),
+    environment: nonInteractiveGitEnv(baseEnv: baseEnv),
     timeout: fetchTimeout,
   );
 
   final dirty =
-      await _runCapture('git', ['-C', dir, 'status', '--porcelain']) ?? '';
+      await defaultGitCli.stdoutOrNull(const [
+        'status',
+        '--porcelain',
+      ], workingDirectory: dir) ??
+      '';
 
   late final List<String> lines;
   late final String resultSha;
@@ -555,29 +555,23 @@ Future<({List<String> lines, String afterSha})> syncRelayGitRepo({
     lines = [warning];
     resultSha = prevSha;
   } else {
-    final branch =
-        await _runCapture('git', [
-          '-C',
-          dir,
-          'rev-parse',
-          '--abbrev-ref',
-          'HEAD',
-        ]) ??
-        'HEAD';
+    final branch = await defaultGitCli.currentBranch(dir) ?? 'HEAD';
 
     if (dirty.isEmpty && branch == 'main') {
-      await Process.run('git', [
-        '-C',
-        dir,
+      await defaultGitCli.run(const [
         'merge',
         '--ff-only',
         'origin/main',
         '--quiet',
-      ]);
+      ], workingDirectory: dir);
     }
 
     final afterSha =
-        await _runCapture('git', ['-C', dir, 'rev-parse', 'HEAD']) ?? '';
+        await defaultGitCli.stdoutOrNull(const [
+          'rev-parse',
+          'HEAD',
+        ], workingDirectory: dir) ??
+        '';
     lines = await _formatGitCommitDeltas(
       label: label,
       dir: dir,
@@ -611,14 +605,11 @@ Future<List<String>> _formatGitCommitDeltas({
   final hasPrevCommit =
       effectivePrev.isNotEmpty &&
       effectivePrev != afterSha &&
-      (await Process.run('git', [
-            '-C',
-            dir,
-            'cat-file',
-            '-e',
-            '$effectivePrev^{commit}',
-          ])).exitCode ==
-          0;
+      await defaultGitCli.check([
+        'cat-file',
+        '-e',
+        '$effectivePrev^{commit}',
+      ], workingDirectory: dir);
 
   if (!hasPrevCommit) {
     final msg =
@@ -629,22 +620,18 @@ Future<List<String>> _formatGitCommitDeltas({
 
   final shortPrev = _shortSha(effectivePrev);
   final count =
-      await _runCapture('git', [
-        '-C',
-        dir,
+      await defaultGitCli.stdoutOrNull([
         'rev-list',
         '--count',
         '$effectivePrev..$afterSha',
-      ]) ??
+      ], workingDirectory: dir) ??
       '?';
   final logOut =
-      await _runCapture('git', [
-        '-C',
-        dir,
+      await defaultGitCli.stdoutOrNull([
         'log',
         '--oneline',
         '$effectivePrev..$afterSha',
-      ]) ??
+      ], workingDirectory: dir) ??
       '';
   final summary =
       '  🆕 $label ($shortDir): '

@@ -26,8 +26,10 @@ class GhPr extends GhPrRef {
   final List<String> requestedReviewers;
   final List<String> activeReviewers;
   final List<String> approvedReviewers;
+  final List<String> changesRequestedByReviewers;
   final int totalReviewThreads;
-  final int unresolvedReviewThreads;
+  final int unresolvedReviewerThreads;
+  final int unresolvedAuthorThreads;
   final DateTime? lastAuthorCommentAt;
   final DateTime? lastReviewerActivityAt;
   final MergeableState mergeable;
@@ -53,8 +55,10 @@ class GhPr extends GhPrRef {
     this.activeReviewers = const [],
     this.reviewAuthors,
     this.approvedReviewers = const [],
+    this.changesRequestedByReviewers = const [],
     required this.totalReviewThreads,
-    required this.unresolvedReviewThreads,
+    required this.unresolvedReviewerThreads,
+    required this.unresolvedAuthorThreads,
     this.lastAuthorCommentAt,
     this.lastAuthorReviewAt,
     this.lastCommitAt,
@@ -91,11 +95,28 @@ DateTime? _maxDateTime(DateTime? a, DateTime? b) {
 
 /// Domain status helpers for [GhPr].
 extension GhPrStatus on GhPr {
-  bool get isApproved => reviewDecision == ReviewDecision.approved;
+  /// Effective review decision, falling back to opinionated reviewer states
+  /// from `reviews` when GitHub returns an empty/`NONE` `reviewDecision` on
+  /// repositories without branch-protection review requirements.
+  ReviewDecision get effectiveReviewDecision {
+    if (reviewDecision != ReviewDecision.none &&
+        reviewDecision.value.isNotEmpty) {
+      return reviewDecision;
+    }
+    if (changesRequestedByReviewers.isNotEmpty) {
+      return ReviewDecision.changesRequested;
+    }
+    if (approvedReviewers.any((r) => !requestedReviewers.contains(r))) {
+      return ReviewDecision.approved;
+    }
+    return ReviewDecision.none;
+  }
 
-  bool get isCiPassing => ciStatus.isPassing;
+  bool get isApproved => effectiveReviewDecision == ReviewDecision.approved;
 
-  bool get isMergeableOrQueued =>
+  bool get _isCiPassing => ciStatus.isPassing;
+
+  bool get _isMergeableOrQueued =>
       mergeable == MergeableState.mergeable || isInMergeQueue;
 
   /// True when branch protection/rulesets block merging despite being mergeable and not queued.
@@ -104,9 +125,13 @@ extension GhPrStatus on GhPr {
       mergeable == MergeableState.mergeable &&
       !isInMergeQueue;
 
-  /// True when approved, passing CI, and mergeable, but blocked by branch protection/rulesets.
+  /// True when approved, passing CI, and mergeable with no unanswered review
+  /// threads, but blocked by branch protection/rulesets.
   bool get isBlockedByProtection =>
-      isBlockedMergeState && isApproved && isCiPassing;
+      isBlockedMergeState &&
+      isApproved &&
+      unresolvedReviewerThreads == 0 &&
+      _isCiPassing;
 
   /// Returns human reviewers (from `activeReviewers` or human
   /// `requestedReviewers`) who have not already approved the PR (unless
@@ -141,13 +166,19 @@ extension GhPrStatus on GhPr {
           )
           .toList();
 
-  /// Reviewers to attribute on a `CHANGES_REQUESTED` PR: prefers
-  /// [unrequestedActiveReviewers] (excluding already-approved reviewers and
-  /// issue-only commenters) when non-empty, falling back to [targetReviewers].
-  List<String> get changesRequestedReviewers =>
-      unrequestedActiveReviewers.isNotEmpty
-      ? unrequestedActiveReviewers
-      : targetReviewers;
+  /// Reviewers to attribute on a `CHANGES_REQUESTED` PR: prefers unrequested
+  /// [changesRequestedByReviewers], then [unrequestedActiveReviewers]
+  /// (excluding already-approved reviewers and issue-only commenters), falling
+  /// back to [targetReviewers].
+  List<String> get changesRequestedReviewers {
+    final unrequestedCr = changesRequestedByReviewers
+        .where((r) => !requestedReviewers.contains(r))
+        .toList();
+    if (unrequestedCr.isNotEmpty) return unrequestedCr;
+    return unrequestedActiveReviewers.isNotEmpty
+        ? unrequestedActiveReviewers
+        : targetReviewers;
+  }
 
   /// Latest timestamp of any PR author activity (commit push/author date,
   /// top-level issue comment, or inline review reply).
@@ -174,7 +205,7 @@ extension GhPrStatus on GhPr {
       !isRepoArchived &&
       !isDraft &&
       !isApproved &&
-      unresolvedReviewThreads == 0 &&
+      unresolvedReviewerThreads == 0 &&
       hasAuthorRespondedSinceLastReview &&
       unrequestedActiveReviewers.isNotEmpty;
 
@@ -291,20 +322,22 @@ bool isReadyToMerge(GhPr pr) {
   final isMergeStateValid =
       pr.mergeStateStatus != MergeStateStatus.blocked || pr.isInMergeQueue;
   return pr.isApproved &&
-      pr.isCiPassing &&
-      pr.isMergeableOrQueued &&
+      pr.unresolvedReviewerThreads == 0 &&
+      pr._isCiPassing &&
+      pr._isMergeableOrQueued &&
       isMergeStateValid;
 }
 
 bool _isActionNeeded(GhPr pr) {
   final isChangesRequested =
-      pr.reviewDecision == ReviewDecision.changesRequested &&
+      pr.effectiveReviewDecision == ReviewDecision.changesRequested &&
       (pr.requestedReviewers.isEmpty ||
           pr.unrequestedActiveReviewers.isNotEmpty);
   final isCiFailure =
       pr.ciStatus == CiStatus.failure || pr.ciStatus == CiStatus.actionRequired;
   final isConflicting = pr.mergeable == MergeableState.conflicting;
-  return isChangesRequested ||
+  return pr.unresolvedReviewerThreads > 0 ||
+      isChangesRequested ||
       pr.needsReviewReRequest ||
       isCiFailure ||
       isConflicting ||
@@ -385,7 +418,7 @@ typedef EnricherRunner = Future<String?> Function(
 );
 
 /// Default enricher runner invoking `/bin/sh -c <command>` and piping [stdinPayload].
-Future<String?> defaultEnricherRunner(
+Future<String?> _defaultEnricherRunner(
   String command,
   String stdinPayload,
 ) async {
@@ -422,7 +455,7 @@ Future<Map<String, String>> fetchEnrichedContext({
   EnricherRunner? enricherRunner,
 }) async {
   if (prs.isEmpty) return const {};
-  final runner = enricherRunner ?? defaultEnricherRunner;
+  final runner = enricherRunner ?? _defaultEnricherRunner;
   final payload = jsonEncode({
     'prs': prs
         .map(
@@ -560,8 +593,10 @@ Future<GhPr> _attachLocalStatus(
   activeReviewers: pr.activeReviewers,
   reviewAuthors: pr.reviewAuthors,
   approvedReviewers: pr.approvedReviewers,
+  changesRequestedByReviewers: pr.changesRequestedByReviewers,
   totalReviewThreads: pr.totalReviewThreads,
-  unresolvedReviewThreads: pr.unresolvedReviewThreads,
+  unresolvedReviewerThreads: pr.unresolvedReviewerThreads,
+  unresolvedAuthorThreads: pr.unresolvedAuthorThreads,
   lastAuthorCommentAt: pr.lastAuthorCommentAt,
   lastAuthorReviewAt: pr.lastAuthorReviewAt,
   lastCommitAt: pr.lastCommitAt,

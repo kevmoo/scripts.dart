@@ -52,6 +52,7 @@ checkout even when the binary is already at that commit.
 | [`pr-check`](#pr-check)           | `bin/pr_check.dart`      | Validate local CI parity before running gh pr create.                    |
 | [`pr-cleanup`](#pr-cleanup)       | `bin/pr_cleanup.dart`    | Unified multi-repo GitHub and Gerrit PR, CL, and worktree cleanup sweep. |
 | [`pr-triage`](#pr-triage)         | `bin/pr_triage.dart`     | Triage open PR comments, reviews, and CI check failures.                 |
+| [`prose-check`](#prose-check)     | `bin/prose_check.dart`   | Scan Markdown and text documents for prose readability smells.           |
 | [`puppy`](#puppy)                 | `bin/puppy.dart`         | Run a command in all package directories.                                |
 | [`relay-whoami`](#relay-whoami)   | `bin/relay_whoami.dart`  | Cross-machine agent relay identity, envelope, and sync status checker.   |
 | [`repo-align`](#repo-align)       | `bin/repo_align.dart`    | Personal GitHub Repositories Alignment & Audit Tool                      |
@@ -69,6 +70,9 @@ Co-located agent skills that orchestrate `kscripts` subcommands:
 - [`skills/pr-triage`](skills/pr-triage/SKILL.md): Interactive GitHub pull
   request comment, review thread, merge conflict, and CI failure triage
   (`kscripts pr-triage`).
+- [`skills/prose-review`](skills/prose-review/SKILL.md): Markdown and plain-text
+  readability smell triage, fresh-context blind reader audit, and causal-English
+  remediation (`kscripts prose-check`).
 - [`skills/repo-align`](skills/repo-align/SKILL.md): Personal GitHub repository
   CI workflow, markdown, lint, and branch ruleset alignment
   (`kscripts repo-align`, `kscripts lint-cleanup`, `kscripts tighten`).
@@ -366,21 +370,22 @@ Unified multi-repo GitHub and Gerrit PR, CL, and worktree cleanup sweep.
 ```shell
 kscripts pr-cleanup [options]
 
--u, --user             GitHub user to query for PRs.
-                       (defaults to "@me")
--R, --repo             Filter to specific repository/repositories (e.g. -R dart-lang/tools).
--l, --limit            Maximum landed PRs to fetch from GitHub (max 100).
-                       (defaults to "50")
--d, --last-n-days      Include PRs and activity from the last N days (default 14; pass empty/0 to query all).
-                       (defaults to "14")
-    --local-root       Root directory for local Git repositories (default ~/github).
--p, --dart-sdk         Path to local dart-sdk repository for Gerrit check (default ~/github/dart-sdk).
-    --skip-gerrit      Skip Gerrit Dart SDK inspection even if ~/github/dart-sdk exists.
-    --apply            Execute pruning of ready-to-prune worktrees and branches across GitHub and Gerrit.
-    --[no-]markdown    Output a concise Markdown summary.
-                       (defaults to on)
-    --json             Output machine-readable JSON.
--h, --help             Print this usage information.
+-u, --user                GitHub user to query for PRs.
+                          (defaults to "@me")
+-R, --repo                Filter to specific repository/repositories (e.g. -R dart-lang/tools).
+-l, --limit               Maximum landed PRs to fetch from GitHub (max 100).
+                          (defaults to "50")
+-d, --last-n-days         Include PRs and activity from the last N days (default 14; pass empty/0 to query all).
+                          (defaults to "14")
+    --local-root          Root directory for local Git repositories (default ~/github).
+-p, --dart-sdk            Path to local dart-sdk repository for Gerrit check (default ~/github/dart-sdk).
+    --skip-gerrit         Skip Gerrit Dart SDK inspection even if ~/github/dart-sdk exists.
+    --apply               Execute pruning of ready-to-prune worktrees and branches across GitHub and Gerrit.
+    --exclude-worktree    Worktree path(s) to skip during --apply.
+    --[no-]markdown       Output a concise Markdown summary.
+                          (defaults to on)
+    --json                Output machine-readable JSON.
+-h, --help                Print this usage information.
 ```
 
 ### `pr-triage`
@@ -399,6 +404,26 @@ kscripts pr-triage resolve <thread_id> [<comment_id> "<body_text>"]
 -p, --pr      PR number or GitHub PR URL
 -C, --dir     Path to target git repository directory
 -h, --help    Print this usage information.
+```
+
+### `prose-check`
+
+Scan Markdown and text documents for prose readability smells.
+
+**Usage:**
+
+```shell
+kscripts prose-check [options] <paths|->
+
+-p, --profile           Profile threshold preset.
+                        [auto (default), readme, technical, spec, narrative]
+-f, --format            Syntax mode (.txt defaults to text).
+                        [auto (default), markdown, text]
+-t, --top               Max hotspots (0=all).
+                        (defaults to "15")
+    --json              Emit compact JSON output.
+    --fail-on-smells    Exit 1 on high smells.
+-h, --help              Print usage info.
 ```
 
 ### `puppy`
@@ -434,16 +459,26 @@ installed and authenticated in your `PATH`.
 **Usage:**
 
 ```shell
-kscripts repo-align <check|fix> [options]
+kscripts repo-align <check|fix|apply> [options]
 
 -r, --repo            Target a specific repository by name (e.g. stats, pubviz)
+-d, --dir             Target a specific checkout or sibling worktree directory for local checks/fixes
     --json            Output check results in JSON format
     --[no-]lints      Fix/synchronize analysis_options.yaml
-    --[no-]ci         Fix/synchronize CI workflows (lower_bound, complexity, autosubmit, dependabot)
+    --[no-]api-summary Fix/synchronize api_summary dev_dependency, api.txt, and test/api_test.dart
+    --[no-]ci         Fix/synchronize CI workflows (lower_bound, complexity, autosubmit, dependabot, markdown, examples)
     --[no-]github     Fix/synchronize GitHub remote settings (auto-merge, rulesets)
+    --[no-]spot       Fix/synchronize managed <!-- BEGIN SPOT --> markdown blocks
 -n, --[no-]dry-run    Preview changes without modifying files or remote settings
 -h, --help            Show command usage
 ```
+
+Optional portfolio membership can be configured under a top-level `repo-align:`
+section in `~/.config/kscripts/repos.yaml` (`owner`, `baseDir`, `active`,
+`ignore`, and `kinds`), allowing `check` to audit `HEAD` across all `active`
+repositories via batched GitHub GraphQL and flag newly created unclassified
+repositories. `kinds` maps an `active` repository to a `RepoKind` (for example
+`experimentalOrPrototype`) when its contents would classify it more strictly.
 
 ### `tighten`
 

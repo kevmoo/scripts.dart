@@ -37,7 +37,7 @@ final class SpotDriftIssue {
 }
 
 /// Default canonical source files defining `<!-- SPOT_DEF: <id> -->` blocks.
-List<File> defaultCanonicalSpotSourceFiles({String? homeDir}) {
+List<File> _defaultCanonicalSpotSourceFiles({String? homeDir}) {
   final home = homeDir ?? Platform.environment['HOME'];
   if (home == null || home.isEmpty) return const [];
   return [
@@ -57,18 +57,18 @@ Map<String, String> loadCanonicalSpotDefs({
   List<File>? sourceFiles,
 }) {
   final files =
-      sourceFiles ?? defaultCanonicalSpotSourceFiles(homeDir: homeDir);
+      sourceFiles ?? _defaultCanonicalSpotSourceFiles(homeDir: homeDir);
   final defs = <String, String>{};
   for (final file in files) {
     if (!file.existsSync()) continue;
-    defs.addAll(extractSpotDefsFromText(file.readAsStringSync()));
+    defs.addAll(_extractSpotDefsFromText(file.readAsStringSync()));
   }
   return defs;
 }
 
 /// Extracts `<!-- SPOT_DEF: <id> --> ... <!-- END_SPOT_DEF: <id> -->` blocks
 /// from [text], stripping common leading indentation.
-Map<String, String> extractSpotDefsFromText(String text) {
+Map<String, String> _extractSpotDefsFromText(String text) {
   final lines = text.split('\n');
   final defs = <String, String>{};
   String? activeId;
@@ -83,7 +83,7 @@ Map<String, String> extractSpotDefsFromText(String text) {
     }
     final endMatch = _spotDefEndRegex.firstMatch(line);
     if (endMatch != null && activeId == endMatch.group(1)) {
-      defs[activeId!] = dedentSpotLines(buffer).join('\n').trim();
+      defs[activeId!] = _dedentSpotLines(buffer).join('\n').trim();
       activeId = null;
       continue;
     }
@@ -96,7 +96,7 @@ Map<String, String> extractSpotDefsFromText(String text) {
 
 /// Strips empty leading/trailing lines and common leading indentation from
 /// [lines].
-List<String> dedentSpotLines(List<String> lines) {
+List<String> _dedentSpotLines(List<String> lines) {
   var start = 0;
   while (start < lines.length && lines[start].trim().isEmpty) {
     start++;
@@ -125,8 +125,8 @@ List<String> dedentSpotLines(List<String> lines) {
 /// Normalizes a Markdown block so that Prettier line-wrapping differences at
 /// different column indentation levels compare equal while any semantic text,
 /// bullet, or code change produces a diff.
-String canonicalizeSpotMarkdown(String rawText) {
-  final lines = dedentSpotLines(rawText.split('\n'));
+String _canonicalizeSpotMarkdown(String rawText) {
+  final lines = _dedentSpotLines(rawText.split('\n'));
   final blocks = <String>[];
   final currentParagraph = StringBuffer();
   String? activeFence;
@@ -305,8 +305,8 @@ SpotDriftIssue? _verifySpotBlockBody({
     );
   }
 
-  if (canonicalizeSpotMarkdown(bodyText) !=
-      canonicalizeSpotMarkdown(expected)) {
+  if (_canonicalizeSpotMarkdown(bodyText) !=
+      _canonicalizeSpotMarkdown(expected)) {
     return SpotDriftIssue(
       relPath: relPath,
       blockId: blockId,
@@ -416,7 +416,7 @@ List<String> _renderStampedSpotLines(
 ) => [
   '$indent<!-- BEGIN SPOT: $id -->',
   '',
-  for (final defLine in dedentSpotLines(canonical.split('\n')))
+  for (final defLine in _dedentSpotLines(canonical.split('\n')))
     defLine.isEmpty ? '' : '$indent$defLine',
   '',
   '$indent<!-- END SPOT: $id -->',
@@ -424,7 +424,7 @@ List<String> _renderStampedSpotLines(
 
 /// Discovers all Markdown files in [repoDir] that contain `<!-- BEGIN SPOT:` or
 /// `<!-- END SPOT:` markers.
-List<String> findSpotMarkdownFiles(Directory repoDir) {
+List<String> _findSpotMarkdownFiles(Directory repoDir) {
   if (!repoDir.existsSync()) return const [];
   final results = <String>[];
   final entities = repoDir.listSync(recursive: true, followLinks: false);
@@ -457,7 +457,7 @@ List<SpotDriftIssue> scanRepoSpotDrift(
 }) {
   final defs = canonicalDefs ?? loadCanonicalSpotDefs();
   final issues = <SpotDriftIssue>[];
-  for (final relPath in findSpotMarkdownFiles(repoDir)) {
+  for (final relPath in _findSpotMarkdownFiles(repoDir)) {
     final file = File(p.join(repoDir.path, relPath));
     issues.addAll(
       checkSpotBlocksInLines(
@@ -494,7 +494,7 @@ List<String> applyRepoSpotStamping(
   if (defs.isEmpty) return const [];
 
   final updatedRelPaths = <String>[];
-  for (final relPath in findSpotMarkdownFiles(repoDir)) {
+  for (final relPath in _findSpotMarkdownFiles(repoDir)) {
     final file = File(p.join(repoDir.path, relPath));
     final original = file.readAsStringSync();
     final hasDrift =

@@ -101,7 +101,7 @@ void main() {
       ),
     );
 
-    check(report.passed).isFalse();
+    check(report.passed).isFalse;
     check(report.violations.map((v) => v.check)).contains('git-status');
   });
 
@@ -135,7 +135,7 @@ environment:
       ),
     );
 
-    check(report.passed).isFalse();
+    check(report.passed).isFalse;
     final checks = report.violations.map((v) => v.check).toList();
     check(checks).contains('firehose-changelog');
     check(checks).contains('version-dart-sync');
@@ -178,7 +178,7 @@ void main() {}
         ),
       );
 
-      check(report.passed).isFalse();
+      check(report.passed).isFalse;
       check(report.violations.map((v) => v.check))
           .contains('browser-test-on-vm');
     },
@@ -210,9 +210,9 @@ environment:
       ),
     );
 
-    check(report.passed).isTrue();
-    check(report.violations).isEmpty();
-    check(report.warnings).isEmpty();
+    check(report.passed).isTrue;
+    check(report.violations).isEmpty;
+    check(report.warnings).isEmpty;
     check(report.passedChecks).contains('git-status');
     check(report.passedChecks).contains('firehose:sample_pkg');
     check(report.passedChecks).contains('dart-format');
@@ -249,7 +249,7 @@ environment:
       ),
     );
 
-    check(report.passed).isTrue();
+    check(report.passed).isTrue;
     check(report.warnings).length.equals(1);
     check(report.warnings.single)
       ..contains('skip-changelog-check')
@@ -289,7 +289,7 @@ jobs:
       ),
     );
 
-    check(failReport.passed).isFalse();
+    check(failReport.passed).isFalse;
     check(failReport.violations.map((v) => v.check))
         .contains('cognitive-complexity');
     check(
@@ -299,16 +299,16 @@ jobs:
             c.$2[0] == 'run' &&
             c.$2[1] == cognitiveComplexityPackageSpec,
       ),
-    ).isTrue();
+    ).isTrue;
   });
 
   test('checkCognitiveComplexityVersionNote emits FYI only when a newer '
       'stable version exists', () {
-    check(checkCognitiveComplexityVersionNote(null)).isNull();
+    check(checkCognitiveComplexityVersionNote(null)).isNull;
     check(checkCognitiveComplexityVersionNote(cognitiveComplexityPinnedVersion))
-        .isNull();
-    check(checkCognitiveComplexityVersionNote('0.1.0')).isNull();
-    check(checkCognitiveComplexityVersionNote('99.0.0-wip')).isNull();
+        .isNull;
+    check(checkCognitiveComplexityVersionNote('0.1.0')).isNull;
+    check(checkCognitiveComplexityVersionNote('99.0.0-wip')).isNull;
     check(checkCognitiveComplexityVersionNote('99.0.0'))
         .isNotNull()
         .contains('package:cognitive_complexity 99.0.0 is available');
@@ -350,7 +350,7 @@ publish_to: none
         ),
       );
 
-      check(passReport.passed).isTrue();
+      check(passReport.passed).isTrue;
       check(passReport.passedChecks).contains('dart-test:pkgs/pkg_a');
       final testDirsRun = calls
           .where((c) => c.$2.length == 1 && c.$2.single == 'test')
@@ -369,7 +369,7 @@ publish_to: none
           testExit: 1,
         ),
       );
-      check(failReport.passed).isFalse();
+      check(failReport.passed).isFalse;
       check(failReport.violations.map((v) => v.check)).contains('dart-test');
     },
   );
@@ -441,36 +441,92 @@ environment:
         ),
       );
 
-      check(report.passed).isFalse();
+      check(report.passed).isFalse;
       check(report.violations.map((v) => v.check)).contains('pubspec-wip-bump');
     },
   );
 
-  test('does not require -wip bump for .github/ or README.md-only changes', () {
-    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+  group('pubspec-wip-bump matches firehose Publish validate', () {
+    void writePackage(String version) {
+      File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
 name: sample_pkg
-version: 1.2.0
+version: $version
 environment:
   sdk: ^3.5.0
 ''');
-    File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
-## 1.2.0
+      File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## $version
 
 - Initial release.
 ''');
-    File(p.join(tempDir.path, 'README.md')).writeAsStringSync('# Docs\n');
+      File(p.join(tempDir.path, 'README.md')).writeAsStringSync('# Docs\n');
+      Directory(p.join(tempDir.path, 'example')).createSync();
+      File(p.join(tempDir.path, 'example', 'example.dart'))
+          .writeAsStringSync('void main() {}\n');
+      Directory(p.join(tempDir.path, '.github', 'workflows'))
+          .createSync(recursive: true);
+      File(p.join(tempDir.path, '.github', 'workflows', 'ci.yml'))
+          .writeAsStringSync('jobs: {}\n');
+    }
 
-    final report = runPrCheck(
+    PrCheckReport runWith(
+      List<String> changedFiles, {
+      List<(String, List<String>, String?)>? recordedCalls,
+    }) => runPrCheck(
       directory: tempDir,
       processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
         exe,
         args,
         workingDirectory: workingDirectory,
-        changedFiles: ['README.md'],
+        changedFiles: changedFiles,
+        recordedCalls: recordedCalls,
       ),
     );
 
-    check(report.passed).isTrue();
+    // `test/readme_test.dart` is never written to disk, so `git diff` reports
+    // it but pr-check treats it as deleted.
+    const cases = {
+      'README.md only': ['README.md'],
+      'example/ only': ['example/example.dart'],
+      'deletion only': ['test/readme_test.dart'],
+    };
+
+    for (final MapEntry(key: label, value: files) in cases.entries) {
+      test('$label in a released package requires a -wip bump', () {
+        writePackage('1.2.0');
+        final report = runWith(files);
+        check(report.passed).isFalse;
+        check(report.violations.map((v) => v.check))
+            .contains('pubspec-wip-bump');
+      });
+
+      test('$label in a -wip package passes', () {
+        writePackage('1.2.1-wip');
+        check(runWith(files).passed).isTrue;
+      });
+    }
+
+    test('CHANGELOG.md or .github/ only does not require a -wip bump', () {
+      writePackage('1.2.0');
+      check(runWith(['CHANGELOG.md', '.github/workflows/ci.yml']).passed)
+          .isTrue;
+    });
+
+    test('deleted files are not passed to format or analyze', () {
+      writePackage('1.2.1-wip');
+      final calls = <(String, List<String>, String?)>[];
+      final report = runWith([
+        'example/example.dart',
+        'test/readme_test.dart',
+      ], recordedCalls: calls);
+      check(report.changedFiles).deepEquals(['example/example.dart']);
+      final toolArgs = calls
+          .where((c) => c.$1 != 'git')
+          .expand((c) => c.$2)
+          .toList();
+      check(toolArgs).contains('example/example.dart');
+      check(toolArgs).not(.it()..contains('test/readme_test.dart'));
+    });
   });
 
   test('reports dart-format, dart-analyze-fatal-infos, '
@@ -499,7 +555,7 @@ environment:
       ),
     );
 
-    check(report.passed).isFalse();
+    check(report.passed).isFalse;
     final checks = report.violations.map((v) => v.check).toList();
     check(checks).contains('dart-format');
     check(checks).contains('dart-analyze-fatal-infos');
@@ -533,7 +589,7 @@ environment:
       missingConfigCalls.any(
         (c) => c.$2.length == 2 && c.$2[0] == 'pub' && c.$2[1] == 'get',
       ),
-    ).isTrue();
+    ).isTrue;
 
     final dartToolDir = Directory(p.join(tempDir.path, '.dart_tool'))
       ..createSync();
@@ -558,7 +614,7 @@ environment:
       freshConfigCalls.any(
         (c) => c.$2.length == 2 && c.$2[0] == 'pub' && c.$2[1] == 'get',
       ),
-    ).isFalse();
+    ).isFalse;
 
     pubspecFile.setLastModifiedSync(now.add(const Duration(seconds: 10)));
     final staleConfigCalls = <(String, List<String>, String?)>[];
@@ -576,7 +632,7 @@ environment:
       staleConfigCalls.any(
         (c) => c.$2.length == 2 && c.$2[0] == 'pub' && c.$2[1] == 'get',
       ),
-    ).isTrue();
+    ).isTrue;
   });
 
   test(
@@ -686,7 +742,7 @@ $paddedBody
       ),
     );
 
-    check(report.passed).isFalse();
+    check(report.passed).isFalse;
     final checks = report.violations.map((v) => v.check).toList();
     check(checks)
       ..contains('agent-doc-char-budget')
@@ -722,13 +778,13 @@ dev_dependencies:
     );
 
     check(File(p.join(consumerDir.path, 'analysis_options.yaml')).existsSync())
-        .isFalse();
+        .isFalse;
     final sanitizedPubspec = File(p.join(consumerDir.path, 'pubspec.yaml'))
         .readAsStringSync();
     check(sanitizedPubspec)
-      ..not((it) => it.contains('resolution:'))
-      ..not((it) => it.contains('workspace:'))
-      ..not((it) => it.contains('dev_dependencies:'))
+      ..not(.it()..contains('resolution:'))
+      ..not(.it()..contains('workspace:'))
+      ..not(.it()..contains('dev_dependencies:'))
       ..contains('source_helper: ^1.3.4');
 
     final overrides = File(p.join(consumerDir.path, 'pubspec_overrides.yaml'))
@@ -798,7 +854,7 @@ List<Object> createSortedFieldSet(Object cls) => [];
         },
       ),
     );
-    check(defaultReport.passed).isTrue();
+    check(defaultReport.passed).isTrue;
     check(defaultReport.skippedChecks.map((s) => s.toString()).toList())
         .contains('rev-deps:source_helper (pass --rev-deps to run)');
 
@@ -852,7 +908,7 @@ dependencies:
       },
     );
 
-    check(optInFailReport.passed).isFalse();
+    check(optInFailReport.passed).isFalse;
     check(optInFailReport.violations.map((v) => v.check)).contains('rev-deps');
     check(optInFailReport.violations.single.message)
       ..contains('json_serializable-6.15.0')
@@ -888,6 +944,181 @@ environment:
         },
       ),
     );
-    check(majorReport.passed).isTrue();
+    check(majorReport.passed).isTrue;
+  });
+
+  test('passes --git-diff and --fail-on-increase to cognitive_complexity when '
+      'workflow configures diff-base and fail-on-increase', () {
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: sample_pkg
+publish_to: none
+environment:
+  sdk: ^3.5.0
+''');
+    final wfDir = Directory(p.join(tempDir.path, '.github', 'workflows'))
+      ..createSync(recursive: true);
+    File(p.join(wfDir.path, 'complexity.yml')).writeAsStringSync(r'''
+jobs:
+  audit:
+    steps:
+      - uses: kevmoo/analytica.dart/packages/cognitive_complexity@main
+        with:
+          diff-base: origin/${{ github.base_ref }}
+          fail-threshold: 15
+          fail-on-increase: true
+''');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'foo.dart')).writeAsStringSync('void main() {}\n');
+
+    final diffCalls = <(String, List<String>, String?)>[];
+    final report = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+        recordedCalls: diffCalls,
+      ),
+    );
+    check(report.passed).isTrue;
+    final ccCall = diffCalls.singleWhere(
+      (c) => c.$2.contains(cognitiveComplexityPackageSpec),
+    );
+    check(ccCall.$2).deepEquals([
+      'run',
+      cognitiveComplexityPackageSpec,
+      '--git-diff=origin/HEAD',
+      '--fail-threshold=15',
+      '--fail-on-increase',
+      'lib/foo.dart',
+    ]);
+
+    File(p.join(wfDir.path, 'complexity.yml')).writeAsStringSync('''
+jobs:
+  audit:
+    steps:
+      - run: dart run cognitive_complexity --fail-threshold 20 lib
+''');
+    final cliCalls = <(String, List<String>, String?)>[];
+    runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+        recordedCalls: cliCalls,
+      ),
+    );
+    final cliCcCall = cliCalls.singleWhere(
+      (c) => c.$2.contains(cognitiveComplexityPackageSpec),
+    );
+    check(cliCcCall.$2).deepEquals([
+      'run',
+      cognitiveComplexityPackageSpec,
+      '--fail-threshold=20',
+      'lib/foo.dart',
+    ]);
+  });
+
+  test('skips firehose in Dart SDK checkouts and handles malformed fixture '
+      'pubspec.yaml files without crashing', () {
+    final brokenFixture = Directory(
+      p.join(tempDir.path, 'pkg', 'front_end', 'testcases', 'bad'),
+    )..createSync(recursive: true);
+    File(p.join(brokenFixture.path, 'pubspec.yaml')).writeAsStringSync(':::');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'foo.dart')).writeAsStringSync('void main() {}\n');
+
+    // Non-SDK repo with a malformed fixture pubspec.yaml degrades gracefully.
+    final malformedReport = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+      ),
+    );
+    check(malformedReport.passed).isTrue;
+    check(malformedReport.skippedChecks.map((s) => s.toString()))
+        .contains('firehose (malformed pubspec.yaml)');
+    check(malformedReport.warnings).isNotEmpty;
+
+    // Dart SDK repo (tools/VERSION present) skips firehose immediately.
+    Directory(p.join(tempDir.path, 'tools')).createSync();
+    File(p.join(tempDir.path, 'tools', 'VERSION')).writeAsStringSync('3.14.0');
+    final sdkReport = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/foo.dart'],
+      ),
+    );
+    check(sdkReport.passed).isTrue;
+    check(sdkReport.skippedChecks.map((s) => s.toString()))
+        .contains('firehose (Dart SDK repo)');
+    check(sdkReport.warnings).isEmpty;
+  });
+
+  test('prefers upstream/HEAD on external forks while keeping origin/HEAD on '
+      'standalone github/<owner>/<repo> checkouts', () {
+    final forkDir = Directory(p.join(tempDir.path, 'github', '_http-fix'))
+      ..createSync(recursive: true);
+    final forkReport = runPrCheck(
+      directory: forkDir,
+      processRunner: (exe, args, {workingDirectory}) {
+        if (exe == 'git' && args.contains('--show-toplevel')) {
+          return ProcessResult(0, 0, forkDir.path, '');
+        }
+        if (exe == 'git' &&
+            args.length == 3 &&
+            args[0] == 'remote' &&
+            args[1] == 'get-url' &&
+            args[2] == 'upstream') {
+          return ProcessResult(0, 0, 'https://github.com/dart-lang/http\n', '');
+        }
+        return fakeGitAndTools(exe, args, workingDirectory: workingDirectory);
+      },
+    );
+    check(forkReport.baseRef).equals('upstream/HEAD');
+
+    final personalDir = Directory(
+      p.join(tempDir.path, 'github', 'kevmoo', 'my_pkg'),
+    )..createSync(recursive: true);
+    final personalReport = runPrCheck(
+      directory: personalDir,
+      processRunner: (exe, args, {workingDirectory}) {
+        if (exe == 'git' && args.contains('--show-toplevel')) {
+          return ProcessResult(0, 0, personalDir.path, '');
+        }
+        if (exe == 'git' &&
+            args.length == 3 &&
+            args[0] == 'remote' &&
+            args[1] == 'get-url' &&
+            args[2] == 'upstream') {
+          return ProcessResult(0, 0, 'https://github.com/other/my_pkg\n', '');
+        }
+        return fakeGitAndTools(exe, args, workingDirectory: workingDirectory);
+      },
+    );
+    check(personalReport.baseRef).equals('origin/HEAD');
+
+    final ghResolvedReport = runPrCheck(
+      directory: personalDir,
+      processRunner: (exe, args, {workingDirectory}) {
+        if (exe == 'git' && args.contains('--show-toplevel')) {
+          return ProcessResult(0, 0, personalDir.path, '');
+        }
+        if (exe == 'git' && args.contains('remote.upstream.gh-resolved')) {
+          return ProcessResult(0, 0, 'base\n', '');
+        }
+        return fakeGitAndTools(exe, args, workingDirectory: workingDirectory);
+      },
+    );
+    check(ghResolvedReport.baseRef).equals('upstream/HEAD');
   });
 }

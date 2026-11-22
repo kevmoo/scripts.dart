@@ -201,7 +201,7 @@ GhIssue? parseIssueNode(Map<String, dynamic> node) {
 }
 
 /// Fetches timeline PRs (cross-referenced / connected) for a specific issue.
-Future<List<LinkedPr>> fetchTimelinePrsForIssue({
+Future<List<LinkedPr>> _fetchTimelinePrsForIssue({
   required GhIssue issue,
   ProcessRunner? processRunner,
 }) async {
@@ -338,7 +338,7 @@ Future<GhIssue> _enrichSingleIssue(
   required ProcessRunner runner,
 }) async {
   try {
-    final additionalPrs = await fetchTimelinePrsForIssue(
+    final additionalPrs = await _fetchTimelinePrsForIssue(
       issue: issue,
       processRunner: runner,
     );
@@ -536,7 +536,7 @@ void _formatTerminalIssue(StringBuffer buffer, GhIssue issue, DateTime now) {
 }
 
 /// Renders colorized terminal output.
-String renderTerminalReport(
+String _renderTerminalReport(
   List<GhIssue> issues, {
   required GhIssuesOptions options,
   DateTime? currentTime,
@@ -635,7 +635,7 @@ Future<void> runGhIssues({
     );
   } else {
     print(
-      renderTerminalReport(issues, options: options, currentTime: currentTime),
+      _renderTerminalReport(issues, options: options, currentTime: currentTime),
     );
   }
 }

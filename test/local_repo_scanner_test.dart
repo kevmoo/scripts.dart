@@ -2,11 +2,12 @@ import 'dart:io';
 
 import 'package:checks/checks.dart';
 import 'package:git/git.dart';
-import 'package:kevmoo_scripts/src/git_extensions.dart';
 import 'package:kevmoo_scripts/src/local_repo_scanner.dart';
 import 'package:path/path.dart' as p;
 import 'package:test/scaffolding.dart';
 import 'package:test_descriptor/test_descriptor.dart' as d;
+
+import 'test_helpers.dart';
 
 void main() {
   group('normalizeRepoName', () {
@@ -34,8 +35,8 @@ void main() {
     });
 
     test('returns null for non-GitHub URLs', () {
-      check(normalizeRepoName('https://gitlab.com/owner/repo.git')).isNull();
-      check(normalizeRepoName('sso://user/kevmoo/repo')).isNull();
+      check(normalizeRepoName('https://gitlab.com/owner/repo.git')).isNull;
+      check(normalizeRepoName('sso://user/kevmoo/repo')).isNull;
     });
   });
 
@@ -98,13 +99,13 @@ void main() {
       check(repoNames)
         ..contains('external/repo1')
         ..contains('kevmoo/repo2')
-        ..not((it) => it.contains('hidden/repo3'));
+        ..not(.it()..contains('hidden/repo3'));
 
       final repo1Info = repos.firstWhere((r) => r.repoName == 'external/repo1');
       check(repo1Info.worktrees.map((w) => w.branch)).contains('feat');
       final featWt = repo1Info.worktrees.firstWhere((w) => w.branch == 'feat');
-      check(featWt.isLocked).isFalse();
-      check(featWt.lockReason).isNull();
+      check(featWt.isLocked).isFalse;
+      check(featWt.lockReason).isNull;
     });
 
     test('parses locked worktrees with and without lock reason', () async {
@@ -140,15 +141,15 @@ void main() {
       final info = repos.firstWhere((r) => r.repoName == 'kevmoo/lock_repo');
 
       final mainWt = info.worktrees.firstWhere((w) => w.branch == 'main');
-      check(mainWt.isLocked).isFalse();
-      check(mainWt.lockReason).isNull();
+      check(mainWt.isLocked).isFalse;
+      check(mainWt.lockReason).isNull;
 
       final plainWt = info.worktrees.firstWhere((w) => w.branch == 'plain');
-      check(plainWt.isLocked).isTrue();
-      check(plainWt.lockReason).isNull();
+      check(plainWt.isLocked).isTrue;
+      check(plainWt.lockReason).isNull;
 
       final reasonWt = info.worktrees.firstWhere((w) => w.branch == 'reason');
-      check(reasonWt.isLocked).isTrue();
+      check(reasonWt.isLocked).isTrue;
       check(reasonWt.lockReason).equals('Active benchmark spike');
     });
 
@@ -189,30 +190,27 @@ void main() {
       ]);
 
       final repos = scanLocalGitRepositories(Directory(d.sandbox));
-      check(repos.map((r) => r.repoName))
-          .not((it) => it.contains('dart-lang/sdk'));
+      check(repos.map((r) => r.repoName)).not(.it()..contains('dart-lang/sdk'));
     });
   });
 
   group('isDartSdkRemote & isDartSdkRepositoryName', () {
     test('identifies Dart SDK and Gerrit remotes', () {
-      check(isDartSdkRemote('https://github.com/dart-lang/sdk.git')).isTrue();
-      check(isDartSdkRemote('sso://dart/sdk.git')).isTrue();
-      check(isDartSdkRemote('sso://dart/sdk')).isTrue();
-      check(isDartSdkRemote('https://dart.googlesource.com/sdk')).isTrue();
-      check(isDartSdkRemote('https://dart-review.googlesource.com/sdk'))
-          .isTrue();
-      check(isDartSdkRemote('https://github.com/flutter/flutter.git'))
-          .isFalse();
+      check(isDartSdkRemote('https://github.com/dart-lang/sdk.git')).isTrue;
+      check(isDartSdkRemote('sso://dart/sdk.git')).isTrue;
+      check(isDartSdkRemote('sso://dart/sdk')).isTrue;
+      check(isDartSdkRemote('https://dart.googlesource.com/sdk')).isTrue;
+      check(isDartSdkRemote('https://dart-review.googlesource.com/sdk')).isTrue;
+      check(isDartSdkRemote('https://github.com/flutter/flutter.git')).isFalse;
       check(isDartSdkRemote('https://github.com/kevmoo/scripts.dart.git'))
-          .isFalse();
+          .isFalse;
     });
 
     test('identifies Dart SDK repository names', () {
-      check(isDartSdkRepositoryName('dart-lang/sdk')).isTrue();
-      check(isDartSdkRepositoryName('kevmoo/sdk')).isTrue();
-      check(isDartSdkRepositoryName('kevmoo/dart-sdk-bazel')).isTrue();
-      check(isDartSdkRepositoryName('kevmoo/scripts.dart')).isFalse();
+      check(isDartSdkRepositoryName('dart-lang/sdk')).isTrue;
+      check(isDartSdkRepositoryName('kevmoo/sdk')).isTrue;
+      check(isDartSdkRepositoryName('kevmoo/dart-sdk-bazel')).isTrue;
+      check(isDartSdkRepositoryName('kevmoo/scripts.dart')).isFalse;
     });
   });
 
@@ -226,30 +224,30 @@ void main() {
       await git.runCommand(['commit', '-m', 'initial']);
 
       // 1. Clean repo
-      check(await isRepoDirty(repoPath)).isFalse();
-      check(isRepoDirtySync(repoPath)).isFalse();
+      check(await isRepoDirty(repoPath)).isFalse;
+      check(isRepoDirtySync(repoPath)).isFalse;
 
       // 2. Untracked file (with includeUntracked: false vs true)
       File(p.join(repoPath, 'untracked.txt')).writeAsStringSync('new content');
-      check(await isRepoDirty(repoPath)).isFalse();
-      check(isRepoDirtySync(repoPath)).isFalse();
-      check(await isRepoDirty(repoPath, includeUntracked: true)).isTrue();
-      check(isRepoDirtySync(repoPath, includeUntracked: true)).isTrue();
+      check(await isRepoDirty(repoPath)).isFalse;
+      check(isRepoDirtySync(repoPath)).isFalse;
+      check(await isRepoDirty(repoPath, includeUntracked: true)).isTrue;
+      check(isRepoDirtySync(repoPath, includeUntracked: true)).isTrue;
 
       // 3. Tracked modification
       File(p.join(repoPath, 'tracked.txt'))
           .writeAsStringSync('modified content');
-      check(await isRepoDirty(repoPath)).isTrue();
-      check(isRepoDirtySync(repoPath)).isTrue();
+      check(await isRepoDirty(repoPath)).isTrue;
+      check(isRepoDirtySync(repoPath)).isTrue;
 
       // 4. Non-existent directory / process failure
       const nonExistent = '/non/existent/directory';
-      check(await isRepoDirty(nonExistent)).isFalse();
-      check(isRepoDirtySync(nonExistent)).isFalse();
+      check(await isRepoDirty(nonExistent)).isFalse;
+      check(isRepoDirtySync(nonExistent)).isFalse;
       check(await isRepoDirty(nonExistent, failClosedOnProcessError: true))
-          .isTrue();
+          .isTrue;
       check(isRepoDirtySync(nonExistent, failClosedOnProcessError: true))
-          .isTrue();
+          .isTrue;
     });
   });
 }

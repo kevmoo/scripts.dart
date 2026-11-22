@@ -3,6 +3,7 @@ import 'dart:io';
 import 'local_repo_scanner.dart';
 import 'pr_cleanup/cleanup_executor.dart';
 import 'pr_cleanup/collector.dart';
+import 'pr_cleanup/models.dart';
 import 'pr_cleanup/pr_cleanup_options.dart';
 import 'pr_cleanup/report_formatter.dart';
 import 'process_utils.dart';
@@ -16,7 +17,7 @@ const prCleanupDescription =
 
 /// Default local file path where `kscripts pr-cleanup` caches the latest JSON
 /// sweep result for ad-hoc DuckDB / jq querying.
-const defaultPrCleanupJsonCachePath = '/tmp/pr_cleanup_latest.json';
+const _defaultPrCleanupJsonCachePath = '/tmp/pr_cleanup_latest.json';
 
 /// Main entrypoint for `kscripts pr-cleanup`.
 Future<void> runPrCleanup({
@@ -24,7 +25,7 @@ Future<void> runPrCleanup({
   SyncProcessRunner? syncProcessRunner,
   ProcessRunner? asyncProcessRunner,
   void Function(String message)? onProgress,
-  String? jsonCachePath = defaultPrCleanupJsonCachePath,
+  String? jsonCachePath = _defaultPrCleanupJsonCachePath,
 }) async {
   final sweepResult = await collectPrSweep(
     options: options,
@@ -33,26 +34,37 @@ Future<void> runPrCleanup({
     onProgress: onProgress,
   );
 
-  if (options.apply && sweepResult.readyToPrune.isNotEmpty) {
-    final rootPath =
-        options.localRoot ??
-        Platform.environment['GH_LOCAL_ROOT'] ??
-        '${Platform.environment['HOME']}/github';
-    final localRepos = scanLocalGitRepositories(
-      Directory(rootPath),
-      processRunner: syncProcessRunner ?? defaultSyncProcessRunner,
-    );
+  PrCleanupApplyResult? applyResult;
+  if (options.apply) {
+    if (sweepResult.readyToPrune.isEmpty) {
+      applyResult = const PrCleanupApplyResult();
+    } else {
+      final rootPath =
+          options.localRoot ??
+          Platform.environment['GH_LOCAL_ROOT'] ??
+          '${Platform.environment['HOME']}/github';
+      final localRepos = scanLocalGitRepositories(
+        Directory(rootPath),
+        processRunner: syncProcessRunner ?? defaultSyncProcessRunner,
+      );
 
-    await executeReadyToPrune(
-      items: sweepResult.readyToPrune,
-      localRepos: localRepos,
-      dartSdkPath: options.dartSdkPath,
-      syncProcessRunner: syncProcessRunner,
-      onProgress: onProgress,
-    );
+      applyResult = await executeReadyToPrune(
+        items: sweepResult.readyToPrune,
+        localRepos: localRepos,
+        excludedWorktrees: options.excludeWorktrees,
+        localRoot: rootPath,
+        dartSdkPath: options.dartSdkPath,
+        syncProcessRunner: syncProcessRunner,
+        onProgress: onProgress,
+      );
+    }
   }
 
-  final jsonReport = formatJsonReport(sweepResult, applied: options.apply);
+  final jsonReport = formatJsonReport(
+    sweepResult,
+    applied: options.apply,
+    applyResult: applyResult,
+  );
   if (jsonCachePath != null && jsonCachePath.isNotEmpty) {
     try {
       File(jsonCachePath).writeAsStringSync(jsonReport);
@@ -64,6 +76,12 @@ Future<void> runPrCleanup({
   if (options.json) {
     print(jsonReport);
   } else {
-    print(formatMarkdownReport(sweepResult, applied: options.apply));
+    print(
+      formatMarkdownReport(
+        sweepResult,
+        applied: options.apply,
+        applyResult: applyResult,
+      ),
+    );
   }
 }
