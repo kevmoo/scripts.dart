@@ -38,6 +38,7 @@ Create `pr_triage_report.md` in `<appDataDir>/brain/<conversation-id>/` using
 - **Planned Action**:
   - **Code / Doc Changes**: [`lib/src/foo.dart`](file:///.../lib/src/foo.dart#L10-L25) — `<proposed change or "No action needed">`
   - **Outbound Draft Reply (`<= 40 words` / 1–2 sentences)**: `<e.g. "Fixed in <sha> — moved validation before state update." Never paste the internal Agent Assessment rationale.>`
+  - **Bot Feedback Reaction (`@gemini-code-assist` only)**: `<+1 | -1 | None — neutral/human/summary>`
   - **Test Plan (2-Bucket TDD Filter)**:
     - `<Companion Test: test/foo_test.dart — test case summary>` OR `<None — copy/comment/rename or behavior already covered>`
 ```
@@ -50,8 +51,8 @@ Include the `"dismiss stale CHANGES_REQUESTED review"` option whenever an open
 
 ### A. When Uncommitted Changes or Unpushed Commits Exist
 
-1. `(Recommended) Commit fixes, push branch, reply/resolve, and re-request review if needed`
-2. `Commit fixes, push branch, reply/resolve, dismiss stale CHANGES_REQUESTED review, and re-request review`
+1. `(Recommended) Commit fixes, push branch, reply/react/resolve, and re-request review if needed`
+2. `Commit fixes, push branch, reply/react/resolve, dismiss stale CHANGES_REQUESTED review, and re-request review`
    _(include when an addressed `CHANGES_REQUESTED` review exists)_
 3. `Commit fixes and push branch only`
 4. `Commit fixes locally only`
@@ -59,12 +60,12 @@ Include the `"dismiss stale CHANGES_REQUESTED review"` option whenever an open
 
 ### B. When Working Tree Is Clean and All Commits Are Pushed
 
-1. `(Recommended) Reply/resolve and re-request review if needed`
-2. `Reply/resolve, dismiss stale CHANGES_REQUESTED review, and re-request review`
+1. `(Recommended) Reply/react/resolve and re-request review if needed`
+2. `Reply/react/resolve, dismiss stale CHANGES_REQUESTED review, and re-request review`
    _(include when an addressed `CHANGES_REQUESTED` review exists)_
 3. `Do nothing`
 
-## 3. Thread Resolution, Review Dismissal & Re-Request Mechanics
+## 3. Thread Resolution, Bot Reactions, Review Dismissal & Re-Request Mechanics
 
 ### CLI Commands & Outbound Reply Compression (`kscripts pr-triage`)
 
@@ -74,11 +75,17 @@ the reviewer's question directly). Never paste the internal `Agent Assessment`
 block into GitHub.
 
 ```bash
-# Reply to an inline comment and resolve its review thread (always pass --pr <N> when triaging multiple PRs):
-kscripts pr-triage resolve --dir <repo-path> [--pr <pr_number>] <thread_graphql_id> <comment_database_id> "<reply_body>"
+# Reply to an inline comment and resolve its review thread (pass --react +1|-1 on @gemini-code-assist comments):
+kscripts pr-triage resolve --dir <repo-path> [--pr <pr_number>] [--react <+1|-1>] <thread_graphql_id> <comment_database_id> "<reply_body>"
 
-# Resolve an inline review thread without posting a reply:
+# React +1/-1 on an inline @gemini-code-assist comment and resolve its thread without a text reply:
+kscripts pr-triage resolve --dir <repo-path> [--pr <pr_number>] --react <+1|-1> <thread_graphql_id> <comment_database_id>
+
+# Resolve an inline review thread without posting a reply or reaction:
 kscripts pr-triage resolve --dir <repo-path> [--pr <pr_number>] <thread_graphql_id>
+
+# Post a standalone +1/-1 reaction (when leaving a thread open or on a --issue-comment conversation reply):
+kscripts pr-triage react --dir <repo-path> [--pr <pr_number>] [--issue-comment] <comment_database_id> <+1|-1>
 
 # Re-request review (with optional top-level reply comment):
 kscripts pr-triage re-request --dir <repo-path> [--pr <pr_number>] <reviewer_login> \
@@ -183,12 +190,16 @@ mutation($threadId: ID!) {
 }
 ```
 
-### Reply to Inline Comment & Dismiss Stale Review (`REST`)
+### Reply to Inline Comment, React & Dismiss Stale Review (`REST`)
 
 ```bash
 # Reply to an inline review comment by numeric databaseId:
 gh api repos/<owner>/<repo>/pulls/<pr>/comments/<comment_database_id>/replies \
   -f body="<reply_body>"
+
+# React +1 or -1 on an inline review comment (or issues/comments/<id>/reactions for conversation comments):
+gh api repos/<owner>/<repo>/pulls/comments/<comment_database_id>/reactions \
+  -f content=+1
 
 # Dismiss a stale CHANGES_REQUESTED review by numeric review_database_id:
 gh api -X PUT repos/<owner>/<repo>/pulls/<pr>/reviews/<review_database_id>/dismissals \

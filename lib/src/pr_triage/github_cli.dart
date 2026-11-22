@@ -534,29 +534,88 @@ Future<void> _resolveReviewThread(
   }
 }
 
-/// Replies to a comment (if [commentId] and [body] are provided) and resolves
-/// the [threadId].
+const _allowedCommentReactions = {'+1', '-1'};
+
+void _validateCommentReaction(String reaction) {
+  if (!_allowedCommentReactions.contains(reaction)) {
+    throw ArgumentError('Reaction must be "+1" or "-1" (got "$reaction").');
+  }
+}
+
+/// Posts a `+1` or `-1` [reaction] on a PR review comment (default) or a
+/// general PR/issue conversation comment (when [isIssueComment] is `true`).
+Future<void> reactToPrComment(
+  PrContext context, {
+  required String commentId,
+  required String reaction,
+  bool isIssueComment = false,
+  CommandRunner runCommand = runCommand,
+  Map<String, String>? environment,
+}) async {
+  final cleanId = commentId.trim();
+  if (!_digitsOnly.hasMatch(cleanId)) {
+    throw ArgumentError('Comment ID must be a numeric database ID.');
+  }
+  _validateCommentReaction(reaction);
+
+  final resource = isIssueComment ? 'issues' : 'pulls';
+  final endpoint =
+      'repos/${context.owner}/${context.repo}/$resource/comments/$cleanId'
+      '/reactions';
+  await runCommand(context.ghExecutable(environment: environment), [
+    'api',
+    ...context.apiHostArgs,
+    endpoint,
+    '-f',
+    'content=$reaction',
+  ], workingDirectory: context.workingDir);
+}
+
+/// Replies to a comment (when [commentId] and [body] are provided), posts an
+/// optional `+1`/`-1` [reaction] on [commentId], and resolves [threadId].
 Future<void> replyAndResolveThread(
   PrContext context, {
   required String threadId,
   String? commentId,
   String? body,
+  String? reaction,
   CommandRunner runCommand = runCommand,
   Map<String, String>? environment,
 }) async {
-  final hasCommentId = commentId != null && commentId.trim().isNotEmpty;
+  final cleanCommentId = commentId?.trim() ?? '';
+  final hasCommentId = cleanCommentId.isNotEmpty;
   final hasBody = body != null && body.trim().isNotEmpty;
-  if (hasCommentId != hasBody) {
+  final hasReaction = reaction != null && reaction.trim().isNotEmpty;
+
+  if (hasBody && !hasCommentId) {
+    throw ArgumentError('commentId is required when body is provided.');
+  }
+  if (hasReaction && !hasCommentId) {
+    throw ArgumentError('commentId is required when reaction is provided.');
+  }
+  if (hasCommentId && !hasBody && !hasReaction) {
     throw ArgumentError(
-      'Both commentId and body must be provided and non-empty, or both must '
-      'be null/empty.',
+      'Provide a non-empty body and/or reaction when commentId is specified.',
     );
   }
-  if (hasCommentId && hasBody) {
+  if (hasReaction) {
+    _validateCommentReaction(reaction.trim());
+  }
+
+  if (hasBody) {
     await _replyToComment(
       context,
-      commentId: commentId,
+      commentId: cleanCommentId,
       body: body,
+      runCommand: runCommand,
+      environment: environment,
+    );
+  }
+  if (hasReaction) {
+    await reactToPrComment(
+      context,
+      commentId: cleanCommentId,
+      reaction: reaction.trim(),
       runCommand: runCommand,
       environment: environment,
     );
