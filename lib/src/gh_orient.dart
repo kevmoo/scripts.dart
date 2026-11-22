@@ -145,6 +145,7 @@ List<String> extractYamlFormFields(String yamlContent) {
 class RepositoryOrientation {
   final String environment;
   final String? repoSlug;
+  final String? localRoot;
   final List<String> maintainers;
   final List<String> commonIssuePrefixes;
   final List<String> commonPrPrefixes;
@@ -153,6 +154,7 @@ class RepositoryOrientation {
   final Map<String, List<String>> templateSchemas;
   final List<String> agentDocs;
   final List<String> agentSkills;
+  final Map<String, String> agentSkillSummaries;
   final List<String> sampleIssueTitles;
   final List<String> samplePrTitles;
   final AudienceSignal? audience;
@@ -160,6 +162,7 @@ class RepositoryOrientation {
   new({
     required this.environment,
     this.repoSlug,
+    this.localRoot,
     this.maintainers = const [],
     this.commonIssuePrefixes = const [],
     this.commonPrPrefixes = const [],
@@ -168,6 +171,7 @@ class RepositoryOrientation {
     this.templateSchemas = const {},
     this.agentDocs = const [],
     this.agentSkills = const [],
+    this.agentSkillSummaries = const {},
     this.sampleIssueTitles = const [],
     this.samplePrTitles = const [],
     this.audience,
@@ -176,6 +180,7 @@ class RepositoryOrientation {
   Map<String, dynamic> toJson() => {
     'environment': environment,
     if (repoSlug != null) 'repoSlug': repoSlug,
+    if (localRoot != null) 'localRoot': localRoot,
     'maintainers': maintainers,
     'commonIssuePrefixes': commonIssuePrefixes,
     'commonPrPrefixes': commonPrPrefixes,
@@ -184,6 +189,8 @@ class RepositoryOrientation {
     if (templateSchemas.isNotEmpty) 'templateSchemas': templateSchemas,
     'agentDocs': agentDocs,
     'agentSkills': agentSkills,
+    if (agentSkillSummaries.isNotEmpty)
+      'agentSkillSummaries': agentSkillSummaries,
     'sampleIssueTitles': sampleIssueTitles,
     'samplePrTitles': samplePrTitles,
     if (audience != null) 'audience': audience!.toJson(),
@@ -196,6 +203,9 @@ class RepositoryOrientation {
         '- **Environment**: $environment'
         '${repoSlug != null ? ' ($repoSlug)' : ''}',
       );
+    if (localRoot != null) {
+      buffer.writeln('- **Local Checkout**: `$localRoot`');
+    }
     if (maintainers.isNotEmpty) {
       buffer.writeln(
         '- **Active Maintainers / Reviewers**: '
@@ -242,10 +252,15 @@ class RepositoryOrientation {
       );
     }
     if (agentSkills.isNotEmpty) {
-      buffer.writeln(
-        '- **Repository Skills**: '
-        '${agentSkills.map((s) => '`$s`').join(', ')}',
-      );
+      buffer.writeln('- **Repository Skills**:');
+      for (final skill in agentSkills) {
+        final summary = agentSkillSummaries[skill];
+        if (summary != null && summary.isNotEmpty) {
+          buffer.writeln('  - `$skill`: $summary');
+        } else {
+          buffer.writeln('  - `$skill`');
+        }
+      }
     }
   }
 
@@ -273,8 +288,14 @@ class RepositoryOrientation {
     if (samples.isEmpty) return;
     buffer.writeln('\n### $heading');
     for (final title in samples.take(5)) {
-      buffer.writeln('- $title');
+      buffer.writeln('- ${_sanitizeSampleTitle(title)}');
     }
+  }
+
+  static String _sanitizeSampleTitle(String raw) {
+    final clean = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    if (clean.length <= 100) return clean;
+    return '${clean.substring(0, 97).trimRight()}...';
   }
 }
 
@@ -290,19 +311,21 @@ class OrientationGatherer {
     int sampleLimit = 20,
     List<String> paths = const [],
   }) async {
-    final targetDir = workingDirectory ?? Directory.current.path;
+    final targetDir = p.normalize(
+      Directory(workingDirectory ?? Directory.current.path).absolute.path,
+    );
+    final trimmedRepo = repo?.trim();
 
-    if (repo != null && repo.isNotEmpty) {
+    if (trimmedRepo != null && trimmedRepo.isNotEmpty) {
       return _gatherGitHub(
         targetDir,
-        remoteRepo: repo,
+        remoteRepo: trimmedRepo,
         sampleLimit: sampleLimit,
         paths: paths,
       );
     }
 
-    if (targetDir.contains('/google3') ||
-        File(p.join(targetDir, 'WORKSPACE')).existsSync() ||
+    if (p.split(targetDir).contains('google3') ||
         Directory(p.join(targetDir, 'google3')).existsSync()) {
       return _gatherGoogle3(targetDir, sampleLimit: sampleLimit);
     }
@@ -379,15 +402,21 @@ class OrientationGatherer {
         detectedTemplates,
         templateSchemas,
       );
-      agentSetup = await scanRemoteAgentSetup(targetDir, remoteRepo, runCmd);
+      agentSetup = await scanRemoteAgentSetup(
+        targetDir,
+        remoteRepo,
+        runCmd,
+        paths: paths,
+      );
     } else {
       _scanLocalTemplates(targetDir, detectedTemplates, templateSchemas);
-      agentSetup = scanLocalAgentSetup(targetDir);
+      agentSetup = scanLocalAgentSetup(targetDir, paths: paths);
     }
 
     return RepositoryOrientation(
       environment: 'GitHub',
       repoSlug: repoSlug,
+      localRoot: remoteRepo == null ? targetDir : null,
       maintainers: maintainers.toList(),
       commonIssuePrefixes: _sortPrefixes(issuePrefixCounts),
       commonPrPrefixes: _sortPrefixes(prPrefixCounts),
@@ -396,6 +425,7 @@ class OrientationGatherer {
       templateSchemas: templateSchemas,
       agentDocs: agentSetup.agentDocs,
       agentSkills: agentSetup.agentSkills,
+      agentSkillSummaries: agentSetup.agentSkillSummaries,
       sampleIssueTitles: issueTitles,
       samplePrTitles: prTitles,
       audience: deriveAudience(
@@ -557,16 +587,24 @@ class OrientationGatherer {
     String remoteRepo,
     List<String> detectedTemplates,
   ) async {
-    try {
-      final prFileOut = await runCmd('gh', [
-        'api',
-        'repos/$remoteRepo/contents/.github/pull_request_template.md',
-      ], workingDirectory: targetDir);
-      final json = jsonDecode(prFileOut) as Map<String, dynamic>;
-      if (json['path'] != null) {
-        detectedTemplates.add('.github/pull_request_template.md');
-      }
-    } catch (_) {}
+    const candidates = [
+      '.github/pull_request_template.md',
+      '.github/PULL_REQUEST_TEMPLATE.md',
+    ];
+    for (final candidate in candidates) {
+      try {
+        final prFileOut = await runCmd('gh', [
+          'api',
+          'repos/$remoteRepo/contents/$candidate',
+        ], workingDirectory: targetDir);
+        final json = jsonDecode(prFileOut) as Map<String, dynamic>;
+        final found = json['path'] as String?;
+        if (found != null) {
+          detectedTemplates.add(found);
+          return;
+        }
+      } catch (_) {}
+    }
   }
 
   Future<void> _fetchRemoteYamlSchema(
@@ -613,12 +651,25 @@ class OrientationGatherer {
         );
       }
     }
-    final rootPrTemplate = File(
-      p.join(targetDir, '.github', 'pull_request_template.md'),
-    );
-    if (rootPrTemplate.existsSync()) {
-      detectedTemplates.add('.github/pull_request_template.md');
+    final rootPrTemplate = _findLocalRootPrTemplate(targetDir);
+    if (rootPrTemplate != null) {
+      detectedTemplates.add(rootPrTemplate);
     }
+  }
+
+  String? _findLocalRootPrTemplate(String targetDir) {
+    for (final prefix in const ['.github', '']) {
+      final dirPath = prefix.isEmpty ? targetDir : p.join(targetDir, prefix);
+      final dir = Directory(dirPath);
+      if (!dir.existsSync()) continue;
+      for (final entry in dir.listSync().whereType<File>()) {
+        final name = p.basename(entry.path);
+        if (name.toLowerCase() == 'pull_request_template.md') {
+          return prefix.isEmpty ? name : '$prefix/$name';
+        }
+      }
+    }
+    return null;
   }
 
   void _processLocalTemplateFile(
@@ -627,7 +678,9 @@ class OrientationGatherer {
     List<String> detectedTemplates,
     Map<String, List<String>> templateSchemas,
   ) {
-    final rel = p.relative(file.path, from: targetDir);
+    final rel = p.posix.joinAll(
+      p.split(p.relative(file.path, from: targetDir)),
+    );
     detectedTemplates.add(rel);
     if (!rel.endsWith('.yml') && !rel.endsWith('.yaml')) return;
     try {
@@ -655,36 +708,35 @@ class OrientationGatherer {
     return RepositoryOrientation(
       environment: 'Google3 / Piper',
       repoSlug: targetDir,
+      localRoot: targetDir,
       maintainers: maintainers,
       agentDocs: agentSetup.agentDocs,
       agentSkills: agentSetup.agentSkills,
+      agentSkillSummaries: agentSetup.agentSkillSummaries,
       samplePrTitles: sampleCls,
     );
   }
 
   List<String> _findGoogle3Owners(String targetDir) {
-    final maintainers = <String>{};
-    Directory? curr = Directory(targetDir);
+    Directory? curr = Directory(resolveGoogle3StartDir(targetDir));
     while (curr != null && curr.path != curr.parent.path) {
       final ownersFile = File(p.join(curr.path, 'OWNERS'));
-      if (ownersFile.existsSync()) {
-        try {
-          for (final line in ownersFile.readAsLinesSync()) {
-            final trimmed = line.trim();
-            if (trimmed.isNotEmpty &&
-                !trimmed.startsWith('#') &&
-                !trimmed.startsWith('include ') &&
-                !trimmed.contains('/') &&
-                !trimmed.contains(' ') &&
-                !trimmed.contains('=')) {
-              maintainers.add(trimmed);
-            }
-          }
-        } catch (_) {}
-        break;
-      }
+      if (ownersFile.existsSync()) return _parseOwnersFile(ownersFile);
       curr = curr.parent;
     }
+    return const [];
+  }
+
+  static final _ownersEntryPattern = RegExp(r'^[a-zA-Z0-9._-]+$');
+
+  static List<String> _parseOwnersFile(File ownersFile) {
+    final maintainers = <String>{};
+    try {
+      for (final line in ownersFile.readAsLinesSync()) {
+        final trimmed = line.trim();
+        if (_ownersEntryPattern.hasMatch(trimmed)) maintainers.add(trimmed);
+      }
+    } catch (_) {}
     return maintainers.toList();
   }
 

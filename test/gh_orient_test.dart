@@ -259,6 +259,11 @@ body:
       final gatherer = OrientationGatherer(runCmd: _mockLocalRepoRunner);
       final orientation = await gatherer.gather(workingDirectory: tempDir.path);
 
+      expect(orientation.localRoot, equals(p.normalize(tempDir.absolute.path)));
+      expect(
+        orientation.detectedTemplates,
+        contains('.github/PULL_REQUEST_TEMPLATE.md'),
+      );
       expect(
         orientation.agentDocs,
         equals([
@@ -266,6 +271,7 @@ body:
           '.gemini/styleguide.md',
           '.github/copilot-instructions.md',
           '.agents/rules/dart-editing.md',
+          'sites/docs/AGENTS.md',
           'sites/www/AGENTS.md',
           'sites/www/.agents/rules/jaspr.md',
         ]),
@@ -278,8 +284,14 @@ body:
           'sites/www/.agents/skills/extract-to-jaspr/SKILL.md',
         ]),
       );
+      expect(
+        orientation
+            .agentSkillSummaries['.agents/skills/write-technical-docs/SKILL.md'],
+        equals('Write and proofread technical prose.'),
+      );
 
       final markdown = orientation.toMarkdown();
+      expect(markdown, contains('- **Local Checkout**: `'));
       expect(
         markdown,
         contains(
@@ -289,27 +301,62 @@ body:
       expect(
         markdown,
         contains(
-          '- **Repository Skills**: `.agents/skills/format-markdown/SKILL.md`',
+          '  - `.agents/skills/write-technical-docs/SKILL.md`: '
+          'Write and proofread technical prose.',
         ),
       );
+      expect(orientation.toJson()['localRoot'], isNotEmpty);
       expect(
         orientation.toJson()['agentDocs'],
         contains('.gemini/styleguide.md'),
       );
       expect(
-        orientation.toJson()['agentSkills'],
-        contains('.agents/skills/write-technical-docs/SKILL.md'),
+        orientation.toJson()['agentSkillSummaries'],
+        isA<Map<String, String>>(),
       );
+    });
+
+    test('scopes nested sites rules and skills by -p paths', () async {
+      final tempDir = Directory.systemTemp.createTempSync('gh_orient_paths_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+      _seedLocalAgentRepo(tempDir);
+
+      final gatherer = OrientationGatherer(runCmd: _mockLocalRepoRunner);
+      final orientation = await gatherer.gather(
+        workingDirectory: tempDir.path,
+        paths: ['sites/docs/src/content/ui/index.md'],
+      );
+
+      expect(orientation.agentDocs, contains('sites/docs/AGENTS.md'));
+      expect(orientation.agentDocs, isNot(contains('sites/www/AGENTS.md')));
+      expect(
+        orientation.agentSkills,
+        isNot(contains('sites/www/.agents/skills/extract-to-jaspr/SKILL.md')),
+      );
+    });
+
+    test('prefers canonical regular file over reverse symlink alias', () {
+      final tempDir = Directory.systemTemp.createTempSync('gh_orient_rev_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      File(p.join(tempDir.path, 'CLAUDE.md')).writeAsStringSync('# Canonical');
+      Link(p.join(tempDir.path, 'AGENTS.md')).createSync('CLAUDE.md');
+      Link(p.join(tempDir.path, 'GEMINI.md')).createSync('missing.md');
+
+      final setup = scanLocalAgentSetup(tempDir.path);
+      expect(setup.agentDocs, equals(['CLAUDE.md']));
     });
 
     test('discovers remote agent docs and sites via GraphQL', () async {
       final gatherer = OrientationGatherer(runCmd: _mockRemoteAgentRepoRunner);
-      final orientation = await gatherer.gather(repo: 'flutter/website');
+      final orientation = await gatherer.gather(repo: ' flutter/website ');
 
+      expect(orientation.localRoot, isNull);
       expect(
         orientation.agentDocs,
         equals([
-          'AGENTS.md',
+          'CLAUDE.md',
+          'GEMINI.md',
           '.gemini/styleguide.md',
           '.agents/rules/style.md',
           'sites/www/.agents/rules/jaspr.md',
@@ -323,30 +370,73 @@ body:
           'sites/www/.agents/skills/data-model/SKILL.md',
         ]),
       );
-    });
-
-    test('discovers ancestor instructions and local skills in google3', () {
-      final tempDir = Directory.systemTemp.createTempSync('gh_orient_g3_');
-      addTearDown(() => tempDir.deleteSync(recursive: true));
-
-      final g3Root = Directory(p.join(tempDir.path, 'google3'))..createSync();
-      File(p.join(g3Root.path, 'AGENTS.md')).writeAsStringSync('# Root');
-      final teamDir = Directory(p.join(g3Root.path, 'foo', 'bar'))
-        ..createSync(recursive: true);
-      File(p.join(g3Root.path, 'foo', 'AGENTS.md')).writeAsStringSync('# Foo');
-      File(p.join(teamDir.path, 'AGENTS.md')).writeAsStringSync('# Bar');
-      final skillDir = Directory(
-        p.join(teamDir.path, '_agents', 'skills', 'team-check'),
-      )..createSync(recursive: true);
-      File(p.join(skillDir.path, 'SKILL.md')).writeAsStringSync('# Skill');
-
-      final setup = scanGoogle3AgentSetup(teamDir.path);
       expect(
-        setup.agentDocs,
-        equals(['AGENTS.md', '//foo/AGENTS.md', '//AGENTS.md']),
+        orientation
+            .agentSkillSummaries['.agents/skills/write-technical-docs/SKILL.md'],
+        equals('Author technical documentation.'),
       );
-      expect(setup.agentSkills, equals(['_agents/skills/team-check/SKILL.md']));
     });
+
+    test('returns empty remote agent setup on malformed repo slug', () async {
+      final setup = await scanRemoteAgentSetup(
+        '/tmp',
+        'not-a-valid/slug/extra',
+        _mockRemoteAgentRepoRunner,
+      );
+      expect(setup.agentDocs, isEmpty);
+      expect(setup.agentSkills, isEmpty);
+    });
+
+    test(
+      'gathers google3 orientation from team dir and workspace root',
+      () async {
+        final tempDir = Directory.systemTemp.createTempSync('gh_orient_g3_');
+        addTearDown(() => tempDir.deleteSync(recursive: true));
+
+        final g3Root = Directory(p.join(tempDir.path, 'google3'))..createSync();
+        File(p.join(g3Root.path, 'AGENTS.md')).writeAsStringSync('# Root');
+        File(p.join(g3Root.path, 'OWNERS')).writeAsStringSync('lead_owner\n');
+        final teamDir = Directory(p.join(g3Root.path, 'foo', 'bar'))
+          ..createSync(recursive: true);
+        File(p.join(g3Root.path, 'foo', 'AGENTS.md'))
+            .writeAsStringSync('# Foo');
+        File(p.join(teamDir.path, 'AGENTS.md')).writeAsStringSync('# Bar');
+        final skillDir = Directory(
+          p.join(teamDir.path, '_agents', 'skills', 'team-check'),
+        )..createSync(recursive: true);
+        File(p.join(skillDir.path, 'SKILL.md')).writeAsStringSync(
+          '---\nname: team-check\n'
+          'description: >-\n  Validate team configs. Use when checking.\n---\n',
+        );
+
+        final gatherer = OrientationGatherer(
+          runCmd: (_, _, {workingDirectory}) async => 'Change 1 by dev\n',
+        );
+        final teamOrient = await gatherer.gather(
+          workingDirectory: teamDir.path,
+        );
+        expect(teamOrient.environment, equals('Google3 / Piper'));
+        expect(teamOrient.maintainers, equals(['lead_owner']));
+        expect(
+          teamOrient.agentDocs,
+          equals(['AGENTS.md', '//foo/AGENTS.md', '//AGENTS.md']),
+        );
+        expect(
+          teamOrient.agentSkills,
+          equals(['_agents/skills/team-check/SKILL.md']),
+        );
+        expect(
+          teamOrient.agentSkillSummaries['_agents/skills/team-check/SKILL.md'],
+          equals('Validate team configs.'),
+        );
+
+        final rootOrient = await gatherer.gather(
+          workingDirectory: tempDir.path,
+        );
+        expect(rootOrient.environment, equals('Google3 / Piper'));
+        expect(rootOrient.agentDocs, equals(['AGENTS.md']));
+      },
+    );
   });
 }
 
@@ -491,19 +581,28 @@ String _mockRemoteApiResponse(List<String> args) {
 }
 
 void _seedLocalAgentRepo(Directory root) {
-  void write(String relPath) {
+  void write(String relPath, [String? content]) {
     final f = File(p.joinAll([root.path, ...relPath.split('/')]));
     f.parent.createSync(recursive: true);
-    f.writeAsStringSync('# $relPath\n');
+    f.writeAsStringSync(content ?? '# $relPath\n');
   }
 
   write('AGENTS.md');
   write('.gemini/styleguide.md');
   write('.github/copilot-instructions.md');
+  write('.github/PULL_REQUEST_TEMPLATE.md');
   write('.agents/rules/dart-editing.md');
   write('.agents/rules/README.md');
   write('.agents/skills/format-markdown/SKILL.md');
-  write('.agents/skills/write-technical-docs/SKILL.md');
+  write(
+    '.agents/skills/write-technical-docs/SKILL.md',
+    '---\n'
+        'name: write-technical-docs\n'
+        'description: >-\n'
+        '  Write and proofread technical prose. Use when authoring docs.\n'
+        '---\n',
+  );
+  write('sites/docs/AGENTS.md');
   write('sites/www/AGENTS.md');
   write('sites/www/.agents/rules/jaspr.md');
   write('sites/www/.agents/skills/extract-to-jaspr/SKILL.md');
@@ -543,9 +642,10 @@ Future<String> _mockRemoteAgentRepoRunner(
                 {
                   'name': 'data-model',
                   'type': 'tree',
+                  'mode': 16384,
                   'object': {
                     'entries': [
-                      {'name': 'SKILL.md', 'type': 'blob'},
+                      {'name': 'SKILL.md', 'type': 'blob', 'mode': 33188},
                     ],
                   },
                 },
@@ -560,10 +660,15 @@ Future<String> _mockRemoteAgentRepoRunner(
         'repository': {
           'root': {
             'entries': [
-              {'name': 'AGENTS.md', 'type': 'blob', 'mode': 33188},
-              {'name': 'CLAUDE.md', 'type': 'blob', 'mode': 40960},
+              // Reverse symlink: AGENTS.md -> CLAUDE.md, while GEMINI.md -> docs/gemini.md
+              {'name': 'AGENTS.md', 'type': 'blob', 'mode': 40960},
+              {'name': 'CLAUDE.md', 'type': 'blob', 'mode': 33188},
+              {'name': 'GEMINI.md', 'type': 'blob', 'mode': 40960},
             ],
           },
+          'agentsMd': {'text': 'CLAUDE.md'},
+          'claudeMd': {'text': '# Claude instructions'},
+          'geminiMd': {'text': 'docs/gemini.md'},
           'dotGemini': {
             'entries': [
               {'name': 'styleguide.md', 'type': 'blob', 'mode': 33188},
@@ -574,6 +679,12 @@ Future<String> _mockRemoteAgentRepoRunner(
             'entries': [
               {'name': 'README.md', 'type': 'blob', 'mode': 33188},
               {'name': 'style.md', 'type': 'blob', 'mode': 33188},
+              {
+                'name': 'alias.md',
+                'type': 'blob',
+                'mode': 40960,
+                'object': {'isBinary': false, 'text': 'style.md'},
+              },
             ],
           },
           'claudeRules': null,
@@ -585,18 +696,31 @@ Future<String> _mockRemoteAgentRepoRunner(
               {
                 'name': 'write-technical-docs',
                 'type': 'tree',
+                'mode': 16384,
                 'object': {
                   'entries': [
-                    {'name': 'SKILL.md', 'type': 'blob'},
+                    {
+                      'name': 'SKILL.md',
+                      'type': 'blob',
+                      'mode': 33188,
+                      'object': {
+                        'isBinary': false,
+                        'text':
+                            '---\nname: write-technical-docs\n'
+                            'description: Author technical documentation. '
+                            'Use when writing.\n---\n',
+                      },
+                    },
                   ],
                 },
               },
               {
                 'name': 'format-markdown',
                 'type': 'tree',
+                'mode': 16384,
                 'object': {
                   'entries': [
-                    {'name': 'SKILL.md', 'type': 'blob'},
+                    {'name': 'SKILL.md', 'type': 'blob', 'mode': 33188},
                   ],
                 },
               },
@@ -608,6 +732,7 @@ Future<String> _mockRemoteAgentRepoRunner(
           'sites': {
             'entries': [
               {'name': 'www', 'type': 'tree'},
+              {'name': 'bad name!', 'type': 'tree'},
             ],
           },
         },
