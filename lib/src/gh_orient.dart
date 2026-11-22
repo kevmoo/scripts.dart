@@ -5,6 +5,7 @@ import 'package:args/args.dart';
 import 'package:io/io.dart';
 import 'package:path/path.dart' as p;
 
+import 'gh_orient_agent_docs.dart';
 import 'gh_orient_audience.dart';
 import 'testable_print.dart';
 
@@ -150,6 +151,8 @@ class RepositoryOrientation {
   final List<String> detectedLabels;
   final List<String> detectedTemplates;
   final Map<String, List<String>> templateSchemas;
+  final List<String> agentDocs;
+  final List<String> agentSkills;
   final List<String> sampleIssueTitles;
   final List<String> samplePrTitles;
   final AudienceSignal? audience;
@@ -163,6 +166,8 @@ class RepositoryOrientation {
     this.detectedLabels = const [],
     this.detectedTemplates = const [],
     this.templateSchemas = const {},
+    this.agentDocs = const [],
+    this.agentSkills = const [],
     this.sampleIssueTitles = const [],
     this.samplePrTitles = const [],
     this.audience,
@@ -177,6 +182,8 @@ class RepositoryOrientation {
     'detectedLabels': detectedLabels,
     'detectedTemplates': detectedTemplates,
     if (templateSchemas.isNotEmpty) 'templateSchemas': templateSchemas,
+    'agentDocs': agentDocs,
+    'agentSkills': agentSkills,
     'sampleIssueTitles': sampleIssueTitles,
     'samplePrTitles': samplePrTitles,
     if (audience != null) 'audience': audience!.toJson(),
@@ -198,6 +205,7 @@ class RepositoryOrientation {
     if (audience != null) {
       buffer.writeln(audience!.toMarkdown());
     }
+    _writeAgentSetupSection(buffer);
     if (commonIssuePrefixes.isNotEmpty) {
       buffer.writeln(
         '- **Observed Issue Prefixes**: '
@@ -224,6 +232,21 @@ class RepositoryOrientation {
     );
     _writeSampleSection(buffer, 'Sample Merged PR / CL Titles', samplePrTitles);
     return buffer.toString().trimRight();
+  }
+
+  void _writeAgentSetupSection(StringBuffer buffer) {
+    if (agentDocs.isNotEmpty) {
+      buffer.writeln(
+        '- **Agent Instructions**: '
+        '${agentDocs.map((d) => '`$d`').join(', ')}',
+      );
+    }
+    if (agentSkills.isNotEmpty) {
+      buffer.writeln(
+        '- **Repository Skills**: '
+        '${agentSkills.map((s) => '`$s`').join(', ')}',
+      );
+    }
   }
 
   void _writeTemplatesSection(StringBuffer buffer) {
@@ -347,6 +370,7 @@ class OrientationGatherer {
 
     final detectedTemplates = <String>[];
     final templateSchemas = <String, List<String>>{};
+    final DiscoveredAgentSetup agentSetup;
 
     if (remoteRepo != null) {
       await _scanRemoteTemplates(
@@ -355,8 +379,10 @@ class OrientationGatherer {
         detectedTemplates,
         templateSchemas,
       );
+      agentSetup = await scanRemoteAgentSetup(targetDir, remoteRepo, runCmd);
     } else {
       _scanLocalTemplates(targetDir, detectedTemplates, templateSchemas);
+      agentSetup = scanLocalAgentSetup(targetDir);
     }
 
     return RepositoryOrientation(
@@ -368,6 +394,8 @@ class OrientationGatherer {
       detectedLabels: {...issueLabels, ...prLabels}.toList(),
       detectedTemplates: detectedTemplates,
       templateSchemas: templateSchemas,
+      agentDocs: agentSetup.agentDocs,
+      agentSkills: agentSetup.agentSkills,
       sampleIssueTitles: issueTitles,
       samplePrTitles: prTitles,
       audience: deriveAudience(
@@ -622,11 +650,14 @@ class OrientationGatherer {
   }) async {
     final maintainers = _findGoogle3Owners(targetDir);
     final sampleCls = await _fetchP4Changes(targetDir, sampleLimit);
+    final agentSetup = scanGoogle3AgentSetup(targetDir);
 
     return RepositoryOrientation(
       environment: 'Google3 / Piper',
       repoSlug: targetDir,
       maintainers: maintainers,
+      agentDocs: agentSetup.agentDocs,
+      agentSkills: agentSetup.agentSkills,
       samplePrTitles: sampleCls,
     );
   }

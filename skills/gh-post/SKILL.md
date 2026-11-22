@@ -57,9 +57,17 @@ Confirm two parameters before doing any work:
 
 ### Step 2: Repository Orientation
 
-Run `kscripts gh-orient` (or `gh-orient`) to inspect maintainers, title
-prefixes, label vocabulary, native templates (`.yml` field IDs), and audience:
+Run `kscripts gh-orient` (or `gh-orient`) to inspect agent instructions,
+repository skills, maintainers, title prefixes, label vocabulary, native
+templates (`.yml` field IDs), and audience:
 
+- **Agent Instructions & Repository Skills**: Read every file surfaced under
+  `Agent Instructions` (`AGENTS.md`, `CLAUDE.md`, `GEMINI.md`,
+  `.gemini/styleguide.md`, `.github/copilot-instructions.md`,
+  `.agents/rules/*.md`) and any relevant `SKILL.md` under `Repository Skills`
+  before editing or drafting. When opening a documentation PR in a repository
+  with a prose, style, or proofreading skill, run a read-only subagent pass
+  against that skill before Step 4.
 - **Audience (`-p, --paths`)**: Pass repository-relative paths referenced by the
   draft. `owner` (one author dominates or small repo) = zero background, open
   directly with what is wrong or changes. `visitor` (distributed/rotating

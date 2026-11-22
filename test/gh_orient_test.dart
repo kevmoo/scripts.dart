@@ -1,7 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:kevmoo_scripts/src/gh_orient.dart';
+import 'package:kevmoo_scripts/src/gh_orient_agent_docs.dart';
 import 'package:kevmoo_scripts/src/gh_orient_audience.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
@@ -246,6 +249,105 @@ body:
       );
     });
   });
+
+  group('agent instruction and skill discovery', () {
+    test('discovers local agent docs and deduplicates symlinks', () async {
+      final tempDir = Directory.systemTemp.createTempSync('gh_orient_local_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+      _seedLocalAgentRepo(tempDir);
+
+      final gatherer = OrientationGatherer(runCmd: _mockLocalRepoRunner);
+      final orientation = await gatherer.gather(workingDirectory: tempDir.path);
+
+      expect(
+        orientation.agentDocs,
+        equals([
+          'AGENTS.md',
+          '.gemini/styleguide.md',
+          '.github/copilot-instructions.md',
+          '.agents/rules/dart-editing.md',
+          'sites/www/AGENTS.md',
+          'sites/www/.agents/rules/jaspr.md',
+        ]),
+      );
+      expect(
+        orientation.agentSkills,
+        equals([
+          '.agents/skills/format-markdown/SKILL.md',
+          '.agents/skills/write-technical-docs/SKILL.md',
+          'sites/www/.agents/skills/extract-to-jaspr/SKILL.md',
+        ]),
+      );
+
+      final markdown = orientation.toMarkdown();
+      expect(
+        markdown,
+        contains(
+          '- **Agent Instructions**: `AGENTS.md`, `.gemini/styleguide.md`',
+        ),
+      );
+      expect(
+        markdown,
+        contains(
+          '- **Repository Skills**: `.agents/skills/format-markdown/SKILL.md`',
+        ),
+      );
+      expect(
+        orientation.toJson()['agentDocs'],
+        contains('.gemini/styleguide.md'),
+      );
+      expect(
+        orientation.toJson()['agentSkills'],
+        contains('.agents/skills/write-technical-docs/SKILL.md'),
+      );
+    });
+
+    test('discovers remote agent docs and sites via GraphQL', () async {
+      final gatherer = OrientationGatherer(runCmd: _mockRemoteAgentRepoRunner);
+      final orientation = await gatherer.gather(repo: 'flutter/website');
+
+      expect(
+        orientation.agentDocs,
+        equals([
+          'AGENTS.md',
+          '.gemini/styleguide.md',
+          '.agents/rules/style.md',
+          'sites/www/.agents/rules/jaspr.md',
+        ]),
+      );
+      expect(
+        orientation.agentSkills,
+        equals([
+          '.agents/skills/format-markdown/SKILL.md',
+          '.agents/skills/write-technical-docs/SKILL.md',
+          'sites/www/.agents/skills/data-model/SKILL.md',
+        ]),
+      );
+    });
+
+    test('discovers ancestor instructions and local skills in google3', () {
+      final tempDir = Directory.systemTemp.createTempSync('gh_orient_g3_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final g3Root = Directory(p.join(tempDir.path, 'google3'))..createSync();
+      File(p.join(g3Root.path, 'AGENTS.md')).writeAsStringSync('# Root');
+      final teamDir = Directory(p.join(g3Root.path, 'foo', 'bar'))
+        ..createSync(recursive: true);
+      File(p.join(g3Root.path, 'foo', 'AGENTS.md')).writeAsStringSync('# Foo');
+      File(p.join(teamDir.path, 'AGENTS.md')).writeAsStringSync('# Bar');
+      final skillDir = Directory(
+        p.join(teamDir.path, '_agents', 'skills', 'team-check'),
+      )..createSync(recursive: true);
+      File(p.join(skillDir.path, 'SKILL.md')).writeAsStringSync('# Skill');
+
+      final setup = scanGoogle3AgentSetup(teamDir.path);
+      expect(
+        setup.agentDocs,
+        equals(['AGENTS.md', '//foo/AGENTS.md', '//AGENTS.md']),
+      );
+      expect(setup.agentSkills, equals(['_agents/skills/team-check/SKILL.md']));
+    });
+  });
 }
 
 Future<String> _mockLargeRepoRunner(
@@ -386,4 +488,134 @@ String _mockRemoteApiResponse(List<String> args) {
       'download_url': 'https://example.com/template.yml',
     },
   ]);
+}
+
+void _seedLocalAgentRepo(Directory root) {
+  void write(String relPath) {
+    final f = File(p.joinAll([root.path, ...relPath.split('/')]));
+    f.parent.createSync(recursive: true);
+    f.writeAsStringSync('# $relPath\n');
+  }
+
+  write('AGENTS.md');
+  write('.gemini/styleguide.md');
+  write('.github/copilot-instructions.md');
+  write('.agents/rules/dart-editing.md');
+  write('.agents/rules/README.md');
+  write('.agents/skills/format-markdown/SKILL.md');
+  write('.agents/skills/write-technical-docs/SKILL.md');
+  write('sites/www/AGENTS.md');
+  write('sites/www/.agents/rules/jaspr.md');
+  write('sites/www/.agents/skills/extract-to-jaspr/SKILL.md');
+
+  // Symlink aliases should be deduplicated against primary targets.
+  Link(p.join(root.path, 'CLAUDE.md')).createSync('AGENTS.md');
+  Directory(p.join(root.path, '.claude')).createSync(recursive: true);
+  Link(p.join(root.path, '.claude', 'skills'))
+      .createSync(p.join('..', '.agents', 'skills'));
+}
+
+Future<String> _mockRemoteAgentRepoRunner(
+  String command,
+  List<String> args, {
+  String? workingDirectory,
+}) async {
+  if (command == 'gh' && args.contains('pr')) {
+    return jsonEncode(<Object>[]);
+  }
+  if (command == 'gh' && args.contains('issue')) {
+    return jsonEncode(<Object>[]);
+  }
+  if (command == 'gh' && args.contains('graphql')) {
+    final queryArg = args.firstWhere((a) => a.startsWith('query='));
+    if (queryArg.contains('s0Root:')) {
+      return jsonEncode({
+        'data': {
+          'repository': {
+            's0Root': {'entries': <Object>[]},
+            's0Rules': {
+              'entries': [
+                {'name': 'jaspr.md', 'type': 'blob', 'mode': 33188},
+              ],
+            },
+            's0Skills': {
+              'entries': [
+                {
+                  'name': 'data-model',
+                  'type': 'tree',
+                  'object': {
+                    'entries': [
+                      {'name': 'SKILL.md', 'type': 'blob'},
+                    ],
+                  },
+                },
+              ],
+            },
+          },
+        },
+      });
+    }
+    return jsonEncode({
+      'data': {
+        'repository': {
+          'root': {
+            'entries': [
+              {'name': 'AGENTS.md', 'type': 'blob', 'mode': 33188},
+              {'name': 'CLAUDE.md', 'type': 'blob', 'mode': 40960},
+            ],
+          },
+          'dotGemini': {
+            'entries': [
+              {'name': 'styleguide.md', 'type': 'blob', 'mode': 33188},
+            ],
+          },
+          'dotGithub': {'entries': <Object>[]},
+          'agentsRules': {
+            'entries': [
+              {'name': 'README.md', 'type': 'blob', 'mode': 33188},
+              {'name': 'style.md', 'type': 'blob', 'mode': 33188},
+            ],
+          },
+          'claudeRules': null,
+          'geminiRules': null,
+          'githubInstructions': null,
+          'agentsSkills': {
+            'entries': [
+              {'name': 'README.md', 'type': 'blob'},
+              {
+                'name': 'write-technical-docs',
+                'type': 'tree',
+                'object': {
+                  'entries': [
+                    {'name': 'SKILL.md', 'type': 'blob'},
+                  ],
+                },
+              },
+              {
+                'name': 'format-markdown',
+                'type': 'tree',
+                'object': {
+                  'entries': [
+                    {'name': 'SKILL.md', 'type': 'blob'},
+                  ],
+                },
+              },
+            ],
+          },
+          'claudeSkills': <String, Object>{},
+          'geminiSkills': null,
+          'rootSkills': null,
+          'sites': {
+            'entries': [
+              {'name': 'www', 'type': 'tree'},
+            ],
+          },
+        },
+      },
+    });
+  }
+  if (command == 'gh' && args.contains('api')) {
+    return jsonEncode(<Object>[]);
+  }
+  throw Exception('Unexpected command: $command ${args.join(' ')}');
 }
