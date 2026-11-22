@@ -4,19 +4,29 @@ import 'package:git/git.dart';
 
 import '../process_utils.dart';
 
-/// Environment variables that prevent `git` from blocking on credential or
-/// SSH terminal prompts in automated CLI runs.
-const _gitNonInteractiveEnv = <String, String>{'GIT_TERMINAL_PROMPT': '0'};
+/// Environment variables that prevent `git` and OpenSSH from blocking on
+/// credential or SSH passphrase prompts in automated CLI runs.
+Map<String, String> nonInteractiveGitEnv({
+  Map<String, String>? baseEnv,
+  bool readOnly = false,
+}) {
+  final rawSsh = (baseEnv ?? Platform.environment)['GIT_SSH_COMMAND']?.trim();
+  final sshCmd = switch (rawSsh) {
+    null || '' => 'ssh -o BatchMode=yes -o ConnectTimeout=10',
+    final s when s.contains('BatchMode=') => s,
+    final s => '$s -o BatchMode=yes -o ConnectTimeout=10',
+  };
+  return {
+    'GIT_TERMINAL_PROMPT': '0',
+    'GCM_INTERACTIVE': 'never',
+    'GIT_SSH_COMMAND': sshCmd,
+    'GIT_HTTP_LOW_SPEED_LIMIT': '1000',
+    'GIT_HTTP_LOW_SPEED_TIME': '15',
+    if (readOnly) 'GIT_OPTIONAL_LOCKS': '0',
+  };
+}
 
-/// Environment variables for read-only `git` queries (`status`, `rev-parse`,
-/// `for-each-ref`, `worktree list`), skipping optional `.git/index.lock`
-/// writes alongside terminal prompt suppression.
-const _gitReadOnlyEnv = <String, String>{
-  'GIT_TERMINAL_PROMPT': '0',
-  'GIT_OPTIONAL_LOCKS': '0',
-};
-
-/// Default synchronous `git` runner with [_gitNonInteractiveEnv].
+/// Default synchronous `git` runner with [nonInteractiveGitEnv].
 ProcessResult _defaultGitSyncRunner(
   String executable,
   List<String> arguments, {
@@ -25,10 +35,10 @@ ProcessResult _defaultGitSyncRunner(
   executable,
   arguments,
   workingDirectory: workingDirectory,
-  environment: _gitNonInteractiveEnv,
+  environment: nonInteractiveGitEnv(),
 );
 
-/// Read-only synchronous `git` runner with [_gitReadOnlyEnv].
+/// Read-only synchronous `git` runner with [nonInteractiveGitEnv].
 ProcessResult _readOnlyGitSyncRunner(
   String executable,
   List<String> arguments, {
@@ -37,10 +47,10 @@ ProcessResult _readOnlyGitSyncRunner(
   executable,
   arguments,
   workingDirectory: workingDirectory,
-  environment: _gitReadOnlyEnv,
+  environment: nonInteractiveGitEnv(readOnly: true),
 );
 
-/// Default asynchronous `git` runner with [_gitNonInteractiveEnv].
+/// Default asynchronous `git` runner with [nonInteractiveGitEnv].
 Future<ProcessResult> _defaultGitAsyncRunner(
   String executable,
   List<String> arguments, {
@@ -49,10 +59,10 @@ Future<ProcessResult> _defaultGitAsyncRunner(
   executable,
   arguments,
   workingDirectory: workingDirectory,
-  environment: _gitNonInteractiveEnv,
+  environment: nonInteractiveGitEnv(),
 );
 
-/// Read-only asynchronous `git` runner with [_gitReadOnlyEnv].
+/// Read-only asynchronous `git` runner with [nonInteractiveGitEnv].
 Future<ProcessResult> _readOnlyGitAsyncRunner(
   String executable,
   List<String> arguments, {
@@ -61,7 +71,7 @@ Future<ProcessResult> _readOnlyGitAsyncRunner(
   executable,
   arguments,
   workingDirectory: workingDirectory,
-  environment: _gitReadOnlyEnv,
+  environment: nonInteractiveGitEnv(readOnly: true),
 );
 
 /// Normalizes stdout from `git rev-parse --abbrev-ref origin/HEAD` by stripping

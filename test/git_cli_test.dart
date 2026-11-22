@@ -146,51 +146,57 @@ detached
       return repoPath;
     }
 
-    test(
-      'propagates GIT_TERMINAL_PROMPT=0 and read-only GIT_OPTIONAL_LOCKS=0',
-      () async {
-        final repoPath = await createRepo('env_repo');
-        const aliasSpec =
-            r'alias.envprobe=!sh -c "printf %s:%s '
-            r'\"${GIT_TERMINAL_PROMPT:-unset}\" '
-            r'\"${GIT_OPTIONAL_LOCKS:-unset}\""';
-        const probeArgs = ['-c', aliasSpec, 'envprobe'];
+    test('propagates GIT_TERMINAL_PROMPT=0, BatchMode=yes, and read-only '
+        'GIT_OPTIONAL_LOCKS=0', () async {
+      final repoPath = await createRepo('env_repo');
+      const aliasSpec =
+          r'alias.envprobe=!sh -c "printf %s:%s:%s '
+          r'\"${GIT_TERMINAL_PROMPT:-unset}\" '
+          r'\"${GIT_OPTIONAL_LOCKS:-unset}\" '
+          r'\"${GIT_SSH_COMMAND:-unset}\""';
+      const probeArgs = ['-c', aliasSpec, 'envprobe'];
 
-        final rwSync = defaultGitCli.runSync(
-          probeArgs,
-          workingDirectory: repoPath,
-        );
-        check(rwSync.stdout.toString()).equals('0:unset');
+      final rwSync = defaultGitCli.runSync(
+        probeArgs,
+        workingDirectory: repoPath,
+      );
+      check(rwSync.stdout.toString())
+        ..startsWith('0:unset:')
+        ..contains('BatchMode=yes');
 
-        final roSync = defaultGitCli.runSync(
-          probeArgs,
-          workingDirectory: repoPath,
-          readOnly: true,
-        );
-        check(roSync.stdout.toString()).equals('0:0');
+      final roSync = defaultGitCli.runSync(
+        probeArgs,
+        workingDirectory: repoPath,
+        readOnly: true,
+      );
+      check(roSync.stdout.toString())
+        ..startsWith('0:0:')
+        ..contains('BatchMode=yes');
 
-        final rwAsync = await defaultGitCli.run(
-          probeArgs,
-          workingDirectory: repoPath,
-        );
-        check(rwAsync.stdout.toString()).equals('0:unset');
+      final rwAsync = await defaultGitCli.run(
+        probeArgs,
+        workingDirectory: repoPath,
+      );
+      check(rwAsync.stdout.toString())
+        ..startsWith('0:unset:')
+        ..contains('BatchMode=yes');
 
-        final roAsync = await defaultGitCli.run(
-          probeArgs,
-          workingDirectory: repoPath,
-          readOnly: true,
-        );
-        check(roAsync.stdout.toString()).equals('0:0');
+      final roAsync = await defaultGitCli.run(
+        probeArgs,
+        workingDirectory: repoPath,
+        readOnly: true,
+      );
+      check(roAsync.stdout.toString())
+        ..startsWith('0:0:')
+        ..contains('BatchMode=yes');
 
-        final viaProcessUtils = defaultSyncProcessRunner(
-          'git',
-          probeArgs,
-          workingDirectory: repoPath,
-        );
-        check(viaProcessUtils.stdout.toString()).equals('0:unset');
-      },
-      onPlatform: const {'windows': Skip('Uses POSIX sh alias probe')},
-    );
+      final viaProcessUtils = defaultSyncProcessRunner(
+        'git',
+        probeArgs,
+        workingDirectory: repoPath,
+      );
+      check(viaProcessUtils.stdout.toString()).startsWith('0:unset:');
+    }, onPlatform: const {'windows': Skip('Uses POSIX sh alias probe')});
 
     test(
       'resolves currentBranch, config, defaultBranch, dirty, and worktrees',

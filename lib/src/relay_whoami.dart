@@ -363,7 +363,7 @@ Future<void> _runRelayCheck(
 
   // Execute all 4 git + issue sync tasks concurrently via Future.wait.
   final corpGitFuture = (env.hasGgh && env.corpRepo.isNotEmpty)
-      ? _syncGitRepo(
+      ? syncRelayGitRepo(
           label: '🔒 Corp Relay (${env.corpRepo})',
           dir: env.corpDir,
           prevSha: prevCorpSha,
@@ -375,7 +375,7 @@ Future<void> _runRelayCheck(
         ));
 
   final ossGitFuture = env.hasGh
-      ? _syncGitRepo(
+      ? syncRelayGitRepo(
           label: '🌐 GitHub Relay (${env.ossRepo})',
           dir: env.ossDir,
           prevSha: prevOssSha,
@@ -498,11 +498,16 @@ Map<String, Object?> _loadPreviousSyncState(
   return defaultState;
 }
 
-Future<({List<String> lines, String afterSha})> _syncGitRepo({
+/// Fetches and fast-forwards a local relay clone without blocking on
+/// interactive SSH/HTTPS credential prompts, preserving [prevSha] if `git
+/// fetch` fails.
+Future<({List<String> lines, String afterSha})> syncRelayGitRepo({
   required String label,
   required String dir,
   required String prevSha,
   required String home,
+  Map<String, String>? baseEnv,
+  Duration fetchTimeout = const Duration(seconds: 20),
 }) async {
   if (dir.isEmpty || !Directory(p.join(dir, '.git')).existsSync()) {
     return (
@@ -523,11 +528,12 @@ Future<({List<String> lines, String afterSha})> _syncGitRepo({
       '';
   final effectivePrev = prevSha.isNotEmpty ? prevSha : beforeSha;
 
-  await defaultGitCli.run(const [
-    'fetch',
-    'origin',
-    '--quiet',
-  ], workingDirectory: dir);
+  final fetchResult = await _runProcessBounded(
+    'git',
+    ['-C', dir, 'fetch', 'origin', '--quiet'],
+    environment: nonInteractiveGitEnv(baseEnv: baseEnv),
+    timeout: fetchTimeout,
+  );
 
   final dirty =
       await defaultGitCli.stdoutOrNull(const [
@@ -535,30 +541,46 @@ Future<({List<String> lines, String afterSha})> _syncGitRepo({
         '--porcelain',
       ], workingDirectory: dir) ??
       '';
-  final branch = await defaultGitCli.currentBranch(dir) ?? 'HEAD';
 
-  if (dirty.isEmpty && branch == 'main') {
-    await defaultGitCli.run(const [
-      'merge',
-      '--ff-only',
-      'origin/main',
-      '--quiet',
-    ], workingDirectory: dir);
+  late final List<String> lines;
+  late final String resultSha;
+  if (fetchResult.exitCode != 0) {
+    final errLine = _firstOutputLine(
+      fetchResult,
+      fallback: 'exit ${fetchResult.exitCode}',
+    );
+    final warning =
+        '  ⚠️  $label ($shortDir): git fetch failed ($errLine) — '
+        'local HEAD at ${_shortSha(beforeSha)} (watermark preserved)';
+    lines = [warning];
+    resultSha = prevSha;
+  } else {
+    final branch = await defaultGitCli.currentBranch(dir) ?? 'HEAD';
+
+    if (dirty.isEmpty && branch == 'main') {
+      await defaultGitCli.run(const [
+        'merge',
+        '--ff-only',
+        'origin/main',
+        '--quiet',
+      ], workingDirectory: dir);
+    }
+
+    final afterSha =
+        await defaultGitCli.stdoutOrNull(const [
+          'rev-parse',
+          'HEAD',
+        ], workingDirectory: dir) ??
+        '';
+    lines = await _formatGitCommitDeltas(
+      label: label,
+      dir: dir,
+      shortDir: shortDir,
+      effectivePrev: effectivePrev,
+      afterSha: afterSha,
+    );
+    resultSha = afterSha;
   }
-
-  final afterSha =
-      await defaultGitCli.stdoutOrNull(const [
-        'rev-parse',
-        'HEAD',
-      ], workingDirectory: dir) ??
-      '';
-  final lines = await _formatGitCommitDeltas(
-    label: label,
-    dir: dir,
-    shortDir: shortDir,
-    effectivePrev: effectivePrev,
-    afterSha: afterSha,
-  );
 
   if (dirty.isNotEmpty) {
     lines.add('  ⚠️  $label ($shortDir) has uncommitted local changes:');
@@ -567,7 +589,7 @@ Future<({List<String> lines, String afterSha})> _syncGitRepo({
     }
   }
 
-  return (lines: lines, afterSha: afterSha);
+  return (lines: lines, afterSha: resultSha);
 }
 
 String _shortSha(String sha) => sha.length >= 7 ? sha.substring(0, 7) : sha;
@@ -625,8 +647,9 @@ Future<({List<RelayIssueRaw> issues, String ok, String error})>
 _fetchChannelIssues(String cli, String repo) async {
   const fields =
       'number,title,state,updatedAt,createdAt,closedAt,url,body,comments';
+  const env = {'GH_PROMPT_DISABLED': '1'};
   final results = await Future.wait([
-    Process.run(cli, [
+    _runProcessBounded(cli, [
       'issue',
       'list',
       '-R',
@@ -637,8 +660,8 @@ _fetchChannelIssues(String cli, String repo) async {
       '50',
       '--json',
       fields,
-    ]),
-    Process.run(cli, [
+    ], environment: env),
+    _runProcessBounded(cli, [
       'issue',
       'list',
       '-R',
@@ -649,13 +672,12 @@ _fetchChannelIssues(String cli, String repo) async {
       '15',
       '--json',
       fields,
-    ]),
+    ], environment: env),
   ]);
 
   for (final res in results) {
     if (res.exitCode != 0) {
-      final errText = '${res.stderr}\n${res.stdout}'.trim();
-      final firstLine = errText.split('\n').first;
+      final firstLine = _firstOutputLine(res, fallback: 'exit ${res.exitCode}');
       return (issues: const <RelayIssueRaw>[], ok: 'false', error: firstLine);
     }
   }
@@ -680,6 +702,56 @@ _fetchChannelIssues(String cli, String repo) async {
       ok: 'false',
       error: 'invalid JSON response from $cli',
     );
+  }
+}
+
+String _firstOutputLine(ProcessResult res, {required String fallback}) {
+  final combined = '${res.stderr}\n${res.stdout}';
+  for (final line in combined.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.isNotEmpty) return trimmed;
+  }
+  return fallback;
+}
+
+Future<ProcessResult> _runProcessBounded(
+  String executable,
+  List<String> args, {
+  Map<String, String>? environment,
+  Duration timeout = const Duration(seconds: 25),
+}) async {
+  final process = await Process.start(
+    executable,
+    args,
+    environment: environment,
+  );
+  final stdoutFuture = systemEncoding
+      .decodeStream(process.stdout)
+      .catchError((_) => '');
+  final stderrFuture = systemEncoding
+      .decodeStream(process.stderr)
+      .catchError((_) => '');
+  try {
+    final exitCode = await process.exitCode.timeout(timeout);
+    return ProcessResult(
+      process.pid,
+      exitCode,
+      await stdoutFuture,
+      await stderrFuture,
+    );
+  } on TimeoutException {
+    process.kill();
+    await process.exitCode.timeout(
+      const Duration(seconds: 1),
+      onTimeout: () {
+        process.kill(ProcessSignal.sigkill);
+        return 124;
+      },
+    );
+    final label = timeout.inSeconds > 0
+        ? '${timeout.inSeconds}s'
+        : '${timeout.inMilliseconds}ms';
+    return ProcessResult(process.pid, 124, '', 'timed out after $label');
   }
 }
 

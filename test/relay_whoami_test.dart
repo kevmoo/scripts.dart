@@ -1,5 +1,9 @@
+import 'dart:io';
+
 import 'package:kevmoo_scripts/src/relay_whoami.dart';
 import 'package:kevmoo_scripts/src/relay_whoami/relay_whoami_options.dart';
+import 'package:kevmoo_scripts/src/shared/git_cli.dart';
+import 'package:path/path.dart' as p;
 import 'package:test/test.dart';
 
 void main() {
@@ -455,6 +459,108 @@ Landed PR #113 on kevmoo/scripts.dart.
           '⏳ [🌐 kevmoo/agent-relay] #12 ✅ [SETTLED DONE — Ready to Close]',
         ),
       );
+    });
+  });
+
+  group('nonInteractiveGitEnv & syncRelayGitRepo', () {
+    test('enforces BatchMode=yes across unset and custom GIT_SSH_COMMAND', () {
+      final defaultEnv = nonInteractiveGitEnv(baseEnv: const {});
+      expect(defaultEnv['GIT_TERMINAL_PROMPT'], '0');
+      expect(defaultEnv['GIT_SSH_COMMAND'], contains('BatchMode=yes'));
+
+      final customKeyEnv = nonInteractiveGitEnv(
+        baseEnv: const {'GIT_SSH_COMMAND': 'ssh -i /tmp/test_id'},
+      );
+      expect(
+        customKeyEnv['GIT_SSH_COMMAND'],
+        'ssh -i /tmp/test_id -o BatchMode=yes -o ConnectTimeout=10',
+      );
+
+      final explicitEnv = nonInteractiveGitEnv(
+        baseEnv: const {'GIT_SSH_COMMAND': 'ssh -o BatchMode=yes'},
+      );
+      expect(explicitEnv['GIT_SSH_COMMAND'], 'ssh -o BatchMode=yes');
+    });
+
+    test('fast-forwards clean main on success and preserves watermark on '
+        'failed or timed-out fetch', () async {
+      final tempDir = Directory.systemTemp.createTempSync('relay_sync_test_');
+      addTearDown(() => tempDir.deleteSync(recursive: true));
+
+      final originDir = p.join(tempDir.path, 'origin.git');
+      final seedDir = p.join(tempDir.path, 'seed');
+      final cloneDir = p.join(tempDir.path, 'clone');
+
+      Future<String> git(String cwd, List<String> args) async {
+        final res = await Process.run('git', ['-C', cwd, ...args]);
+        expect(res.exitCode, 0, reason: '${res.stderr}\n${res.stdout}');
+        return res.stdout.toString().trim();
+      }
+
+      await Process.run('git', ['init', '--bare', '-b', 'main', originDir]);
+      await Process.run('git', ['clone', originDir, seedDir]);
+      await git(seedDir, ['config', 'user.email', 'test@example.com']);
+      await git(seedDir, ['config', 'user.name', 'Test']);
+      File(p.join(seedDir, 'README.md')).writeAsStringSync('v1\n');
+      await git(seedDir, ['add', 'README.md']);
+      await git(seedDir, ['commit', '-m', 'Initial']);
+      await git(seedDir, ['push', '-u', 'origin', 'main']);
+      final sha1 = await git(seedDir, ['rev-parse', 'HEAD']);
+
+      await Process.run('git', ['clone', originDir, cloneDir]);
+
+      File(p.join(seedDir, 'README.md')).writeAsStringSync('v2\n');
+      await git(seedDir, ['commit', '-am', 'Second']);
+      await git(seedDir, ['push', 'origin', 'main']);
+      final sha2 = await git(seedDir, ['rev-parse', 'HEAD']);
+
+      final okSync = await syncRelayGitRepo(
+        label: 'Test Relay',
+        dir: cloneDir,
+        prevSha: sha1,
+        home: tempDir.path,
+        baseEnv: const {},
+      );
+      expect(okSync.afterSha, sha2);
+      expect(okSync.lines.join('\n'), contains('+1 new commit(s)'));
+
+      // Point origin at a missing path and verify failure is surfaced and
+      // prevSha watermark is preserved instead of falsely reporting up to date.
+      await git(cloneDir, [
+        'remote',
+        'set-url',
+        'origin',
+        p.join(tempDir.path, 'missing-origin.git'),
+      ]);
+      final failedSync = await syncRelayGitRepo(
+        label: 'Test Relay',
+        dir: cloneDir,
+        prevSha: sha1,
+        home: tempDir.path,
+        baseEnv: const {},
+      );
+      expect(failedSync.afterSha, sha1);
+      expect(failedSync.lines.join('\n'), contains('git fetch failed'));
+      expect(failedSync.lines.join('\n'), isNot(contains('up to date')));
+
+      // Point origin at an SSH URL with a stalling SSH command to verify the
+      // bounded process timeout prevents hangs.
+      await git(cloneDir, [
+        'remote',
+        'set-url',
+        'origin',
+        'ssh://git@example.invalid/repo.git',
+      ]);
+      final timedOutSync = await syncRelayGitRepo(
+        label: 'Test Relay',
+        dir: cloneDir,
+        prevSha: sha1,
+        home: tempDir.path,
+        baseEnv: const {'GIT_SSH_COMMAND': 'sleep 5 # BatchMode=yes'},
+        fetchTimeout: const Duration(milliseconds: 250),
+      );
+      expect(timedOutSync.afterSha, sha1);
+      expect(timedOutSync.lines.join('\n'), contains('timed out after 250ms'));
     });
   });
 }
