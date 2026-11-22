@@ -353,7 +353,7 @@ Future<void> _runRelayCheck(
 
   // Execute all 4 git + issue sync tasks concurrently via Future.wait.
   final corpGitFuture = (env.hasGgh && env.corpRepo.isNotEmpty)
-      ? _syncGitRepo(
+      ? syncRelayGitRepo(
           label: '🔒 Corp Relay (${env.corpRepo})',
           dir: env.corpDir,
           prevSha: prevCorpSha,
@@ -365,7 +365,7 @@ Future<void> _runRelayCheck(
         ));
 
   final ossGitFuture = env.hasGh
-      ? _syncGitRepo(
+      ? syncRelayGitRepo(
           label: '🌐 GitHub Relay (${env.ossRepo})',
           dir: env.ossDir,
           prevSha: prevOssSha,
@@ -488,11 +488,34 @@ Map<String, Object?> _loadPreviousSyncState(
   return defaultState;
 }
 
-Future<({List<String> lines, String afterSha})> _syncGitRepo({
+/// Environment overrides that prevent Git and OpenSSH from hanging on
+/// interactive passphrase or credential prompts during background syncs.
+Map<String, String> nonInteractiveGitEnv([Map<String, String>? baseEnv]) {
+  final rawSsh = (baseEnv ?? Platform.environment)['GIT_SSH_COMMAND']?.trim();
+  final sshCmd = switch (rawSsh) {
+    null || '' => 'ssh -o BatchMode=yes -o ConnectTimeout=10',
+    final s when s.contains('BatchMode=') => s,
+    final s => '$s -o BatchMode=yes -o ConnectTimeout=10',
+  };
+  return {
+    'GIT_TERMINAL_PROMPT': '0',
+    'GCM_INTERACTIVE': 'never',
+    'GIT_SSH_COMMAND': sshCmd,
+    'GIT_HTTP_LOW_SPEED_LIMIT': '1000',
+    'GIT_HTTP_LOW_SPEED_TIME': '15',
+  };
+}
+
+/// Fetches and fast-forwards a local relay clone without blocking on
+/// interactive SSH/HTTPS credential prompts, preserving [prevSha] if `git
+/// fetch` fails.
+Future<({List<String> lines, String afterSha})> syncRelayGitRepo({
   required String label,
   required String dir,
   required String prevSha,
   required String home,
+  Map<String, String>? baseEnv,
+  Duration fetchTimeout = const Duration(seconds: 20),
 }) async {
   if (dir.isEmpty || !Directory(p.join(dir, '.git')).existsSync()) {
     return (
@@ -509,44 +532,61 @@ Future<({List<String> lines, String afterSha})> _syncGitRepo({
       await _runCapture('git', ['-C', dir, 'rev-parse', 'HEAD']) ?? '';
   final effectivePrev = prevSha.isNotEmpty ? prevSha : beforeSha;
 
-  await Process.run(
+  final fetchResult = await _runProcessBounded(
     'git',
     ['-C', dir, 'fetch', 'origin', '--quiet'],
-    environment: const {'GIT_TERMINAL_PROMPT': '0'},
+    environment: nonInteractiveGitEnv(baseEnv),
+    timeout: fetchTimeout,
   );
 
   final dirty =
       await _runCapture('git', ['-C', dir, 'status', '--porcelain']) ?? '';
-  final branch =
-      await _runCapture('git', [
+
+  late final List<String> lines;
+  late final String resultSha;
+  if (fetchResult.exitCode != 0) {
+    final errLine = _firstOutputLine(
+      fetchResult,
+      fallback: 'exit ${fetchResult.exitCode}',
+    );
+    final warning =
+        '  ⚠️  $label ($shortDir): git fetch failed ($errLine) — '
+        'local HEAD at ${_shortSha(beforeSha)} (watermark preserved)';
+    lines = [warning];
+    resultSha = prevSha;
+  } else {
+    final branch =
+        await _runCapture('git', [
+          '-C',
+          dir,
+          'rev-parse',
+          '--abbrev-ref',
+          'HEAD',
+        ]) ??
+        'HEAD';
+
+    if (dirty.isEmpty && branch == 'main') {
+      await Process.run('git', [
         '-C',
         dir,
-        'rev-parse',
-        '--abbrev-ref',
-        'HEAD',
-      ]) ??
-      'HEAD';
+        'merge',
+        '--ff-only',
+        'origin/main',
+        '--quiet',
+      ]);
+    }
 
-  if (dirty.isEmpty && branch == 'main') {
-    await Process.run('git', [
-      '-C',
-      dir,
-      'merge',
-      '--ff-only',
-      'origin/main',
-      '--quiet',
-    ]);
+    final afterSha =
+        await _runCapture('git', ['-C', dir, 'rev-parse', 'HEAD']) ?? '';
+    lines = await _formatGitCommitDeltas(
+      label: label,
+      dir: dir,
+      shortDir: shortDir,
+      effectivePrev: effectivePrev,
+      afterSha: afterSha,
+    );
+    resultSha = afterSha;
   }
-
-  final afterSha =
-      await _runCapture('git', ['-C', dir, 'rev-parse', 'HEAD']) ?? '';
-  final lines = await _formatGitCommitDeltas(
-    label: label,
-    dir: dir,
-    shortDir: shortDir,
-    effectivePrev: effectivePrev,
-    afterSha: afterSha,
-  );
 
   if (dirty.isNotEmpty) {
     lines.add('  ⚠️  $label ($shortDir) has uncommitted local changes:');
@@ -555,7 +595,7 @@ Future<({List<String> lines, String afterSha})> _syncGitRepo({
     }
   }
 
-  return (lines: lines, afterSha: afterSha);
+  return (lines: lines, afterSha: resultSha);
 }
 
 String _shortSha(String sha) => sha.length >= 7 ? sha.substring(0, 7) : sha;
@@ -620,8 +660,9 @@ Future<({List<RelayIssueRaw> issues, String ok, String error})>
 _fetchChannelIssues(String cli, String repo) async {
   const fields =
       'number,title,state,updatedAt,createdAt,closedAt,url,body,comments';
+  const env = {'GH_PROMPT_DISABLED': '1'};
   final results = await Future.wait([
-    Process.run(cli, [
+    _runProcessBounded(cli, [
       'issue',
       'list',
       '-R',
@@ -632,8 +673,8 @@ _fetchChannelIssues(String cli, String repo) async {
       '50',
       '--json',
       fields,
-    ]),
-    Process.run(cli, [
+    ], environment: env),
+    _runProcessBounded(cli, [
       'issue',
       'list',
       '-R',
@@ -644,13 +685,12 @@ _fetchChannelIssues(String cli, String repo) async {
       '15',
       '--json',
       fields,
-    ]),
+    ], environment: env),
   ]);
 
   for (final res in results) {
     if (res.exitCode != 0) {
-      final errText = '${res.stderr}\n${res.stdout}'.trim();
-      final firstLine = errText.split('\n').first;
+      final firstLine = _firstOutputLine(res, fallback: 'exit ${res.exitCode}');
       return (issues: const <RelayIssueRaw>[], ok: 'false', error: firstLine);
     }
   }
@@ -675,6 +715,56 @@ _fetchChannelIssues(String cli, String repo) async {
       ok: 'false',
       error: 'invalid JSON response from $cli',
     );
+  }
+}
+
+String _firstOutputLine(ProcessResult res, {required String fallback}) {
+  final combined = '${res.stderr}\n${res.stdout}';
+  for (final line in combined.split('\n')) {
+    final trimmed = line.trim();
+    if (trimmed.isNotEmpty) return trimmed;
+  }
+  return fallback;
+}
+
+Future<ProcessResult> _runProcessBounded(
+  String executable,
+  List<String> args, {
+  Map<String, String>? environment,
+  Duration timeout = const Duration(seconds: 25),
+}) async {
+  final process = await Process.start(
+    executable,
+    args,
+    environment: environment,
+  );
+  final stdoutFuture = systemEncoding
+      .decodeStream(process.stdout)
+      .catchError((_) => '');
+  final stderrFuture = systemEncoding
+      .decodeStream(process.stderr)
+      .catchError((_) => '');
+  try {
+    final exitCode = await process.exitCode.timeout(timeout);
+    return ProcessResult(
+      process.pid,
+      exitCode,
+      await stdoutFuture,
+      await stderrFuture,
+    );
+  } on TimeoutException {
+    process.kill();
+    await process.exitCode.timeout(
+      const Duration(seconds: 1),
+      onTimeout: () {
+        process.kill(ProcessSignal.sigkill);
+        return 124;
+      },
+    );
+    final label = timeout.inSeconds > 0
+        ? '${timeout.inSeconds}s'
+        : '${timeout.inMilliseconds}ms';
+    return ProcessResult(process.pid, 124, '', 'timed out after $label');
   }
 }
 
