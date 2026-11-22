@@ -563,4 +563,75 @@ Landed PR #113 on kevmoo/scripts.dart.
       expect(timedOutSync.lines.join('\n'), contains('timed out after 250ms'));
     });
   });
+
+  group('fetchRelayChannelIssues', () {
+    test('serializes open and closed queries without concurrency and retries '
+        'once on transient EOF', () async {
+      var inFlight = 0;
+      var maxConcurrent = 0;
+      final calls = <String>[];
+      var openAttempts = 0;
+
+      final result = await fetchRelayChannelIssues(
+        'ggh',
+        'example/relay',
+        retryDelay: Duration.zero,
+        runner: (cli, args) async {
+          inFlight++;
+          if (inFlight > maxConcurrent) maxConcurrent = inFlight;
+          final stateIdx = args.indexOf('--state');
+          final state = args[stateIdx + 1];
+          calls.add('$cli:$state');
+          await Future<void>.value();
+          inFlight--;
+
+          if (state == 'open' && openAttempts++ == 0) {
+            return ProcessResult(
+              1,
+              1,
+              '',
+              'Post "https://ghe.example.test/api/graphql": EOF',
+            );
+          }
+          if (state == 'open') {
+            return ProcessResult(
+              2,
+              0,
+              '[{"number":7,"title":"Test","state":"OPEN",'
+                  '"updatedAt":"2026-11-21T00:00:00Z",'
+                  '"createdAt":"2026-11-21T00:00:00Z",'
+                  '"url":"https://ghe.example.test/example/relay/issues/7",'
+                  '"body":"hi","comments":[]}]',
+              '',
+            );
+          }
+          return ProcessResult(3, 0, '[]', '');
+        },
+      );
+
+      expect(maxConcurrent, 1);
+      expect(calls, ['ggh:open', 'ggh:open', 'ggh:closed']);
+      expect(result.ok, 'true');
+      expect(result.issues.single.number, 7);
+    });
+
+    test('fails fast without retrying or querying closed on permanent auth '
+        'errors', () async {
+      final calls = <String>[];
+      final result = await fetchRelayChannelIssues(
+        'ggh',
+        'example/relay',
+        retryDelay: Duration.zero,
+        runner: (cli, args) async {
+          final state = args[args.indexOf('--state') + 1];
+          calls.add(state);
+          return ProcessResult(1, 1, '', 'HTTP 401: Bad credentials');
+        },
+      );
+
+      expect(calls, ['open']);
+      expect(result.ok, 'false');
+      expect(result.error, 'HTTP 401: Bad credentials');
+    });
+  });
 }

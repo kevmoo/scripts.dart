@@ -361,18 +361,30 @@ Future<void> _runRelayCheck(
       .toString();
   final prevOssSha = ((prevState['oss'] as Map?)?['git_head'] ?? '').toString();
 
-  // Execute all 4 git + issue sync tasks concurrently via Future.wait.
-  final corpGitFuture = (env.hasGgh && env.corpRepo.isNotEmpty)
-      ? syncRelayGitRepo(
-          label: '🔒 Corp Relay (${env.corpRepo})',
-          dir: env.corpDir,
-          prevSha: prevCorpSha,
-          home: home,
-        )
-      : Future.value((
-          lines: const ['  ⚪ 🔒 Corp Relay: N/A on this host'],
-          afterSha: '',
-        ));
+  // Serialize corp git + ggh queries on the corp host to avoid concurrent
+  // proxy GraphQL resets while keeping corp and GitHub channels in parallel.
+  Future<
+    (
+      ({List<String> lines, String afterSha}),
+      ({List<RelayIssueRaw> issues, String ok, String error}),
+    )
+  >
+  syncCorpChannel() async {
+    if (!env.hasGgh || env.corpRepo.isEmpty) {
+      return (
+        (lines: const ['  ⚪ 🔒 Corp Relay: N/A on this host'], afterSha: ''),
+        (issues: const <RelayIssueRaw>[], ok: 'skipped', error: ''),
+      );
+    }
+    final git = await syncRelayGitRepo(
+      label: '🔒 Corp Relay (${env.corpRepo})',
+      dir: env.corpDir,
+      prevSha: prevCorpSha,
+      home: home,
+    );
+    final issues = await fetchRelayChannelIssues('ggh', env.corpRepo);
+    return (git, issues);
+  }
 
   final ossGitFuture = env.hasGh
       ? syncRelayGitRepo(
@@ -383,35 +395,20 @@ Future<void> _runRelayCheck(
         )
       : Future.value((lines: const <String>[], afterSha: ''));
 
-  final corpIssuesFuture = (env.hasGgh && env.corpRepo.isNotEmpty)
-      ? _fetchChannelIssues('ggh', env.corpRepo)
-      : Future.value((
-          issues: const <RelayIssueRaw>[],
-          ok: 'skipped',
-          error: '',
-        ));
-
   final ossIssuesFuture = env.hasGh
-      ? _fetchChannelIssues('gh', env.ossRepo)
+      ? fetchRelayChannelIssues('gh', env.ossRepo)
       : Future.value((
           issues: const <RelayIssueRaw>[],
           ok: 'skipped',
           error: '',
         ));
 
-  final results = await Future.wait([
-    corpGitFuture,
+  final (corpResult, ossGit, ossIssues) = await (
+    syncCorpChannel(),
     ossGitFuture,
-    corpIssuesFuture,
     ossIssuesFuture,
-  ]);
-
-  final corpGit = results[0] as ({List<String> lines, String afterSha});
-  final ossGit = results[1] as ({List<String> lines, String afterSha});
-  final corpIssues =
-      results[2] as ({List<RelayIssueRaw> issues, String ok, String error});
-  final ossIssues =
-      results[3] as ({List<RelayIssueRaw> issues, String ok, String error});
+  ).wait;
+  final (corpGit, corpIssues) = corpResult;
 
   print(
     '📟 Active Persona: ${env.moniker} '
@@ -643,43 +640,50 @@ Future<List<String>> _formatGitCommitDeltas({
   ];
 }
 
+final _transientTransportRe = RegExp(
+  r'\bEOF\b|connection reset|timed out|handshake timeout',
+  caseSensitive: false,
+);
+
+/// Lists open and recently closed issues sequentially for [repo] via [cli],
+/// retrying once on transient proxy or GraphQL transport drops (`EOF`).
 Future<({List<RelayIssueRaw> issues, String ok, String error})>
-_fetchChannelIssues(String cli, String repo) async {
+fetchRelayChannelIssues(
+  String cli,
+  String repo, {
+  Future<ProcessResult> Function(String, List<String>)? runner,
+  Duration retryDelay = const Duration(milliseconds: 250),
+}) async {
   const fields =
       'number,title,state,updatedAt,createdAt,closedAt,url,body,comments';
   const env = {'GH_PROMPT_DISABLED': '1'};
-  final results = await Future.wait([
-    _runProcessBounded(cli, [
-      'issue',
-      'list',
-      '-R',
-      repo,
-      '--state',
-      'open',
-      '--limit',
-      '50',
-      '--json',
-      fields,
-    ], environment: env),
-    _runProcessBounded(cli, [
-      'issue',
-      'list',
-      '-R',
-      repo,
-      '--state',
-      'closed',
-      '--limit',
-      '15',
-      '--json',
-      fields,
-    ], environment: env),
-  ]);
+  final effectiveRunner =
+      runner ?? (exe, args) => _runProcessBounded(exe, args, environment: env);
 
-  for (final res in results) {
+  final results = <ProcessResult>[];
+  for (final (state, limit) in const [('open', '50'), ('closed', '15')]) {
+    final res = await _runIssueQueryWithRetry(
+      cli,
+      [
+        'issue',
+        'list',
+        '-R',
+        repo,
+        '--state',
+        state,
+        '--limit',
+        limit,
+        '--json',
+        fields,
+      ],
+      runner: effectiveRunner,
+      retryDelay: retryDelay,
+    );
     if (res.exitCode != 0) {
       final firstLine = _firstOutputLine(res, fallback: 'exit ${res.exitCode}');
       return (issues: const <RelayIssueRaw>[], ok: 'false', error: firstLine);
     }
+    results.add(res);
   }
 
   try {
@@ -703,6 +707,22 @@ _fetchChannelIssues(String cli, String repo) async {
       error: 'invalid JSON response from $cli',
     );
   }
+}
+
+Future<ProcessResult> _runIssueQueryWithRetry(
+  String cli,
+  List<String> args, {
+  required Future<ProcessResult> Function(String, List<String>) runner,
+  required Duration retryDelay,
+}) async {
+  final first = await runner(cli, args);
+  if (first.exitCode == 0) return first;
+  final combined = '${first.stderr}\n${first.stdout}';
+  if (!_transientTransportRe.hasMatch(combined)) return first;
+  if (retryDelay > Duration.zero) {
+    await Future<void>.delayed(retryDelay);
+  }
+  return runner(cli, args);
 }
 
 String _firstOutputLine(ProcessResult res, {required String fallback}) {
