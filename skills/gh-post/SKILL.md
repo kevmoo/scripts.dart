@@ -57,9 +57,15 @@ Confirm two parameters before doing any work:
 
 ### Step 2: Repository Orientation
 
-Run `kscripts gh-orient` (or `gh-orient`) to inspect maintainers, title
-prefixes, label vocabulary, native templates (`.yml` field IDs), and audience:
+Run `kscripts gh-orient` (or `gh-orient`) to inspect agent instructions,
+repository skills, maintainers, title prefixes, label vocabulary, native
+templates (`.yml` field IDs), and audience:
 
+- **Agent Instructions & Repository Skills**: Read surfaced `Agent Instructions`
+  and any `Repository Skills` whose summary matches your task (resolving paths
+  against `Local Checkout`, or via
+  `gh api repos/<owner>/<repo>/contents/<path> --jq .content | base64 -d` when
+  using `-R` without a clone) before drafting or making further edits.
 - **Audience (`-p, --paths`)**: Pass repository-relative paths referenced by the
   draft. `owner` (one author dominates or small repo) = zero background, open
   directly with what is wrong or changes. `visitor` (distributed/rotating
@@ -172,6 +178,11 @@ read-only subagent given only its persona, role (`N=3`), and publish-form text:
    entries outside required repo PR checklists (e.g., CLA). Otherwise move the
    deciding sentence to line 1, apply `cut_list`, add `missing` facts, and
    re-run once. Skip for comments/replies `<= 50` words.
+4. **Documentation-PR Style Audit**: When opening a documentation PR in a
+   repository with a prose, style, or proofreading skill/styleguide, also run a
+   read-only subagent pass on the **changed documentation files** (`git diff`),
+   passing `Local Checkout` and the matching styleguide/`SKILL.md` paths, and
+   apply fixes before Step 4.
 
 ### Step 4: Two-Layer Pre-Chew Gate & Approval (Hard Stop)
 
