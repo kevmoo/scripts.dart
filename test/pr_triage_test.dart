@@ -85,6 +85,7 @@ void main() {
   _registerTriageReportTests();
   _registerSyncStatusTests();
   _registerResolveCliTests();
+  _registerReplyCliTests();
   _registerReRequestCliTests();
   _registerEnterpriseHostTests();
 }
@@ -1382,6 +1383,226 @@ void _registerResolveCliTests() {
   });
 }
 
+void _registerReplyCliTests() {
+  group('replyToPrComment and reply CLI tests', () {
+    test('reply CLI validates common agent mistakes and --help', () async {
+      final helpRes = await _capturePrTriage(['reply', '--help']);
+      expect(helpRes.exitCode, equals(0));
+      expect(
+        helpRes.lines.join('\n'),
+        contains(
+          'kscripts pr-triage reply [--react <+1|-1>] <comment_id> '
+          '"<reply_body>"',
+        ),
+      );
+
+      final noArgs = await _capturePrTriage(['reply']);
+      expect(noArgs.exitCode, equals(ExitCode.usage.code));
+      expect(
+        noArgs.lines.join('\n'),
+        contains('Error: Invalid arguments for reply subcommand.'),
+      );
+
+      final prrtPrefix = await _capturePrTriage([
+        'reply',
+        'PRRT_kwDOAeUeuM64-T-c',
+        'Did you mean _hashAndRenameWebOutput or buildPatternStems?',
+      ]);
+      expect(prrtPrefix.exitCode, equals(ExitCode.usage.code));
+      expect(
+        prrtPrefix.lines.join('\n'),
+        contains('not a PRRT_ review thread ID ("PRRT_kwDOAeUeuM64-T-c")'),
+      );
+
+      final threeArgs = await _capturePrTriage([
+        'reply',
+        'PRRT_kwDOAeUeuM64-T-c',
+        '4614496992',
+        'Did you mean _hashAndRenameWebOutput or buildPatternStems?',
+      ]);
+      expect(threeArgs.exitCode, equals(ExitCode.usage.code));
+      expect(
+        threeArgs.lines.join('\n'),
+        contains(
+          'Error: "reply" takes 2 positional arguments '
+          '(<comment_id> "<reply_body>"), not 3.',
+        ),
+      );
+
+      final nonNumericId = await _capturePrTriage([
+        'reply',
+        'PRRC_node_123',
+        'Clarifying question',
+      ]);
+      expect(nonNumericId.exitCode, equals(ExitCode.usage.code));
+      expect(
+        nonNumericId.lines.join('\n'),
+        contains('Error: <comment_id> must be a numeric database ID.'),
+      );
+
+      final emptyBody = await _capturePrTriage(['reply', '4614496992', '   ']);
+      expect(emptyBody.exitCode, equals(ExitCode.usage.code));
+      expect(
+        emptyBody.lines.join('\n'),
+        contains('Error: <reply_body> cannot be empty.'),
+      );
+
+      final invalidReaction = await _capturePrTriage([
+        'reply',
+        '--react',
+        'eyes',
+        '4614496992',
+        'Clarifying question',
+      ]);
+      expect(invalidReaction.exitCode, equals(ExitCode.usage.code));
+      expect(
+        invalidReaction.lines.join('\n'),
+        contains('Error: --react must be "+1" or "-1" (got "eyes").'),
+      );
+    });
+
+    test('reply CLI posts inline reply and optional +1/-1 reaction with -p URL '
+        'without resolving thread', () async {
+      final cliCalls = <String>[];
+      Future<String> fakeCliRunner(
+        String exe,
+        List<String> args, {
+        String? workingDirectory,
+      }) async {
+        if (args.contains('graphql')) {
+          throw StateError('reply must never invoke resolveReviewThread');
+        }
+        cliCalls.add('$exe ${args.join(' ')}');
+        return '{}';
+      }
+
+      final plainReply = await _capturePrTriage([
+        'reply',
+        '-p',
+        'https://github.com/flutter/flutter/pull/196563',
+        '4614496992',
+        'Did you mean dropping sourceMapFile only, or buildPatternStems too?',
+      ], runCommand: fakeCliRunner);
+      expect(plainReply.exitCode, equals(0));
+      expect(cliCalls, hasLength(1));
+      expect(
+        cliCalls.single,
+        equals(
+          'gh api repos/flutter/flutter/pulls/196563/comments/4614496992/replies '
+          '-f body=Did you mean dropping sourceMapFile only, or '
+          'buildPatternStems too?',
+        ),
+      );
+      expect(plainReply.lines.join('\n'), contains('(thread left unresolved)'));
+
+      cliCalls.clear();
+      final plusOneReply = await _capturePrTriage([
+        'reply',
+        '--react',
+        '+1',
+        '--pr',
+        'https://github.com/flutter/flutter/pull/196563',
+        '4614496992',
+        'Good catch, keeping open until follow-up lands.',
+      ], runCommand: fakeCliRunner);
+      expect(plusOneReply.exitCode, equals(0));
+      expect(cliCalls, hasLength(2));
+      expect(
+        cliCalls[0],
+        equals(
+          'gh api repos/flutter/flutter/pulls/196563/comments/4614496992/replies '
+          '-f body=Good catch, keeping open until follow-up lands.',
+        ),
+      );
+      expect(
+        cliCalls[1],
+        equals(
+          'gh api repos/flutter/flutter/pulls/comments/4614496992/reactions '
+          '-f content=+1',
+        ),
+      );
+
+      cliCalls.clear();
+      final minusOneReply = await _capturePrTriage([
+        'reply',
+        '--react',
+        '-1',
+        '-p',
+        'https://github.com/dart-lang/i18n/pull/1138',
+        '4656762591',
+        'Intentional per RFC; leaving open for discussion.',
+      ], runCommand: fakeCliRunner);
+      expect(minusOneReply.exitCode, equals(0));
+      expect(cliCalls, hasLength(2));
+      expect(
+        cliCalls[0],
+        equals(
+          'gh api repos/dart-lang/i18n/pulls/1138/comments/4656762591/replies '
+          '-f body=Intentional per RFC; leaving open for discussion.',
+        ),
+      );
+      expect(
+        cliCalls[1],
+        equals(
+          'gh api repos/dart-lang/i18n/pulls/comments/4656762591/reactions '
+          '-f content=-1',
+        ),
+      );
+    });
+
+    test(
+      'replyToPrComment validates inputs before executing commands',
+      () async {
+        final prContext = PrContext(
+          workingDir: '/tmp/repo',
+          prNumber: '196563',
+          owner: 'flutter',
+          repo: 'flutter',
+        );
+        final calls = <String>[];
+        Future<String> fakeRunner(
+          String exe,
+          List<String> args, {
+          String? workingDirectory,
+        }) async {
+          calls.add('$exe ${args.join(' ')}');
+          return '{}';
+        }
+
+        await expectLater(
+          replyToPrComment(
+            prContext,
+            commentId: 'PRRT_1',
+            body: 'Question?',
+            runCommand: fakeRunner,
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+        await expectLater(
+          replyToPrComment(
+            prContext,
+            commentId: '4614496992',
+            body: '   ',
+            runCommand: fakeRunner,
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+        await expectLater(
+          replyToPrComment(
+            prContext,
+            commentId: '4614496992',
+            body: 'Question?',
+            reaction: 'rocket',
+            runCommand: fakeRunner,
+          ),
+          throwsA(isA<ArgumentError>()),
+        );
+        expect(calls, isEmpty);
+      },
+    );
+  });
+}
+
 void _registerReRequestCliTests() {
   group('reRequestPrReview and re-request CLI tests', () {
     final context = PrContext(
@@ -1549,7 +1770,6 @@ void _registerReRequestCliTests() {
         ('dismiss', 're-request <reviewer_login> --dismiss'),
         ('rerequest', 're-request <reviewer_login>'),
         ('re_request', 're-request <reviewer_login>'),
-        ('reply', 'resolve <thread_id> <comment_id>'),
         ('reaction', 'react <comment_id> <+1|-1> [--issue-comment]'),
         ('reactions', 'react <comment_id> <+1|-1> [--issue-comment]'),
       ]) {
@@ -1809,6 +2029,15 @@ void _registerEnterpriseHostTests() {
         environment: enterpriseEnv,
       );
 
+      await replyToPrComment(
+        enterpriseContext,
+        commentId: '44155',
+        body: 'Clarifying question before resolving',
+        reaction: '-1',
+        runCommand: fakeRunner,
+        environment: enterpriseEnv,
+      );
+
       await replyAndResolveThread(
         enterpriseContext,
         threadId: 'PRRT_enterprise_1',
@@ -1846,12 +2075,28 @@ void _registerEnterpriseHostTests() {
         calls[2],
         equals(
           'custom-gh-enterprise api --hostname git.example.com '
+          'repos/team-org/knowledge-base/pulls/95/comments/44155/replies '
+          '-f body=Clarifying question before resolving',
+        ),
+      );
+      expect(
+        calls[3],
+        equals(
+          'custom-gh-enterprise api --hostname git.example.com '
+          'repos/team-org/knowledge-base/pulls/comments/44155/reactions '
+          '-f content=-1',
+        ),
+      );
+      expect(
+        calls[4],
+        equals(
+          'custom-gh-enterprise api --hostname git.example.com '
           'repos/team-org/knowledge-base/pulls/95/comments/44156/replies '
           '-f body=Quote-reply feedback',
         ),
       );
       expect(
-        calls[3],
+        calls[5],
         equals(
           'custom-gh-enterprise api --hostname git.example.com '
           'repos/team-org/knowledge-base/pulls/comments/44156/reactions '
@@ -1859,20 +2104,20 @@ void _registerEnterpriseHostTests() {
         ),
       );
       expect(
-        calls[4],
+        calls[6],
         startsWith(
           'custom-gh-enterprise api --hostname git.example.com graphql ',
         ),
       );
       expect(
-        calls[5],
+        calls[7],
         equals(
           'custom-gh-enterprise pr comment 95 -R '
           'git.example.com/team-org/knowledge-base --body Ready for another look',
         ),
       );
       expect(
-        calls[6],
+        calls[8],
         equals(
           'custom-gh-enterprise api --hostname git.example.com -X PUT '
           'repos/team-org/knowledge-base/pulls/95/reviews/777/dismissals '
@@ -1880,7 +2125,7 @@ void _registerEnterpriseHostTests() {
         ),
       );
       expect(
-        calls[7],
+        calls[9],
         equals(
           'custom-gh-enterprise pr edit 95 -R '
           'git.example.com/team-org/knowledge-base --add-reviewer alice',

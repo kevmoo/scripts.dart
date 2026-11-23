@@ -9,9 +9,23 @@ Create `pr_triage_report.md` in `<appDataDir>/brain/<conversation-id>/` using
 `write_to_file` with `RequestFeedback: false` and `UserFacing: true` in
 `ArtifactMetadata`, then immediately call `ask_question` in Step 6:
 
-- Option 1: `(Recommended) Implement the proposed fixes and test plan`
-- Option 2: `Adjust the triage plan first`
-- Option 3: `Do not edit files (keep triage report only)`
+- **When all items are unambiguous**:
+  - Option 1: `(Recommended) Implement the proposed fixes and test plan` (or
+    `(Recommended) Proceed to Step 8 replies/reactions (no code edits)` when no
+    code changes are proposed)
+  - Option 2: `Do not edit files (keep triage report only)`
+- **When `❓ Clarify` or genuine trade-offs exist** (replace generic adjustment
+  placeholders with `2–3` concrete decision forks):
+  - **`❓ Clarify (Author)`**:
+    1. `(Recommended) Implement fixes using <Option A summary>`
+    2. `Implement fixes using <Option B summary>`
+    3. `Do not edit files (keep triage report only)`
+  - **`❓ Clarify (Reviewer)`** (human reviewers only):
+    1. `(Recommended) Implement unambiguous fixes, push, and post open question on Thread #<N> via pr-triage reply`
+    2. `Post open question on Thread #<N> via pr-triage reply before editing or pushing`
+       _(promote to `(Recommended)` when CI is expensive and the answer could
+       alter the code change)_
+    3. `Do not edit files or post replies (keep triage report only)`
 
 ```markdown
 # PR Triage Report: `<owner>/<repo>#<PR>`
@@ -27,32 +41,34 @@ Create `pr_triage_report.md` in `<appDataDir>/brain/<conversation-id>/` using
 
 - **Summary of Feedback / Failure**:
   - [Comment #1 by @reviewer_username](https://github.com/<owner>/<repo>/pull/<PR>#discussion_r<id>) (or [Review #1 by @reviewer_username](https://github.com/<owner>/<repo>/pull/<PR>#pullrequestreview-<id>))
-  - `<1–2 sentence summary of the reviewer claim or CI failure>`
+  - `<1-2 sentence summary of the reviewer claim or CI failure>`
 - **Identifiers**:
   - `Thread ID`: `PRRT_...` · `Comment ID`: `<database_id>` (or `Review ID`: `PRR_...` · `Database ID`: `<review_database_id>`)
-- **Agent Assessment (Internal Only — Do Not Paste into GitHub)**:
-  - **Agreement Level**: `<🔥 Urgent [Valid — Fix] | 👍 Solid [Valid — Fix] | 🤷 Meh | 👎 Disagree>`
-  - **Empirical Verification**: `<Output of dart analyze / dart test on unmodified code>`
-  - **Rationale**: `<Technical explanation of why we agree, disagree, or recommend a direction>`
-  - **Review-Escape Capture (`[Valid — Fix]` only)**: `<Logged via /sharpen-later (--cat=review-escape) | N/A>`
+- **Agent Assessment (Internal Only -- Do Not Paste into GitHub)**:
+  - **Agreement Level**: `<🔥 Urgent [Valid -- Fix] | 👍 Solid [Valid -- Fix] | 🤷 Meh | 👎 Disagree | ❓ Clarify (Author) | ❓ Clarify (Reviewer)>`
+  - **Empirical Verification**: `<Output of dart analyze / dart test on unmodified code; for ❓ Clarify, include "checked: <what was inspected and why it does not settle this>">`
+  - **Rationale**: `<Technical explanation of why we agree, disagree, or surface a decision/clarification fork>`
+  - **Review-Escape Capture (`[Valid -- Fix]` only)**: `<Logged via /sharpen-later (--cat=review-escape) | N/A>`
 - **Planned Action**:
-  - **Code / Doc Changes**: [`lib/src/foo.dart`](file:///.../lib/src/foo.dart#L10-L25) — `<proposed change or "No action needed">`
-  - **Outbound Draft Reply (`<= 40 words` / 1–2 sentences)**: `<e.g. "Fixed in <sha> — moved validation before state update." Never paste the internal Agent Assessment rationale.>`
-  - **Bot Feedback Reaction (`@gemini-code-assist` only)**: `<+1 | -1 | None — neutral/human/summary>`
+  - **Code / Doc Changes**: [`lib/src/foo.dart`](file:///.../lib/src/foo.dart#L10-L25) -- `<proposed change, "No action needed", or "Pending clarification">`
+  - **Outbound Draft Reply (`<= 40 words` / 1-2 sentences)**: `<e.g. "Fixed in <sha> -- moved validation before state update." or for ❓ Clarify (Reviewer): "<what was checked> -- did you mean <A> or <B>?" via pr-triage reply (keep thread open). Never paste the internal Agent Assessment rationale.>`
+  - **Bot Feedback Reaction (`@gemini-code-assist` only)**: `<+1 | -1 | None -- neutral/human/summary>`
   - **Test Plan (2-Bucket TDD Filter)**:
-    - `<Companion Test: test/foo_test.dart — test case summary>` OR `<None — copy/comment/rename or behavior already covered>`
+    - `<Companion Test: test/foo_test.dart -- test case summary>` OR `<None -- copy/comment/rename, behavior already covered, or pending clarification>`
 ```
 
 ## 2. Step 8 Unified Completion Menu (`ask_question`)
 
 Include the `"dismiss stale CHANGES_REQUESTED review"` option whenever an open
 `CHANGES_REQUESTED` review was fully addressed by code fixes; promote it to
-`(Recommended)` when another maintainer has already `APPROVED` the PR.
+`(Recommended)` when another maintainer has already `APPROVED` the PR. Use
+`kscripts pr-triage reply` (not `resolve`) for `❓ Clarify (Reviewer)` questions
+and open human `👎 Disagree` discussions so those threads remain unresolved.
 
 ### A. When Uncommitted Changes or Unpushed Commits Exist
 
-1. `(Recommended) Commit fixes, push branch, reply/react/resolve, and re-request review if needed`
-2. `Commit fixes, push branch, reply/react/resolve, dismiss stale CHANGES_REQUESTED review, and re-request review`
+1. `(Recommended) Commit fixes, push branch, reply/react/resolve (keeping clarification/discussion threads open), and re-request review if needed`
+2. `Commit fixes, push branch, reply/react/resolve (keeping clarification/discussion threads open), dismiss stale CHANGES_REQUESTED review, and re-request review`
    _(include when an addressed `CHANGES_REQUESTED` review exists)_
 3. `Commit fixes and push branch only`
 4. `Commit fixes locally only`
@@ -60,8 +76,8 @@ Include the `"dismiss stale CHANGES_REQUESTED review"` option whenever an open
 
 ### B. When Working Tree Is Clean and All Commits Are Pushed
 
-1. `(Recommended) Reply/react/resolve and re-request review if needed`
-2. `Reply/react/resolve, dismiss stale CHANGES_REQUESTED review, and re-request review`
+1. `(Recommended) Reply/react/resolve (keeping clarification/discussion threads open) and re-request review if needed`
+2. `Reply/react/resolve (keeping clarification/discussion threads open), dismiss stale CHANGES_REQUESTED review, and re-request review`
    _(include when an addressed `CHANGES_REQUESTED` review exists)_
 3. `Do nothing`
 
@@ -70,11 +86,14 @@ Include the `"dismiss stale CHANGES_REQUESTED review"` option whenever an open
 ### CLI Commands & Outbound Reply Compression (`kscripts pr-triage`)
 
 Keep every outbound `<reply_body>` and `<top_level_reply_body>` to
-**`<= 40 words` (1–2 sentences)** stating the commit SHA and fix (or answering
-the reviewer's question directly). Never paste the internal `Agent Assessment`
-block into GitHub.
+**`<= 40 words` (1–2 sentences)** stating the commit SHA and fix, explaining why
+a suggestion was declined, or asking a crisp `A vs. B?` clarification question.
+Never paste the internal `Agent Assessment` block into GitHub.
 
 ```bash
+# Reply to an inline comment WITHOUT resolving its review thread (for Clarify (Reviewer) questions or open human Disagree discussions):
+kscripts pr-triage reply --dir <repo-path> [--pr <pr_number>] [--react <+1|-1>] <comment_database_id> "<reply_body>"
+
 # Reply to an inline comment and resolve its review thread (pass --react +1|-1 on @gemini-code-assist comments):
 kscripts pr-triage resolve --dir <repo-path> [--pr <pr_number>] [--react <+1|-1>] <thread_graphql_id> <comment_database_id> "<reply_body>"
 

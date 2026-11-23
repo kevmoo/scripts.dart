@@ -399,6 +399,7 @@ installed and authenticated in your `PATH`.
 
 ```shell
 kscripts pr-triage [options]
+kscripts pr-triage reply [--react <+1|-1>] <comment_id> "<reply_body>"
 kscripts pr-triage resolve [--react <+1|-1>] <thread_id> [<comment_id> ["<body_text>"]]
 kscripts pr-triage react [--issue-comment] <comment_id> <+1|-1>
 kscripts pr-triage re-request <reviewer_login> [--comment "<reply_body>"] [--dismiss <review_database_id> -m "<message>"]

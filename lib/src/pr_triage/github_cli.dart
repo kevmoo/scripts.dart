@@ -571,6 +571,40 @@ Future<void> reactToPrComment(
   ], workingDirectory: context.workingDir);
 }
 
+/// Posts an inline reply [body] to a PR review comment by its numeric
+/// [commentId], optionally posting a `+1` or `-1` [reaction] on [commentId],
+/// while leaving the review thread unresolved.
+Future<void> replyToPrComment(
+  PrContext context, {
+  required String commentId,
+  required String body,
+  String? reaction,
+  CommandRunner runCommand = runCommand,
+  Map<String, String>? environment,
+}) async {
+  final cleanId = commentId.trim();
+  final trimmedReaction = reaction?.trim() ?? '';
+  if (trimmedReaction.isNotEmpty) {
+    _validateCommentReaction(trimmedReaction);
+  }
+  await _replyToComment(
+    context,
+    commentId: cleanId,
+    body: body,
+    runCommand: runCommand,
+    environment: environment,
+  );
+  if (trimmedReaction.isNotEmpty) {
+    await reactToPrComment(
+      context,
+      commentId: cleanId,
+      reaction: trimmedReaction,
+      runCommand: runCommand,
+      environment: environment,
+    );
+  }
+}
+
 /// Replies to a comment (when [commentId] and [body] are provided), posts an
 /// optional `+1`/`-1` [reaction] on [commentId], and resolves [threadId].
 Future<void> replyAndResolveThread(
