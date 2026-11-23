@@ -1072,7 +1072,7 @@ jobs:
   });
 
   group('examples.yml', () {
-    test('hasExampleFence recognizes pkg:example fence openers only', () {
+    test('hasExampleFence recognizes package:snippets fence openers only', () {
       check(hasExampleFence('```dart @example example/foo.dart#region\n```\n'))
           .isTrue;
       check(hasExampleFence('~~~dart @example example/foo.dart\n~~~\n')).isTrue;
@@ -1087,8 +1087,9 @@ jobs:
     test('canonical template job id and pin match the required context', () {
       check(canonicalExamplesWorkflow).contains('\n  examples:\n');
       check(canonicalExamplesWorkflow).contains(
-        'uses: google/dart-neats/.github/workflows/validate-examples.yml@',
+        'uses: dart-lang/tools/.github/workflows/validate_snippets.yaml@',
       );
+      check(canonicalExamplesWorkflow).contains('dart run snippets@ update');
       check(canonicalExamplesWorkflow).not(.it()..contains('\n    paths:'));
       check(examplesCheckContext).startsWith('examples / ');
     });

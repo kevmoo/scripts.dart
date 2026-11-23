@@ -70,7 +70,7 @@ class RepoAlignmentStatus {
   final bool hasPrettierIgnore;
   final List<String> spotDriftIssues;
 
-  // pkg:example validation
+  // package:snippets validation
   /// Whether any markdown file carries a fence whose info string contains
   /// `@example`.
   final bool hasExampleFences;
@@ -285,7 +285,7 @@ class RepoAlignmentStatus {
   }
 
   /// `examples.yml` is required only where markdown actually uses
-  /// `pkg:example` fences, but applies to every repo kind that does.
+  /// `package:snippets` fences, but applies to every repo kind that does.
   void _checkExamplesIssues(List<String> result) {
     if (hasExampleFences && !hasExamplesWorkflow) {
       result.add('Missing examples.yml');

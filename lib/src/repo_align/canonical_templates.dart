@@ -186,18 +186,17 @@ jobs:
 /// the job ID, which is what a branch ruleset must require.
 const String markdownCheckContext = 'markdown';
 
-/// The `pkg:example` validation check: fails when a markdown fence whose info
-/// string carries `@example` no longer matches the source it points at.
+/// The `package:snippets` validation check: fails when a markdown fence whose
+/// info string carries `@example` no longer matches the source it points at.
 ///
-/// Byte-for-byte copy of the template in kevmoo/scripts.dart#192. Note that
-/// because the job calls a reusable workflow, GitHub names the check run
-/// `<caller job id> / <callee job name>`, not the bare job ID -- see
+/// Note that because the job calls a reusable workflow, GitHub names the check
+/// run `<caller job id> / <callee job name>`, not the bare job ID -- see
 /// [examplesCheckContext].
 const String canonicalExamplesWorkflow = r'''
 name: Examples
 
 # Fails when a ```dart @example ...``` block in markdown no longer matches the
-# source it points at. Run `dart run example@ update` to refresh.
+# source it points at. Run `dart run snippets@ update` to refresh.
 # Deliberately NO `paths:` filter (see markdown.yml).
 
 on:
@@ -212,13 +211,13 @@ jobs:
   # Calls a reusable workflow, so the check-run context a branch ruleset matches
   # on is "examples / Validate markdown examples" (caller job / called job).
   examples:
-    uses: google/dart-neats/.github/workflows/validate-examples.yml@e304f7e0ebd0531e832136b2300aded8a14584ba
+    uses: dart-lang/tools/.github/workflows/validate_snippets.yaml@25b94cede2e32228ea72811041c69b1efb0adff5
 ''';
 
 /// The check-run context name produced by [canonicalExamplesWorkflow].
 ///
 /// The `examples` job delegates to
-/// `google/dart-neats/.github/workflows/validate-examples.yml`, whose inner job
+/// `dart-lang/tools/.github/workflows/validate_snippets.yaml`, whose inner job
 /// is named `Validate markdown examples`, so the reported context is the pair
 /// joined by ` / `. Requiring the bare job ID (`examples`) would never be
 /// satisfied and would deadlock every PR. The pinned SHA in the template keeps

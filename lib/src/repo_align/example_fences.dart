@@ -9,8 +9,8 @@ final _exampleFenceRegex = RegExp(
   multiLine: true,
 );
 
-/// Whether [markdown] contains a `pkg:example` fence (one whose info string
-/// carries `@example`).
+/// Whether [markdown] contains a `package:snippets` fence (one whose info
+/// string carries `@example`).
 bool hasExampleFence(String? markdown) =>
     markdown != null &&
     markdown.contains('@example') &&
@@ -18,7 +18,7 @@ bool hasExampleFence(String? markdown) =>
 
 const _skippedDirNames = {'.git', '.dart_tool', 'node_modules', 'build'};
 
-/// Whether any `.md` file under [repoDir] contains a `pkg:example` fence.
+/// Whether any `.md` file under [repoDir] contains a `package:snippets` fence.
 ///
 /// Mirrors the SPOT scanner's file walk: generated and tooling directories are
 /// skipped.

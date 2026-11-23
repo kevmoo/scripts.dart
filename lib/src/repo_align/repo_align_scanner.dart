@@ -539,7 +539,7 @@ class RepoAlignScanner {
     return false;
   }
 
-  /// Remote `pkg:example` fence detection.
+  /// Remote `package:snippets` fence detection.
   ///
   /// The GraphQL snapshot carries only the root and workspace-member/
   /// `packages/*` `README.md` blobs; fetching every `.md` blob per repo would
