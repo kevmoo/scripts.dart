@@ -49,6 +49,13 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
 - **You are free to disagree**: Verify claims with `dart analyze` and
   `dart test`; if a suggestion regresses behavior or current code is already
   optimal, mark it `👎 Disagree` with technical rationale.
+- **Rank on Code Quality, Never CI or Approval Inertia**: Score Agreement Levels
+  and Step 6's `(Recommended)` option strictly on code correctness, API and
+  idiom cleanliness, and repo conventions. Never downgrade a known-valid
+  in-scope fix to `🤷 Meh`, defer it to a follow-up PR, or recommend keeping
+  code unchanged to avoid restarting CI or `dismiss_stale_reviews` on an
+  `APPROVED` vote. Recommend the clean fix and note briefly if pushing restarts
+  CI or requires re-requesting a dismissed approval in Step 8.
 
 ## How to use this skill (The Workflow)
 
@@ -130,19 +137,19 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
      `--agent-note "<owner>/<repo>#<PR>: <why local pre-review missed it>"`.
 
 6. **Interactive Approval Gate (`ask_question`)**:
-   - Immediately after writing `pr_triage_report.md`, call `ask_question` (see
-     [`references/graphql_and_templates.md`](references/graphql_and_templates.md)):
+   - Immediately after writing `pr_triage_report.md`, call `ask_question` per
+     [`references/graphql_and_templates.md`](references/graphql_and_templates.md):
      - **All items unambiguous**: Offer
        `(Recommended) Implement the proposed fixes and test plan` (or
-       `(Recommended) Proceed to Step 8 replies/reactions (no code edits)` when
-       no edits are proposed) and `Do not edit files (keep triage report only)`.
-     - **`❓ Clarify` or genuine trade-offs present**: Replace generic
-       adjustment placeholders with `2–3` concrete forks (`(Recommended)` first
-       — Option A vs. Option B for `❓ Clarify (Author)`, or implementing
-       unambiguous fixes + posting the open `reply` question vs. posting the
-       open `reply` question before editing/pushing when CI is expensive for
-       `❓ Clarify (Reviewer)`), plus
+       `(Recommended) Proceed to Step 8 replies/reactions (no code edits)`) and
        `Do not edit files (keep triage report only)`.
+     - **`❓ Clarify` or genuine trade-offs present**: Offer 2 to 3 concrete
+       forks ranked on code quality plus
+       `Do not edit files (keep triage report only)`. Use Option A vs. Option B
+       for `❓ Clarify (Author)`, or apply clear fixes + post the open `reply`
+       vs. ask via `reply` before editing for `❓ Clarify (Reviewer)`. Holding
+       off on speculative edits while clarifying ambiguous human-reviewer intent
+       stays valid when CI is expensive, unlike skipping known-valid fixes.
    - DO NOT edit repository files or post GitHub replies before user approval.
 
 7. **Surgical Implementation & Verification (Red-Green TDD)**:
