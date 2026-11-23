@@ -7,24 +7,35 @@ Detailed report artifact skeletons, Step 8 completion menus, and GitHub GraphQL
 
 Create `pr_triage_report.md` in `<appDataDir>/brain/<conversation-id>/` using
 `write_to_file` with `RequestFeedback: false` and `UserFacing: true` in
-`ArtifactMetadata`, then immediately call `ask_question` in Step 6:
+`ArtifactMetadata`, then immediately call `ask_question` in Step 6.
+
+Rank Agreement Levels and Step 6's `(Recommended)` option strictly on code
+correctness, API and idiom cleanliness, and repository conventions. Never
+downgrade a known-valid in-scope improvement to `🤷 Meh`, defer it to a
+follow-up PR, or recommend keeping code unchanged just to avoid restarting CI or
+triggering `dismiss_stale_reviews` on an `APPROVED` vote. Recommend the clean
+fix and note briefly if pushing will re-run CI or require re-requesting a
+dismissed approval in Step 8. Holding off on speculative edits for
+`❓ Clarify (Reviewer)` while asking a human reviewer to clarify genuinely
+ambiguous intent remains valid when CI is expensive.
 
 - **When all items are unambiguous**:
-  - Option 1: `(Recommended) Implement the proposed fixes and test plan` (or
+  - Option 1: `(Recommended) Implement the proposed fixes and test plan`, or
     `(Recommended) Proceed to Step 8 replies/reactions (no code edits)` when no
-    code changes are proposed)
+    code changes are proposed
   - Option 2: `Do not edit files (keep triage report only)`
-- **When `❓ Clarify` or genuine trade-offs exist** (replace generic adjustment
-  placeholders with `2–3` concrete decision forks):
+- **When `❓ Clarify` or genuine trade-offs exist**, replace generic adjustment
+  placeholders with 2 to 3 concrete decision forks:
   - **`❓ Clarify (Author)`**:
     1. `(Recommended) Implement fixes using <Option A summary>`
     2. `Implement fixes using <Option B summary>`
     3. `Do not edit files (keep triage report only)`
-  - **`❓ Clarify (Reviewer)`** (human reviewers only):
+  - **`❓ Clarify (Reviewer)`** for human reviewers only:
     1. `(Recommended) Implement unambiguous fixes, push, and post open question on Thread #<N> via pr-triage reply`
     2. `Post open question on Thread #<N> via pr-triage reply before editing or pushing`
-       _(promote to `(Recommended)` when CI is expensive and the answer could
-       alter the code change)_
+       _Promote Option 2 to `(Recommended)` when CI is expensive and the
+       reviewer's answer could alter the code change, never to skip known-valid
+       fixes._
     3. `Do not edit files or post replies (keep triage report only)`
 
 ```markdown
