@@ -18,6 +18,9 @@ description: >-
 # Triage the active PR for a target repository checkout or worktree:
 kscripts pr-triage --dir /path/to/target-repository [--pr 123]
 
+# Reply to an inline comment WITHOUT resolving its thread (clarification or open discussion):
+kscripts pr-triage reply --dir /path/to/target-repository [--pr 123] [--react <+1|-1>] <comment_id> "<reply_body>"
+
 # Reply to a comment, optionally react (+1/-1 for @gemini-code-assist), and resolve a review thread:
 kscripts pr-triage resolve --dir /path/to/target-repository [--pr 123] [--react <+1|-1>] <thread_id> [<comment_id> ["<reply_body>"]]
 
@@ -30,143 +33,146 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
 
 ## When to use this skill
 
-- Use when asked to address review comments, pull request feedback, merge
-  conflicts, or failing CI/CD runs on a GitHub pull request in an interactive,
-  single-pass manner (`"look at comments on my PR"`, `"address reviews"`,
-  `"fix the build/checks"`).
+- Use for single-pass interactive triage of review comments, merge conflicts, or
+  failing CI checks on a GitHub PR (`"look at comments on my PR"`,
+  `"address reviews"`, `"fix the build/checks"`).
 
 ## 🧠 Critical Mindset: Reviewer Feedback is NOT Gospel
 
-- **Reviewers make mistakes**: Do NOT assume any reviewer — whether an AI bot
-  (Gemini Code Assist, Copilot) or a human engineer — is infallible.
-- **Treat Severity Badges as Unverified External Claims**: Bot tags
-  (`![critical]`, `![security-high]`) are unverified external claims, NOT
-  compiler diagnostics.
+- **Reviewers and severity badges are unverified claims**: Neither AI bots
+  (Gemini Code Assist, Copilot) nor human engineers are infallible, and bot tags
+  (`![critical]`, `![security-high]`) are NOT compiler diagnostics.
 - **Mandatory Pre-Edit Empirical Verification Gate**: Before editing code for
-  any comment claiming a syntax error, compilation failure, or type issue, run
-  `dart analyze` on the **unmodified existing codebase** first. If
-  `dart analyze` returns **0 issues**, classify the item as
-  `👎 Disagree (Hallucinated Syntax/Compile Error)` and make NO code changes.
-- **You are free to disagree**: Always test claims empirically (`dart analyze`,
-  `dart test`). If a suggestion introduces regressions or the current code is
-  already optimal, mark it `👎 Disagree` with technical rationale.
+  any claimed syntax, compile, or type error, run `dart analyze` on the
+  **unmodified codebase** first; if it reports **0 issues**, mark the item
+  `👎 Disagree (Hallucinated Syntax/Compile Error)` with NO code changes.
+- **You are free to disagree**: Verify claims with `dart analyze` and
+  `dart test`; if a suggestion regresses behavior or current code is already
+  optimal, mark it `👎 Disagree` with technical rationale.
 
 ## How to use this skill (The Workflow)
 
-- **NEVER GUESS Target PR or Branch**: If the target PR/branch is not provided
-  and the workspace is on `main`/`master`, detached `HEAD`, or matches multiple
-  open PRs, **STOP** and ask the user via `ask_question` or chat.
+- **NEVER GUESS Target PR or Branch**: If the target PR/branch is omitted and
+  the checkout is on `main`/`master`, detached `HEAD`, or matches multiple open
+  PRs, **STOP** and ask the user via `ask_question` or chat.
 
-1. **Run `kscripts pr-triage`**:
-
-   ```bash
-   kscripts pr-triage --dir <path-to-target-repository> [--pr <pr-number-or-url>]
-   ```
-
-   **Save the exact, untruncated stdout** as `raw_triage_output.md` in the
+1. **Run `kscripts pr-triage`**: Execute
+   `kscripts pr-triage --dir <path-to-target-repository> [--pr <pr-number-or-url>]`
+   and **save the exact, untruncated stdout** as `raw_triage_output.md` in the
    conversation artifact directory (preserving the `Reviewer Dropped from Queue`
    banner and all review/thread IDs).
 
 2. **Verify Workspace & Mergeable State**:
-   - Confirm local branch matches `headRefName`. If `Sync Status` is
-     `behind_remote`, run `git pull`; if `ahead_of_remote` or `diverged`, sync
-     before editing code.
+   - Confirm local branch matches `headRefName`; run `git pull` if
+     `behind_remote`, or sync before editing if `ahead_of_remote` or `diverged`.
    - If `Mergeable` is `CONFLICTING` (`DIRTY`), treat merge conflicts as a
      `🔥 Urgent` blocker in `pr_triage_report.md` and resolve via a forward
-     merge commit
-     (`git fetch origin <baseRefName> && git merge origin/<baseRefName>`), never
-     `git rebase`. When committing a monorepo merge with
-     `git commit --no-verify` (to avoid reformatting unrelated upstream files),
-     explicitly run `dart format` on only the PR's touched `.dart` files before
-     committing or pushing.
+     merge (`git fetch origin <baseRefName> && git merge origin/<baseRefName>`,
+     never `git rebase`). When committing a monorepo merge with
+     `git commit --no-verify`, explicitly run `dart format` on only the PR's
+     touched `.dart` files before committing or pushing.
 
-3. **Analyze Open Comments**:
-   - Inspect unresolved review threads, top-level reviews, and general PR
-     comments. Ignore resolved threads and self-authored comments unless they
-     provide context.
+3. **Analyze Open Comments**: Inspect unresolved review threads, top-level
+   reviews, and general PR comments (ignoring resolved threads and self-authored
+   comments unless they provide context).
 
 4. **Analyze CI Status & Failures**:
-   - **Active/Pending CI Hard Block**: If any CI status checks are currently
-     running or pending, call `ask_question`:
-     - Option 1: `(Recommended) Proceed with triaging open comments now`
-     - Option 2: `Wait for active CI status checks to complete first`
-       **MANDATORY HARD BLOCK**: Halt execution after calling `ask_question`. Do
-       NOT proceed to Step 5 or create `pr_triage_report.md` until the user
-       responds.
-   - **`ACTION_REQUIRED` Checks**: Distinguish `ACTION_REQUIRED` checks from
-     test failures. Because pushing a commit resets `ACTION_REQUIRED` checks,
-     only trigger/approve them after all code commits are pushed (or when no
-     code changes are needed).
+   - **Active/Pending CI Hard Block**: If any CI checks are running or pending,
+     call `ask_question`
+     (`(Recommended) Proceed with triaging open comments now` vs.
+     `Wait for active CI status checks to complete first`) and **HALT** — do NOT
+     proceed to Step 5 or write `pr_triage_report.md` until answered.
+   - **`ACTION_REQUIRED` Checks**: Pushing a commit resets `ACTION_REQUIRED`
+     checks; only trigger/approve them after all commits are pushed (or when no
+     code edits are needed).
 
 5. **Generate a Triage Report (`pr_triage_report.md`) & Log Review Escapes**:
-   - Create `pr_triage_report.md` (`RequestFeedback: false`, `UserFacing: true`
-     in `ArtifactMetadata`) following the artifact skeleton in
-     [`references/graphql_and_templates.md`](references/graphql_and_templates.md).
-   - Link to `raw_triage_output.md` at the top and group related comments/CI
-     failures into cohesive action items containing:
-     - **Summary & Link**: Descriptive link with number and
-       `@reviewer_username`.
-     - **Identifiers**: Preserve `Thread ID` (`PRRT_...`), `Comment ID`, or
-       `Review ID` (`PRR_...`) + numeric `Database ID`.
+   - Write `pr_triage_report.md` (`RequestFeedback: false`, `UserFacing: true`
+     in `ArtifactMetadata`) per
+     [`references/graphql_and_templates.md`](references/graphql_and_templates.md),
+     linking `raw_triage_output.md` and grouping related items with:
+     - **Summary & Identifiers**: Link with `@reviewer_username`, plus
+       `Thread ID` (`PRRT_...`), `Comment ID`, or `Review ID` (`PRR_...`) +
+       numeric `Database ID`.
      - **Agent Assessment**: Agreement Level (`🔥 Urgent [Valid — Fix]`,
-       `👍 Solid [Valid — Fix]`, `🤷 Meh`, or `👎 Disagree`), Empirical
-       Verification output, and Rationale.
-     - **Planned Action & 2-Bucket TDD Filter**: Target file/line changes,
-       planned `+1`/`-1` reaction for actionable `@gemini-code-assist` comments,
-       and either a **Companion Test** (`test/..._test.dart` for bug fixes, edge
-       cases, or behavior changes) or **Explicit Skip (`None — <reason>`)** for
-       copy/comment/rename or behavior-preserving refactors.
-   - **Wire `[Valid — Fix]` Findings to `/sharpen-later` (`--cat=review-escape`,
-     `FU4`)**: Whenever a reviewer comment or thread is classified as
-     `[Valid — Fix]` (a real bug, missing edge case, API leak, or convention
-     violation that escaped local pre-review) and `/sharpen-later` is available,
-     record it with `--cat=review-escape` and
+       `👍 Solid [Valid — Fix]`, `🤷 Meh`, `👎 Disagree`, or gated
+       `❓ Clarify (Author)` / `❓ Clarify (Reviewer)`), Empirical Verification,
+       and Rationale.
+     - **Gated `❓ Clarify` Admission Rules (All 3 Preconditions Required)**:
+       1. **Exhaust local checks first (`checked:` proof)**: Run `dart analyze`,
+          `dart test`, caller/diff tracing, and `gh pr list --state all` first,
+          recording
+          `checked: <what was inspected and why it does not settle this>` in
+          `Empirical Verification` (never use `❓ Clarify` for codebase facts or
+          `?` comments carrying a verifiable `suggestion` block).
+       2. **Material behavioral/API/scope divergence**: Require `2+` plausible
+          readings that alter runtime/build behavior, public API, or PR scope
+          (minor local/reversible choices stay `👍 Solid [Valid — Fix]` with a
+          1-line noted default).
+       3. **3-party target split**: Use `❓ Clarify (Author)` when a clear
+          comment exposes a PR-author design/scope trade-off (`2–3` concrete
+          options in Step 6). Use `❓ Clarify (Reviewer)` (**human reviewers
+          only — never `@gemini-code-assist` or non-replying bots**) when human
+          wording remains underspecified after `checked:`: set
+          `Code / Doc Changes` to `Pending clarification` and draft a
+          `<= 40`-word `Outbound Draft Reply` (`what was checked` + crisp
+          `A vs. B?` question) via `kscripts pr-triage reply` (**keep thread
+          unresolved**).
+     - **Planned Action & 2-Bucket TDD Filter**: Target file/line edits, `+1`/
+       `-1` reaction for actionable `@gemini-code-assist` comments, and either a
+       **Companion Test** (`test/..._test.dart` for bugs/edge cases/behavior
+       changes) or **Explicit Skip (`None — <reason>`)** for copy/rename,
+       behavior-preserving refactors, or `Pending clarification`.
+   - **Wire `[Valid — Fix]` to `/sharpen-later` (`--cat=review-escape`,
+     `FU4`)**: When `/sharpen-later` is available, log real bugs, missing edge
+     cases, API leaks, or convention escapes classified `[Valid — Fix]` with
+     `--cat=review-escape` and
      `--agent-note "<owner>/<repo>#<PR>: <why local pre-review missed it>"`.
 
 6. **Interactive Approval Gate (`ask_question`)**:
-   - Immediately after writing `pr_triage_report.md`, call `ask_question` to
-     gate implementation (see
+   - Immediately after writing `pr_triage_report.md`, call `ask_question` (see
      [`references/graphql_and_templates.md`](references/graphql_and_templates.md)):
-     - Option 1: `(Recommended) Implement the proposed fixes and test plan`
-     - Option 2: `Adjust the triage plan first`
-     - Option 3: `Do not edit files (keep triage report only)`
-   - DO NOT edit repository files until the user approves via `ask_question`.
+     - **All items unambiguous**: Offer
+       `(Recommended) Implement the proposed fixes and test plan` (or
+       `(Recommended) Proceed to Step 8 replies/reactions (no code edits)` when
+       no edits are proposed) and `Do not edit files (keep triage report only)`.
+     - **`❓ Clarify` or genuine trade-offs present**: Replace generic
+       adjustment placeholders with `2–3` concrete forks (`(Recommended)` first
+       — Option A vs. Option B for `❓ Clarify (Author)`, or implementing
+       unambiguous fixes + posting the open `reply` question vs. posting the
+       open `reply` question before editing/pushing when CI is expensive for
+       `❓ Clarify (Reviewer)`), plus
+       `Do not edit files (keep triage report only)`.
+   - DO NOT edit repository files or post GitHub replies before user approval.
 
 7. **Surgical Implementation & Verification (Red-Green TDD)**:
-   - **Strict Diff Scope (No Unsolicited Adjacent Edits)**: Keep fixes strictly
-     scoped to the reviewed defect. Never bundle unsolicited behavior or style
-     cleanups in adjacent visitors, helpers, or call sites; when a fix touches
-     AST/symbol resolution or visitor order, include tests covering
-     forward-referenced and unresolved/error inputs.
-   - **Whole-Diff Nit Sweep (`git diff <base>...HEAD`)**: When fixing a reviewer
-     style, wording, doc-comment, or naming nit (for example, `see` vs.
-     `refer to` or identifier naming), sweep the entire PR diff
-     (`git diff origin/<baseRefName>...HEAD`) for sibling occurrences of the
-     same pattern so identical nits are not left behind for a second review
-     round.
-   - **Test First (Red) -> Implementation (Green)**: Write approved companion
-     tests in `test/` first and verify failure on unpatched code, then apply the
-     fix and run `dart format` (explicitly targeting touched `.dart` files when
-     hooks or `--no-verify` are used), `dart analyze`, and `dart test`.
-   - **Sync PR Title & Description (Read-Modify-Write)**: Whenever editing a PR
-     body (for example, when public APIs, architecture, behavior, or
-     verification notes change), save the live body with
-     `gh pr view <pr> --json body --jq .body > /tmp/pr_<pr>.md`, copy it to
-     `/tmp/pr_<pr>.orig.md`, and update only the affected summary lines with
-     targeted file edits (never a full rewrite). Leave all human-authored
-     sections and `.github/PULL_REQUEST_TEMPLATE.md` checklist lines, including
-     their `[x]`/`[ ]` states, untouched. Run
-     `diff -u /tmp/pr_<pr>.orig.md /tmp/pr_<pr>.md || true` to confirm only
-     summary lines changed, then apply with
-     `gh pr edit <pr> --body-file /tmp/pr_<pr>.md` (add `--title "..."` only
+   - **Strict Diff Scope**: Keep fixes strictly scoped to the reviewed defect
+     with no unsolicited adjacent refactors; when touching AST/symbol resolution
+     or visitor order, test forward-referenced and unresolved/error inputs.
+   - **Whole-Diff Nit Sweep (`git diff <base>...HEAD`)**: When fixing a wording,
+     style, doc-comment, or naming nit, sweep
+     `git diff origin/<baseRefName>...HEAD` for sibling occurrences across the
+     PR diff.
+   - **Test First (Red) -> Implementation (Green)**: Verify companion tests fail
+     on unpatched code first, apply the fix, and run `dart format` (explicitly
+     targeting touched `.dart` files when `--no-verify` or hooks apply),
+     `dart analyze`, and `dart test`.
+   - **Sync PR Title & Description (Read-Modify-Write)**: When public APIs,
+     architecture, behavior, or verification notes change, save
+     `gh pr view <pr> --json body --jq .body > /tmp/pr_<pr>.md`, copy to
+     `/tmp/pr_<pr>.orig.md`, edit only affected summary lines (leaving
+     human-authored text and `.github/PULL_REQUEST_TEMPLATE.md` `[x]`/`[ ]`
+     boxes untouched), verify via
+     `diff -u /tmp/pr_<pr>.orig.md /tmp/pr_<pr>.md || true`, and run
+     `gh pr edit <pr> --body-file /tmp/pr_<pr>.md` (adding `--title "..."` only
      when the title changes).
-   - **Live Read-Only Smoke Check**: Auto-run side-effect-free CLI paths
-     (`--help`, `--dry-run`, `status`/`list`/`view`) when `<= 15s` and `~0`
-     risk; offer in Step 8 when `> 15s`.
+   - **Live Read-Only Smoke Check**: Auto-run `<= 15s`, `~0`-risk CLI checks
+     (`--help`, `--dry-run`, `status`/`list`/`view`); offer in Step 8 if
+     `> 15s`.
 
 8. **Verify Git State and Offer Unified Resolution Menu**:
-   - Run `git status -s --untracked=no` and present the unified `ask_question`
-     completion menu from
+   - Run `git status -s --untracked=no` and present the Step 8 `ask_question`
+     menu from
      [`references/graphql_and_templates.md`](references/graphql_and_templates.md)
      (including `"dismiss stale CHANGES_REQUESTED review"` whenever an open
      `CHANGES_REQUESTED` review was fully addressed).
@@ -174,58 +180,55 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
 ## Replying, Resolving Threads, and Re-Requesting Review
 
 See [`references/graphql_and_templates.md`](references/graphql_and_templates.md)
-for full `kscripts pr-triage resolve` / `react` / `re-request` syntax, GitHub
-state-machine notes, and underlying GraphQL/REST schemas.
+for full `kscripts pr-triage reply` / `resolve` / `react` / `re-request` syntax,
+GitHub state-machine notes, and GraphQL/REST schemas.
 
+- **Keep Clarification & Open-Discussion Threads Unresolved (`reply` vs.
+  `resolve`)**: Use `kscripts pr-triage reply` for `❓ Clarify (Reviewer)`
+  questions and human `👎 Disagree` replies where discussion remains open so the
+  reviewer can respond and resolve the thread; use `resolve` for implemented
+  fixes, answered factual questions, and `@gemini-code-assist` bot threads.
 - **React `+1` / `-1` on `@gemini-code-assist` Review Comments**: Public
-  GitHub's Gemini Code Assist (`@gemini-code-assist` in GraphQL,
-  `gemini-code-assist[bot]` in REST) uses 👍 (`+1`) and 👎 (`-1`) comment
-  reactions as quality feedback. In Step 8 (never during read-only triage), pass
-  `--react +1` for `[Valid — Fix]` findings and `--react -1` (paired with a
-  concise factual reply) for `👎 Disagree` false positives on
+  GitHub's `@gemini-code-assist` (`gemini-code-assist[bot]` in REST) uses 👍
+  (`+1`) and 👎 (`-1`) reactions as quality feedback. In Step 8 (never during
+  read-only triage), pass `--react +1` for `[Valid — Fix]` and `--react -1`
+  (with a concise factual reply) for `👎 Disagree` false positives on
   `kscripts pr-triage resolve` — or run
   `kscripts pr-triage react --dir <repo-path> [--pr <pr_number>] [--issue-comment] <comment_id> <+1|-1>`
-  when leaving a thread open or reacting to an `@gemini-code-assist`
-  conversation reply. Skip reactions on neutral `🤷 Meh` items, automatic
-  `## Summary of Changes` comments, top-level `## Code Review` summary headers,
-  and CI status bots (`github-actions[bot]`).
+  when leaving a thread open or reacting to a conversation reply. Skip reactions
+  on neutral `🤷 Meh` items, `## Summary of Changes`, top-level `## Code Review`
+  headers, and CI bots (`github-actions[bot]`).
 - **Never Re-Request an Active `APPROVED` Reviewer**: `--add-reviewer` revokes
   active approvals. Run `kscripts pr-triage re-request` **ONLY when ALL 3
-  hold**:
-  1. The human reviewer is **not** currently listed in `reviewRequests`, **AND**
-  2. Their latest state in `latestReviews` is **NOT** `"APPROVED"` (`COMMENTED`,
-     `CHANGES_REQUESTED`, or `DISMISSED`), **AND**
-  3. Commits were pushed or replies posted addressing their feedback.
-- **Always Pass `--pr <N>` on Multi-PR Triage**: Because
-  `kscripts pr-triage resolve` (and `re-request`) infers the PR number from the
-  active git branch when `--pr` is omitted, always pass `--pr <N>` explicitly
-  when triaging multiple PRs in the same repository or when the checkout is not
-  on the target PR's branch (preventing `404 Parent comment not found` errors).
+  hold**: (1) the human reviewer is **not** in `reviewRequests`, (2) their
+  latest state in `latestReviews` is **NOT** `"APPROVED"` (`COMMENTED`,
+  `CHANGES_REQUESTED`, or `DISMISSED`), and (3) commits were pushed or replies
+  posted addressing their feedback.
+- **Always Pass `--pr <N>` on Multi-PR Triage**: Because `reply`, `resolve`, and
+  `re-request` infer the PR from the active branch when `--pr` is omitted, pass
+  `--pr <N>` explicitly across multi-PR runs or off-branch checkouts.
 - **Re-Request After `dismiss_stale_reviews` Auto-Dismisses an Approval**: In
-  repositories with `dismiss_stale_reviews` enabled (such as `flutter/flutter`),
-  pushing new commits automatically transitions a prior `"APPROVED"` review to
-  `"DISMISSED"` and removes the reviewer from `reviewRequests` via GitHub's
-  asynchronous `synchronize` webhook. Always run `sleep 3` after `git push`
-  before querying
-  `gh pr view <pr_number> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests`
-  so the webhook finishes processing `dismiss_stale_reviews`, then re-request
-  any reviewer whose approval was dismissed via
+  repos with `dismiss_stale_reviews` (such as `flutter/flutter`), pushing
+  commits transitions a prior `"APPROVED"` review to `"DISMISSED"` and drops the
+  reviewer via GitHub's async `synchronize` webhook. Run `sleep 3` after
+  `git push`, check
+  `gh pr view <pr_number> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests`,
+  and re-request any dismissed reviewer via
   `kscripts pr-triage re-request --dir <repo-path> [--pr <pr_number>] <reviewer_login>`.
 - **Stop When Already Queued**: If `<login>` is already in `reviewRequests` and
   all feedback is addressed on the latest commit, **STOP**.
 - **Multi-PR Stack & Release Trunk Verification**: When landing multiple PRs
-  that touch `CHANGELOG.md` or shared files ahead of a release, verify every PR
-  reached `state == "MERGED"` via `gh pr view <N> --json state,mergeCommit`,
-  fast-forward local trunk
-  (`git fetch origin && git merge --ff-only origin/<baseRefName>`), and run a
-  clean `dart test` on trunk before tagging or preparing the release PR.
+  touching `CHANGELOG.md` or shared files before a release, verify each reached
+  `state == "MERGED"` (`gh pr view <N> --json state,mergeCommit`), fast-forward
+  trunk (`git fetch origin && git merge --ff-only origin/<baseRefName>`), and
+  run `dart test` on trunk before tagging or opening the release PR.
 
 ## Constraints
 
 - **Hard CI Gate**: Never generate `pr_triage_report.md` while CI is pending
   without first halting on Step 4's `ask_question`.
-- **Pre-Edit Approval Gate**: Never modify repository files before user approval
-  of `pr_triage_report.md`.
+- **Pre-Edit Approval Gate**: Never modify repository files or post GitHub
+  replies before user approval of `pr_triage_report.md`.
 - **Single-Gate VCS Execution**: Selecting a commit/push option in Step 8's
   `ask_question` authorizes committing and pushing without a second prompt.
 - **Sync Code Before Comments**: Never post "Fixed" replies or resolve threads
