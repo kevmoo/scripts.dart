@@ -112,7 +112,7 @@ and remote GitHub settings:
   - Standard workflow templates (`lower_bound.yml`, `complexity.yml`,
     `autosubmit.yml`, `dependabot.yml`, `publish.yaml`, `health.yaml`,
     `post_summaries.yml`, `markdown.yml`).
-  - `examples.yml` ([`pkg:example`](https://pub.dev/packages/example)
+  - `examples.yml` ([`package:snippets`](https://pub.dev/packages/snippets)
     validation) wherever a Markdown fence's info string contains `@example`
     (such as `dart @example example/foo.dart#region`), byte-for-byte against the
     canonical template including the pinned reusable-workflow SHA. Remote checks

@@ -425,7 +425,7 @@ class RepoAlignRunner {
     _fixExamples(r, workflowsDir, dryRun: dryRun);
   }
 
-  /// Creates `examples.yml` where markdown uses `pkg:example` fences, and
+  /// Creates `examples.yml` where markdown uses `package:snippets` fences, and
   /// rewrites an existing one that drifted from the canonical template.
   void _fixExamples(
     RepoAlignmentStatus r,

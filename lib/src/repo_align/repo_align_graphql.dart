@@ -32,8 +32,8 @@ final class RemoteRepoSnapshot {
   final bool hasRootLibOrBin;
   final bool hasSkillsMarkdown;
 
-  /// `HEAD:README.md`, scanned for `pkg:example` fences when no local clone
-  /// is available to `git grep`.
+  /// `HEAD:README.md`, scanned for `package:snippets` fences when no local
+  /// clone is available to `git grep`.
   final String? rootReadmeText;
   final Map<String, String> workflowFiles;
   final List<String> packageSubdirNames;
