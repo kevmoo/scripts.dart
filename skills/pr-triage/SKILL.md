@@ -178,11 +178,15 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
      `> 15s`.
 
 8. **Verify Git State and Offer Unified Resolution Menu**:
-   - Run `git status -s --untracked=no` and present the Step 8 `ask_question`
-     menu from
+   - When user-level instructions authorize autonomous feature-branch staging,
+     commit and push verified Step 6 fixes to the PR feature branch first so
+     Step 8 enters Section `2.B`; otherwise use Section `2.A`.
+   - Run `git status -s --untracked=no` and **always** invoke the Step 8
+     `ask_question` tool call from
      [`references/graphql_and_templates.md`](references/graphql_and_templates.md)
-     (including `"dismiss stale CHANGES_REQUESTED review"` whenever an open
-     `CHANGES_REQUESTED` review was fully addressed).
+     (even on the first turn after context compaction—never substitute plain
+     prose questions), including `"dismiss stale CHANGES_REQUESTED review"`
+     whenever an open `CHANGES_REQUESTED` review was fully addressed.
 
 ## Replying, Resolving Threads, and Re-Requesting Review
 
@@ -224,11 +228,16 @@ GitHub state-machine notes, and GraphQL/REST schemas.
   `kscripts pr-triage re-request --dir <repo-path> [--pr <pr_number>] <reviewer_login>`.
 - **Stop When Already Queued**: If `<login>` is already in `reviewRequests` and
   all feedback is addressed on the latest commit, **STOP**.
-- **Multi-PR Stack & Release Trunk Verification**: When landing multiple PRs
-  touching `CHANGELOG.md` or shared files before a release, verify each reached
-  `state == "MERGED"` (`gh pr view <N> --json state,mergeCommit`), fast-forward
-  trunk (`git fetch origin && git merge --ff-only origin/<baseRefName>`), and
-  run `dart test` on trunk before tagging or opening the release PR.
+- **Post-Merge Remote Branch & Release Trunk Verification**: When wrapping up a
+  merged PR (`state == "MERGED"` via `gh pr view <N> --json state,mergeCommit`),
+  check whether its remote head branch still exists—especially
+  `<head_owner>/<repo>:<headRefName>` on contributor forks where upstream
+  auto-delete leaves fork refs behind—and offer deleting it
+  (`gh api -X DELETE repos/<head_owner>/<repo>/git/refs/heads/<headRefName>` +
+  `git fetch <remote> --prune`) alongside local worktree/branch cleanup. Before
+  tagging or opening a release PR after stacked merges, fast-forward trunk
+  (`git fetch origin && git merge --ff-only origin/<baseRefName>`) and run
+  `dart test` on trunk.
 
 ## Constraints
 
