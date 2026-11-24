@@ -431,7 +431,11 @@ List<PrCheckViolation> _checkMarkdownAstLinks(
   List<String> lines,
 ) {
   final violations = <PrCheckViolation>[];
-  final fileDir = p.dirname(p.join(repoRoot.path, relPath));
+  final fullPath = p.join(repoRoot.path, relPath);
+  final effectivePath = FileSystemEntity.isLinkSync(fullPath)
+      ? File(fullPath).resolveSymbolicLinksSync()
+      : fullPath;
+  final fileDir = p.dirname(effectivePath);
   final collector = _collectMarkdownAst(lines);
 
   for (final rawHref in collector.hrefs) {

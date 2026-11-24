@@ -155,6 +155,7 @@ Future<void> runPrCheckCli(
     directory: targetDir,
     baseRefOverride: results['base'] as String?,
     requireWip: results['require-wip'] as bool,
+    requireWipExplicit: results.wasParsed('require-wip'),
     runTests: results['test'] as bool,
     runRevDeps: runRevDeps,
     processRunner: processRunner,
@@ -281,6 +282,7 @@ PrCheckReport runPrCheck({
   required Directory directory,
   String? baseRefOverride,
   bool requireWip = true,
+  bool requireWipExplicit = false,
   bool runTests = false,
   bool runRevDeps = false,
   String? latestCognitiveComplexityVersion,
@@ -309,6 +311,7 @@ PrCheckReport runPrCheck({
   );
   return runner.run(
     requireWip: requireWip,
+    requireWipExplicit: requireWipExplicit,
     runTests: runTests,
     runRevDeps: runRevDeps,
     latestCognitiveComplexityVersion: latestCognitiveComplexityVersion,
@@ -348,6 +351,7 @@ final class _PrCheckRunner {
 
   PrCheckReport run({
     required bool requireWip,
+    required bool requireWipExplicit,
     required bool runTests,
     required bool runRevDeps,
     required String? latestCognitiveComplexityVersion,
@@ -363,11 +367,26 @@ final class _PrCheckRunner {
       return _toReport();
     }
 
-    _runFirehoseChecks(requireWip: requireWip, runRevDeps: runRevDeps);
+    _runFirehoseChecks(
+      requireWip: _shouldRequireWipBump(
+        requireWip: requireWip,
+        requireWipExplicit: requireWipExplicit,
+      ),
+      runRevDeps: runRevDeps,
+    );
     _runDartFileChecks(changedFiles.where((f) => f.endsWith('.dart')).toList());
     _runMarkdownChecks(changedFiles.where((f) => f.endsWith('.md')).toList());
     _runPackageTestChecks(runTests: runTests);
     return _toReport();
+  }
+
+  bool _shouldRequireWipBump({
+    required bool requireWip,
+    required bool requireWipExplicit,
+  }) {
+    if (!requireWip) return false;
+    if (requireWipExplicit || !baseRef.startsWith('upstream/')) return true;
+    return _firehoseWorkflowRegex.hasMatch(workflowsText);
   }
 
   PrCheckReport _toReport() => PrCheckReport(
@@ -533,7 +552,6 @@ final class _PrCheckRunner {
       _skip('dart-format', reason);
       _skip('dart-analyze-fatal-infos', reason);
       _skip('cognitive-complexity', reason);
-      _skip('browser-test-on-vm', reason);
       return;
     }
 
@@ -566,22 +584,6 @@ final class _PrCheckRunner {
         );
       }
     }
-
-    if (!RegExp(r'\b(chrome|wasm|firefox)\b').hasMatch(workflowsText)) {
-      _skip('browser-test-on-vm', 'no browser/wasm in workflows');
-    } else {
-      final testFiles = dartFiles
-          .where((f) => f.endsWith('_test.dart'))
-          .toList();
-      if (testFiles.isEmpty) {
-        _skip('browser-test-on-vm', 'no touched *_test.dart files');
-      } else {
-        _recordMulti(
-          'browser-test-on-vm',
-          _checkBrowserTestOnVm(repoRoot, testFiles),
-        );
-      }
-    }
   }
 
   void _runMarkdownChecks(List<String> mdFiles) {
@@ -607,17 +609,28 @@ final class _PrCheckRunner {
       _recordMulti('agent-docs', _checkAgentDocFiles(repoRoot, agentDocFiles));
     }
 
+    _runPrettierCheck(mdFiles);
+  }
+
+  void _runPrettierCheck(List<String> mdFiles) {
     final hasPrettier =
         workflowsText.toLowerCase().contains('prettier') ||
         File(p.join(repoRoot.path, '.prettierrc.json')).existsSync();
     if (!hasPrettier) {
       _skip('prettier-markdown', 'no .prettierrc.json or workflow');
-    } else {
-      _recordSingle(
-        'prettier-markdown',
-        _checkPrettierMarkdown(repoRoot, mdFiles, runSync),
-      );
+      return;
     }
+    final prettierFiles = mdFiles
+        .where((f) => !FileSystemEntity.isLinkSync(p.join(repoRoot.path, f)))
+        .toList();
+    if (prettierFiles.isEmpty) {
+      _skip('prettier-markdown', 'only symlinked .md files');
+      return;
+    }
+    _recordSingle(
+      'prettier-markdown',
+      _checkPrettierMarkdown(repoRoot, prettierFiles, runSync),
+    );
   }
 
   void _runPackageTestChecks({required bool runTests}) {
@@ -996,37 +1009,13 @@ PrCheckViolation? _checkCognitiveComplexity({
   );
 }
 
+final _firehoseWorkflowRegex = RegExp(r'\bfirehose\b|publish\.ya?ml\b');
+
 bool _isLibOrBinDartFile(String path) =>
     path.startsWith('lib/') ||
     path.contains('/lib/') ||
     path.startsWith('bin/') ||
     path.contains('/bin/');
-
-List<PrCheckViolation> _checkBrowserTestOnVm(
-  Directory repoRoot,
-  List<String> testFiles,
-) {
-  final violations = <PrCheckViolation>[];
-  final ioImportRegex = RegExp(r'''import\s+['"]dart:(io|ffi)['"]''');
-  final testOnVmRegex = RegExp(r'''@TestOn\(\s*['"]vm['"]\s*\)''');
-
-  for (final relPath in testFiles) {
-    final content = File(p.join(repoRoot.path, relPath)).readAsStringSync();
-    if (ioImportRegex.hasMatch(content) && !testOnVmRegex.hasMatch(content)) {
-      violations.add(
-        PrCheckViolation(
-          check: 'browser-test-on-vm',
-          message:
-              '$relPath imports dart:io or dart:ffi without @TestOn(\'vm\'), '
-              'but CI workflow runs browser/wasm tests.',
-          remediation:
-              'Add "@TestOn(\'vm\')\\nlibrary;" at the top of $relPath.',
-        ),
-      );
-    }
-  }
-  return violations;
-}
 
 PrCheckViolation? _checkPrettierMarkdown(
   Directory repoRoot,
