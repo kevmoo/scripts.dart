@@ -186,11 +186,18 @@ read-only subagent given only its persona, role (`N=3`), and publish-form text:
 
 ### Step 4: Two-Layer Pre-Chew Gate & Approval (Hard Stop)
 
-1. **Layer A (Internal Pre-Flight Brief in Chat, `<= 50` lines)**: Cover (1)
+1. **Claim & Issue-ID Verification (Hard Pre-Flight Check)**:
+   - Verify every `#NNNNN` or `owner/repo#NNNNN` reference in the draft via
+     `gh issue view <N> [-R owner/repo] --json title,state` (or `gh pr view`) so
+     hallucinated, unrelated, or unexpectedly closed IDs never reach review.
+   - On PRs, trace every behavioral claim in the draft body to an actual hunk in
+     `git diff <base>...HEAD` and a test assertion so unimplemented exploration
+     notes never leak into the summary.
+2. **Layer A (Internal Pre-Flight Brief in Chat, `<= 50` lines)**: Cover (1)
    title & audience rationale, (2) code changes or root causes by file, (3)
-   tests executed, and (4) Step 3.5 verdict in one line. Never leak Layer A's
-   forensic trace into the outbound GitHub body.
-2. **Layer B (Outbound Payload Approval)**: Halt and prompt via `ask_question`:
+   tests executed + verified `#NNNNN` references, and (4) Step 3.5 verdict in
+   one line. Never leak Layer A's forensic trace into the outbound GitHub body.
+3. **Layer B (Outbound Payload Approval)**: Halt and prompt via `ask_question`:
    - Option 1: `(Recommended) Yes, create <issue|PR> via gh <issue|pr> create`
    - Option 2: `No, keep as draft only (let me edit/pre-chew the framing)`
 

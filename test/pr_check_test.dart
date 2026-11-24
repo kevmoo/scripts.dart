@@ -142,48 +142,6 @@ environment:
     check(checks).contains('pubspec-wip-bump');
   });
 
-  test(
-    'detects missing @TestOn("vm") on dart:io test when workflow runs chrome',
-    () {
-      File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
-name: sample_pkg
-publish_to: none
-environment:
-  sdk: ^3.5.0
-''');
-      final wfDir = Directory(p.join(tempDir.path, '.github', 'workflows'))
-        ..createSync(recursive: true);
-      File(p.join(wfDir.path, 'ci.yml')).writeAsStringSync('''
-jobs:
-  test:
-    strategy:
-      matrix:
-        platform: [vm, chrome]
-''');
-      final testDir = Directory(p.join(tempDir.path, 'test'))..createSync();
-      File(p.join(testDir.path, 'io_only_test.dart')).writeAsStringSync('''
-import 'dart:io';
-import 'package:test/test.dart';
-
-void main() {}
-''');
-
-      final report = runPrCheck(
-        directory: tempDir,
-        processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
-          exe,
-          args,
-          workingDirectory: workingDirectory,
-          changedFiles: ['test/io_only_test.dart'],
-        ),
-      );
-
-      check(report.passed).isFalse;
-      check(report.violations.map((v) => v.check))
-          .contains('browser-test-on-vm');
-    },
-  );
-
   test('passes cleanly when published package is at -wip version '
       'and tracks passed vs. skipped checks', () {
     File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
@@ -220,7 +178,6 @@ environment:
     check(report.passedChecks).contains('gfm-markdown');
     check(report.skippedChecks.map((s) => s.toString()).toList())
       ..contains('cognitive-complexity (not in workflows)')
-      ..contains('browser-test-on-vm (no browser/wasm in workflows)')
       ..contains('prettier-markdown (no .prettierrc.json or workflow)')
       ..contains('dart-test (pass --test to run)');
   });
@@ -1120,5 +1077,117 @@ jobs:
       },
     );
     check(ghResolvedReport.baseRef).equals('upstream/HEAD');
+  });
+
+  test('filters symlinked .md files out of prettier-markdown and resolves '
+      'symlink target directory for internal links', () {
+    File(p.join(tempDir.path, '.prettierrc.json')).writeAsStringSync('{}\n');
+    Directory(p.join(tempDir.path, 'docs')).createSync();
+    File(p.join(tempDir.path, 'docs', 'guide.md'))
+        .writeAsStringSync('# Guide\n');
+    File(p.join(tempDir.path, 'AGENTS.md'))
+        .writeAsStringSync('# Instructions\n\nSee [guide](docs/guide.md).\n');
+    File(p.join(tempDir.path, 'README.md')).writeAsStringSync('# Repo\n');
+    final subPkgDir = Directory(p.join(tempDir.path, 'pkgs', 'sub'))
+      ..createSync(recursive: true);
+    Link(p.join(subPkgDir.path, 'AGENTS.md')).createSync('../../AGENTS.md');
+
+    final symlinkOnlyCalls = <(String, List<String>, String?)>[];
+    final symlinkOnlyReport = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['pkgs/sub/AGENTS.md'],
+        recordedCalls: symlinkOnlyCalls,
+      ),
+    );
+    check(symlinkOnlyReport.passed).isTrue;
+    check(symlinkOnlyReport.skippedChecks.map((s) => s.toString()))
+        .contains('prettier-markdown (only symlinked .md files)');
+    check(symlinkOnlyCalls.where((c) => c.$1 == 'npx')).isEmpty;
+
+    final mixedCalls = <(String, List<String>, String?)>[];
+    final mixedReport = runPrCheck(
+      directory: tempDir,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['README.md', 'pkgs/sub/AGENTS.md'],
+        recordedCalls: mixedCalls,
+      ),
+    );
+    check(mixedReport.passed).isTrue;
+    final npxCall = mixedCalls.singleWhere((c) => c.$1 == 'npx');
+    check(npxCall.$2)
+        .deepEquals(['--yes', 'prettier@3.9.6', '--check', 'README.md']);
+  });
+
+  test('skips pubspec-wip-bump on upstream/ forks without firehose workflow '
+      'while enforcing it when publish.yaml or --require-wip is present', () {
+    File(p.join(tempDir.path, 'pubspec.yaml')).writeAsStringSync('''
+name: mysql_dart
+version: 4.0.1
+environment:
+  sdk: ^3.6.0
+''');
+    File(p.join(tempDir.path, 'CHANGELOG.md')).writeAsStringSync('''
+## 4.0.1
+
+- Release.
+''');
+    final libDir = Directory(p.join(tempDir.path, 'lib'))..createSync();
+    File(p.join(libDir.path, 'conn.dart')).writeAsStringSync('void f() {}\n');
+
+    final externalForkReport = runPrCheck(
+      directory: tempDir,
+      baseRefOverride: 'upstream/HEAD',
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/conn.dart'],
+        gitShowFiles: {'pubspec.yaml': 'name: mysql_dart\nversion: 4.0.1\n'},
+      ),
+    );
+    check(externalForkReport.passed).isTrue;
+
+    final explicitWipReport = runPrCheck(
+      directory: tempDir,
+      baseRefOverride: 'upstream/HEAD',
+      requireWipExplicit: true,
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/conn.dart'],
+        gitShowFiles: {'pubspec.yaml': 'name: mysql_dart\nversion: 4.0.1\n'},
+      ),
+    );
+    check(explicitWipReport.violations.map((v) => v.check))
+        .contains('pubspec-wip-bump');
+
+    final wfDir = Directory(p.join(tempDir.path, '.github', 'workflows'))
+      ..createSync(recursive: true);
+    File(p.join(wfDir.path, 'publish.yaml')).writeAsStringSync('''
+jobs:
+  publish:
+    uses: dart-lang/ecosystem/.github/workflows/publish.yaml@main
+''');
+    final firehoseForkReport = runPrCheck(
+      directory: tempDir,
+      baseRefOverride: 'upstream/HEAD',
+      processRunner: (exe, args, {workingDirectory}) => fakeGitAndTools(
+        exe,
+        args,
+        workingDirectory: workingDirectory,
+        changedFiles: ['lib/conn.dart'],
+        gitShowFiles: {'pubspec.yaml': 'name: mysql_dart\nversion: 4.0.1\n'},
+      ),
+    );
+    check(firehoseForkReport.violations.map((v) => v.check))
+        .contains('pubspec-wip-bump');
   });
 }

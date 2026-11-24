@@ -70,7 +70,10 @@ ambiguous intent remains valid when CI is expensive.
 
 ## 2. Step 8 Unified Completion Menu (`ask_question`)
 
-Include the `"dismiss stale CHANGES_REQUESTED review"` option whenever an open
+Always invoke `ask_question` in Step 8 (including immediately after context
+compaction; when autonomous feature-branch `git commit` + `git push` already ran
+at the end of Step 7, jump directly to `2.B`). Include the
+`"dismiss stale CHANGES_REQUESTED review"` option whenever an open
 `CHANGES_REQUESTED` review was fully addressed by code fixes; promote it to
 `(Recommended)` when another maintainer has already `APPROVED` the PR. Use
 `kscripts pr-triage reply` (not `resolve`) for `❓ Clarify (Reviewer)` questions

@@ -83,15 +83,13 @@ cat /path/to/draft.md | kscripts prose-check --json -
    ```
    _(Fall back to `prose-check --json ...` if shimmed on `PATH`; pass
    `--format=text` for plain text.)_
-   - Extracts exact vitality ratios (`proseWords`, `proseBlocks` as the
-     denominator of `boldLeadPct` across all non-heading paragraphs and list
-     items including nested sub-bullets, `sentenceMeanWords`, `pctOver30Words`,
-     `pctWordsInParens`, `pillsPer100Words`, `rawSymbolsPer100Words` for
-     backtick-stripped `snake_case` / `package:` / `.h` symbols, `boldLeadPct`,
+   - Extracts vitality ratios (`proseWords`, `proseBlocks` including nested
+     sub-bullets, `sentenceMeanWords`, `pctOver30Words`, `pctWordsInParens`,
+     `pillsPer100Words`, `rawSymbolsPer100Words`, `boldLeadPct`,
      `maxConsecutiveBoldLeads`, `maxTableCols`, `maxTableCellWords`),
      profile-calibrated `thresholds`, `profileReason`, `totalSmellCountsById`,
-     and stratified `line:column` hotspots with context excerpts in `~15 ms` and
-     `~350 tokens`. Never leak `prose-check` output into Step 3's blind reader.
+     and `line:column` hotspots in `~15 ms` (`~350 tokens`). Never leak
+     `prose-check` output into Step 3's blind reader.
 
 ### Step 2: Hotspot Sanity Check & Inquisitor Smell Dismissal
 
@@ -101,25 +99,20 @@ context) rather than trusting regex hits blindly, and drop false smells using
 three **Inquisitor Dismissal Filters** before scoring:
 
 - **`[DISMISSED: REFERENCE_IDIOM]`**: Header metadata rosters (`Author`,
-  `Stakeholders`, `Reviewers` with `(@handle)` chips), backticked version
-  strings (such as `` `1.0` ``, `` `3.x` ``, or `` `1.2.0` ``), CLI exit codes
-  or HTTP status literals (such as `` `78` `` or `` `200 OK` ``),
-  `Framework/Language` stack pairs (`Flutter/Dart`, `React/TypeScript`) and
-  `org/repo` slugs, CLI option or config key type/default tuples
-  (`(bool, default true; ...)`), short parenthetical platform or scope
-  qualifiers on CLI reference bullets, API type signatures, config reference
-  tables, and `code-pill-soup` or `paren-word-share` totals driven by
-  enumerating CLI flags, paths, and config keys in `readme`, `technical`, or
-  CLI/API walkthrough sections of `spec` docs.
-- **`[DISMISSED: INTENTIONAL_EMPHASIS]`**: Bounded `3`-to-`5` item option lists
-  using `**Option A**:` labels, repeated structured ledger/schema labels across
-  parallel sections (such as `**Verified Today (Oct 2026)**`), short term
-  definitions, deliberate rhetorical contrasts, or `smell`-tier `wall-of-bold`
-  hits in `spec`/`technical` docs when short conclusion-first bullets are used
-  uniformly under clear section prose without mixing nested sub-bullets and flat
-  bold leads across sections.
-- **`[DISMISSED: LOW_CERTAINTY_OPINION]`**: Pure subjective word-choice
-  preferences where existing prose is already clear and concise.
+  `Stakeholders`, `Reviewers` with `(@handle)` chips), backticked versions or
+  exit/HTTP status literals (`` `1.2.0` ``, `` `78` ``, `` `200 OK` ``),
+  `Framework/Language` pairs and `org/repo` slugs, CLI option/config
+  type-default tuples (`(bool, default true)`), API signatures, config tables,
+  and `code-pill-soup` or `paren-word-share` totals driven by enumerating CLI
+  flags, paths, and config keys in `readme`, `technical`, or CLI/API sections of
+  `spec` docs.
+- **`[DISMISSED: INTENTIONAL_EMPHASIS]`**: Bounded `3`-to-`5` item
+  `**Option A**:` lists, repeated structured ledger labels across parallel
+  sections, short term definitions, deliberate rhetorical contrasts, or uniform
+  `smell`-tier conclusion-first bullets in `spec`/`technical` docs without mixed
+  list styles.
+- **`[DISMISSED: LOW_CERTAINTY_OPINION]`**: Subjective word-choice preferences
+  where existing prose is already clear and concise.
 
 Record the dismissed count and filter breakdown in the report summary.
 
@@ -134,51 +127,25 @@ only, no shell commands, and zero authoring-conversation context):
    yourself and paste its full instructions **inline** into the subagent's
    prompt alongside `Profile`, target `Audience`, and the target file path so
    the subagent's **single** `read_file` call reads only the target document.
-   When a small exported snapshot (`<= 30 KB` / `~250` lines) sits in a scratch
-   directory outside a built-in subagent's workspace sandbox, you may pass
-   `1: ...`-prefixed physical lines inline; for larger documents (`> 30 KB`),
-   never inline the document body (which risks prompt-cap tail truncation)—use a
-   custom read-only subagent (`EnableWriteTools: false`) that calls `read_file`
-   directly on the scratch file path.
-2. **Inquisitor Line-Citation Check**: Before merging Step 3 findings into Step
-   4, verify every cited line or line pair (`L28 vs. L67`) against the target
-   file. Fix off-by-a-few line numbers, downgrade overstated urgency, and drop
-   any claim not backed by the actual lines.
+   For small exported snapshots (`<= 30 KB` / `~250` lines) outside a built-in
+   subagent's workspace sandbox, you may pass `1: ...`-prefixed physical lines
+   inline; for larger documents (`> 30 KB`), never inline the document body—use
+   a custom read-only subagent (`EnableWriteTools: false`) that calls
+   `read_file` directly on the scratch file path.
+2. **Audit the Five Semantic Failure Modes** (full criteria and examples in
+   [references/blind_reader_prompt.md](references/blind_reader_prompt.md)):
+   `30s Purpose, Reader Ask & Tone`,
+   `Decision-Altitude Summary & Multi-Cohort Completeness`,
+   `Telegraphic Shorthand, Coined Jargon & Unanchored Time`,
+   `4x+ Repetition, 8+ Col Table Drag & Altitude Whiplash`, and
+   `Internal Contradictions & Table-to-Prose Drift`.
+3. **Inquisitor Line-Citation Check**: Verify every cited line or line pair
+   (`L28 vs. L67`) against the target file before Step 4; fix off-by-a-few line
+   numbers, downgrade overstated urgency, and drop unbacked claims.
 
-_(In restricted worker harnesses without subagent tools, spawn a fresh read-only
-helper agent with zero history, or run
-[references/blind_reader_prompt.md](references/blind_reader_prompt.md) cold on
-the file before synthesizing Step 2.)_
-
-The blind reader audits **five semantic failure modes** regexes miss:
-
-1. **30-Second Purpose & Reader Ask** (clear problem, proposal, or requested
-   feedback above the fold without alarmist framing; on `readme`/`technical`,
-   clear tool purpose and quick-start usage).
-2. **Minimum-Decision-Context Summary & Multi-Cohort Completeness** (zero
-   low-level config/symbol weeds above the fold, and naming **both** active and
-   pending/uninstrumented cohorts covered in the body).
-3. **Telegraphic Noun-Phrase Shorthand, Coined Jargon & Unanchored Time**
-   (`"without proving 1:1 user churn"` vs. plain causal English
-   `"Because server logs count automated retries alongside human visits, request totals show traffic volume rather than user churn"`,
-   undefined labels or metaphors like `"Integration Seam"`, `"Spec Stance"`, or
-   `"flagship migration"`, dateless relative phrases like
-   `"over the next two weeks"` or `"right now"`, and uncited `~10%-15%`
-   guesses).
-4. **Cross-Section Repetition (`4x+`), Wide-Table Drag & Altitude Whiplash**:
-   Repeating stats `4x+`, `8+` column tables or ambiguous `"the table"`
-   references near multiple tables, jarring shifts between nested sub-bullets
-   and flat bold leads across sections, adjacent sections with overlapping
-   roles, dedicated `Technical Architecture` / TDD sections inside a `spec` PRD
-   (`[P1 | Certainty: Medium]` 2-way question), `CUJ` / `User Journey` headings
-   that bundle `3+` distinct workflows, or 80-word repo/owner bullets that
-   belong in a table.
-5. **Internal Contradictions & Table-to-Prose Drift** (`Draft` vs. `Aligned`,
-   `Committed` vs. `Unvalidated`, prose ordinal or count claims like
-   `"fourth overall"` that no longer match table rows, asymmetric paired table
-   rows where one row specifies a CLI flag and its opposite omits it, or table
-   rows like `"none identified"` that violate an inclusion rule stated in
-   prose).
+_(Without subagent tools, spawn a fresh zero-history helper or run
+[references/blind_reader_prompt.md](references/blind_reader_prompt.md) cold
+before synthesizing Step 2.)_
 
 ### Step 4: Orthogonal `2D Urgency x Certainty` Triage & Report
 

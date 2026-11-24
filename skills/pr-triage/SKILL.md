@@ -3,11 +3,11 @@ name: pr-triage
 description: >-
   Triages open GitHub pull request comments, review threads, merge conflicts,
   and CI workflow failures, empirically verifying reviewer claims before
-  proposing a structured action plan. Use when asked to triage or address PR
-  comments, review feedback, merge conflicts, or failing CI checks on a GitHub
-  pull request, or when invoked via /pr-triage. Don't use for multi-repo PR
-  cleanup sweeps (use pr-cleanup) or initial adversarial code review (use
-  pr-review).
+  proposing a structured action plan with report templates. Use when asked to
+  triage or address PR comments, review feedback, merge conflicts, or failing CI
+  checks on a GitHub pull request, or when invoked via /pr-triage. Don't use for
+  multi-repo PR cleanup sweeps (use pr-cleanup) or initial adversarial code
+  review (use pr-review).
 ---
 
 # GitHub PR Triage (`/pr-triage`)
@@ -30,12 +30,6 @@ kscripts pr-triage react --dir /path/to/target-repository [--pr 123] [--issue-co
 # Post an optional top-level reply, optionally dismiss a stale CHANGES_REQUESTED review, and re-request review:
 kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <reviewer_login> [--comment "<reply_body>"] [--dismiss <review_database_id> -m "<reason>"]
 ```
-
-## When to use this skill
-
-- Use for single-pass interactive triage of review comments, merge conflicts, or
-  failing CI checks on a GitHub PR (`"look at comments on my PR"`,
-  `"address reviews"`, `"fix the build/checks"`).
 
 ## 🧠 Critical Mindset: Reviewer Feedback is NOT Gospel
 
@@ -178,11 +172,15 @@ kscripts pr-triage re-request --dir /path/to/target-repository [--pr 123] <revie
      `> 15s`.
 
 8. **Verify Git State and Offer Unified Resolution Menu**:
-   - Run `git status -s --untracked=no` and present the Step 8 `ask_question`
-     menu from
+   - When user-level instructions authorize autonomous feature-branch staging,
+     commit and push verified Step 6 fixes to the PR feature branch first so
+     Step 8 enters Section `2.B`; otherwise use Section `2.A`.
+   - Run `git status -s --untracked=no` and **always** invoke the Step 8
+     `ask_question` tool call from
      [`references/graphql_and_templates.md`](references/graphql_and_templates.md)
-     (including `"dismiss stale CHANGES_REQUESTED review"` whenever an open
-     `CHANGES_REQUESTED` review was fully addressed).
+     (even on the first turn after context compaction—never substitute plain
+     prose questions), including `"dismiss stale CHANGES_REQUESTED review"`
+     whenever an open `CHANGES_REQUESTED` review was fully addressed.
 
 ## Replying, Resolving Threads, and Re-Requesting Review
 
@@ -195,40 +193,38 @@ GitHub state-machine notes, and GraphQL/REST schemas.
   questions and human `👎 Disagree` replies where discussion remains open so the
   reviewer can respond and resolve the thread; use `resolve` for implemented
   fixes, answered factual questions, and `@gemini-code-assist` bot threads.
-- **React `+1` / `-1` on `@gemini-code-assist` Review Comments**: Public
-  GitHub's `@gemini-code-assist` (`gemini-code-assist[bot]` in REST) uses 👍
-  (`+1`) and 👎 (`-1`) reactions as quality feedback. In Step 8 (never during
-  read-only triage), pass `--react +1` for `[Valid — Fix]` and `--react -1`
-  (with a concise factual reply) for `👎 Disagree` false positives on
-  `kscripts pr-triage resolve` — or run
-  `kscripts pr-triage react --dir <repo-path> [--pr <pr_number>] [--issue-comment] <comment_id> <+1|-1>`
-  when leaving a thread open or reacting to a conversation reply. Skip reactions
-  on neutral `🤷 Meh` items, `## Summary of Changes`, top-level `## Code Review`
-  headers, and CI bots (`github-actions[bot]`).
+- **React `+1` / `-1` on `@gemini-code-assist` Review Comments**: In Step 8
+  (never during read-only triage), pass `--react +1` for `[Valid — Fix]` and
+  `--react -1` (with a concise factual reply) for `👎 Disagree` false positives
+  on `kscripts pr-triage resolve`, or use `kscripts pr-triage react` when
+  leaving a thread open or reacting to `--issue-comment` replies. Skip reactions
+  on neutral `🤷 Meh` items, `## Summary of Changes`, `## Code Review` headers,
+  and CI bots (`github-actions[bot]`).
 - **Never Re-Request an Active `APPROVED` Reviewer**: `--add-reviewer` revokes
   active approvals. Run `kscripts pr-triage re-request` **ONLY when ALL 3
   hold**: (1) the human reviewer is **not** in `reviewRequests`, (2) their
   latest state in `latestReviews` is **NOT** `"APPROVED"` (`COMMENTED`,
   `CHANGES_REQUESTED`, or `DISMISSED`), and (3) commits were pushed or replies
   posted addressing their feedback.
-- **Always Pass `--pr <N>` on Multi-PR Triage**: Because `reply`, `resolve`, and
-  `re-request` infer the PR from the active branch when `--pr` is omitted, pass
-  `--pr <N>` explicitly across multi-PR runs or off-branch checkouts.
-- **Re-Request After `dismiss_stale_reviews` Auto-Dismisses an Approval**: In
-  repos with `dismiss_stale_reviews` (such as `flutter/flutter`), pushing
-  commits transitions a prior `"APPROVED"` review to `"DISMISSED"` and drops the
-  reviewer via GitHub's async `synchronize` webhook. Run `sleep 3` after
-  `git push`, check
+- **Always Pass `--pr <N>` on Multi-PR Triage**: Pass `--pr <N>` explicitly
+  across multi-PR runs or off-branch checkouts.
+- **Re-Request After `dismiss_stale_reviews` Auto-Dismisses an Approval**: Run
+  `sleep 3` after `git push` (so GitHub's `synchronize` webhook finishes), check
   `gh pr view <pr_number> -R <owner/repo> --json reviewDecision,latestReviews,reviewRequests`,
-  and re-request any dismissed reviewer via
-  `kscripts pr-triage re-request --dir <repo-path> [--pr <pr_number>] <reviewer_login>`.
+  and re-request any newly `DISMISSED` reviewer via
+  `kscripts pr-triage re-request`.
 - **Stop When Already Queued**: If `<login>` is already in `reviewRequests` and
   all feedback is addressed on the latest commit, **STOP**.
-- **Multi-PR Stack & Release Trunk Verification**: When landing multiple PRs
-  touching `CHANGELOG.md` or shared files before a release, verify each reached
-  `state == "MERGED"` (`gh pr view <N> --json state,mergeCommit`), fast-forward
-  trunk (`git fetch origin && git merge --ff-only origin/<baseRefName>`), and
-  run `dart test` on trunk before tagging or opening the release PR.
+- **Post-Merge Remote Branch & Release Trunk Verification**: When wrapping up a
+  merged PR (`state == "MERGED"` via `gh pr view <N> --json state,mergeCommit`),
+  check whether its remote head branch still exists—especially
+  `<head_owner>/<repo>:<headRefName>` on contributor forks where upstream
+  auto-delete leaves fork refs behind—and offer deleting it
+  (`gh api -X DELETE repos/<head_owner>/<repo>/git/refs/heads/<headRefName>` +
+  `git fetch <remote> --prune`) alongside local worktree/branch cleanup. Before
+  tagging or opening a release PR after stacked merges, fast-forward trunk
+  (`git fetch origin && git merge --ff-only origin/<baseRefName>`) and run
+  `dart test` on trunk.
 
 ## Constraints
 
