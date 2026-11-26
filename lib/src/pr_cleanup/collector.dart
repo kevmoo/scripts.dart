@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:path/path.dart' as p;
 
@@ -20,6 +21,7 @@ typedef _InitialSweepData = ({
   List<LandedPr> landedPrs,
   List<GhPr> activePrs,
   GerritAnalysisResult? gerrit,
+  List<LocalRepoInfo> localRepos,
 });
 
 /// Collects PR and worktree data across GitHub and Gerrit concurrently.
@@ -32,6 +34,10 @@ Future<PrSweepResult> collectPrSweep({
 }) async {
   final syncRunner = syncProcessRunner ?? defaultSyncProcessRunner;
   final asyncRunner = asyncProcessRunner ?? defaultProcessRunner;
+  final ghAsyncRunner = syncProcessRunner != null
+      ? (String exe, List<String> args, {String? workingDirectory}) async =>
+            syncProcessRunner(exe, args, workingDirectory: workingDirectory)
+      : asyncRunner;
   final rootPath = _resolveRootPath(options.localRoot);
   final dartSdkPath = _resolveDartSdkPath(options.dartSdkPath, rootPath);
 
@@ -39,22 +45,22 @@ Future<PrSweepResult> collectPrSweep({
 
   final initialData = await _fetchInitialData(
     options: options,
+    rootPath: rootPath,
     dartSdkPath: dartSdkPath,
+    useIsolateRepoScan: syncProcessRunner == null,
     syncRunner: syncRunner,
     asyncRunner: asyncRunner,
+    ghAsyncRunner: ghAsyncRunner,
     gerritAnalyzer: gerritAnalyzer,
     onProgress: onProgress,
-  );
-  final localRepos = scanLocalGitRepositories(
-    Directory(rootPath),
-    processRunner: syncRunner,
   );
 
   return _assembleSweepResult(
     initialData: initialData,
-    localRepos: localRepos,
+    localRepos: initialData.localRepos,
     options: options,
     syncRunner: syncRunner,
+    ghAsyncRunner: ghAsyncRunner,
     onProgress: onProgress,
   );
 }
@@ -64,6 +70,7 @@ Future<PrSweepResult> _assembleSweepResult({
   required List<LocalRepoInfo> localRepos,
   required PrCleanupOptions options,
   required SyncProcessRunner syncRunner,
+  required ProcessRunner ghAsyncRunner,
   void Function(String message)? onProgress,
 }) async {
   final repoMap = buildLocalRepoMap(localRepos);
@@ -77,6 +84,7 @@ Future<PrSweepResult> _assembleSweepResult({
     localRepos: localRepos,
     options: options,
     syncRunner: syncRunner,
+    ghAsyncRunner: ghAsyncRunner,
     onProgress: onProgress,
   );
   final ghCleanResults = _runGhClean(
@@ -94,6 +102,7 @@ Future<PrSweepResult> _assembleSweepResult({
     user: options.user,
     repoFilter: options.repo,
     syncRunner: syncRunner,
+    ghAsyncRunner: ghAsyncRunner,
     onProgress: onProgress,
   );
 
@@ -106,11 +115,12 @@ Future<PrSweepResult> _assembleSweepResult({
     localRepos: localRepos,
     options: options,
     syncRunner: syncRunner,
+    ghAsyncRunner: ghAsyncRunner,
     onProgress: onProgress,
   );
 }
 
-PrSweepResult _buildSweepResult({
+Future<PrSweepResult> _buildSweepResult({
   required List<ActiveItem> active,
   required List<PrCleanResult> ghCleanResults,
   required GerritAnalysisResult? gerrit,
@@ -119,8 +129,9 @@ PrSweepResult _buildSweepResult({
   required List<LocalRepoInfo> localRepos,
   required PrCleanupOptions options,
   required SyncProcessRunner syncRunner,
+  required ProcessRunner ghAsyncRunner,
   void Function(String message)? onProgress,
-}) {
+}) async {
   final readyToPrune = <PrunableItem>[];
   final lockedWorktrees = <LockedWorktreeItem>[];
   final needsTriage = <TriageItem>[];
@@ -140,7 +151,7 @@ PrSweepResult _buildSweepResult({
     needsTriage: needsTriage,
     candidateLandedIds: candidateLandedIds,
   );
-  final forkScan = _runForkBranchScan(
+  final forkScan = await _runForkBranchScan(
     localRepos: localRepos,
     options: options,
     active: active,
@@ -149,6 +160,7 @@ PrSweepResult _buildSweepResult({
     closedUnmergedPrs: closedUnmergedPrs,
     unlinkedWorktrees: unlinkedWorktrees,
     syncRunner: syncRunner,
+    ghAsyncRunner: ghAsyncRunner,
     onProgress: onProgress,
   );
   readyToPrune.addAll(forkScan.readyToPrune);
@@ -175,7 +187,7 @@ PrSweepResult _buildSweepResult({
   );
 }
 
-ForkBranchScanResult _runForkBranchScan({
+Future<ForkBranchScanResult> _runForkBranchScan({
   required List<LocalRepoInfo> localRepos,
   required PrCleanupOptions options,
   required List<ActiveItem> active,
@@ -184,6 +196,7 @@ ForkBranchScanResult _runForkBranchScan({
   required List<ClosedUnmergedPr> closedUnmergedPrs,
   required List<UnlinkedWorktree> unlinkedWorktrees,
   required SyncProcessRunner syncRunner,
+  required ProcessRunner ghAsyncRunner,
   void Function(String message)? onProgress,
 }) {
   final handledKeys = _collectHandledForkKeys(
@@ -203,6 +216,7 @@ ForkBranchScanResult _runForkBranchScan({
     handledBranchKeys: handledKeys,
     existingTriageBranchKeys: existingTriageKeys,
     syncRunner: syncRunner,
+    asyncRunner: ghAsyncRunner,
     onProgress: onProgress,
   );
 }
@@ -244,18 +258,14 @@ String _resolveDartSdkPath(String? dartSdkPath, String rootPath) =>
     Platform.environment['DART_SDK_CHECKOUT'] ??
     '$rootPath/dart-sdk';
 
-Future<
-  ({
-    List<LandedPr> landedPrs,
-    List<GhPr> activePrs,
-    GerritAnalysisResult? gerrit,
-  })
->
-_fetchInitialData({
+Future<_InitialSweepData> _fetchInitialData({
   required PrCleanupOptions options,
+  required String rootPath,
   required String dartSdkPath,
+  required bool useIsolateRepoScan,
   required SyncProcessRunner syncRunner,
   required ProcessRunner asyncRunner,
+  required ProcessRunner ghAsyncRunner,
   Future<GerritAnalysisResult?> Function()? gerritAnalyzer,
   void Function(String message)? onProgress,
 }) async {
@@ -265,6 +275,7 @@ _fetchInitialData({
     lastNDays: options.lastNDays,
     limit: options.limit,
     processRunner: syncRunner,
+    asyncProcessRunner: ghAsyncRunner,
   );
 
   final activePrsFuture = fetchOpenPullRequests(
@@ -281,19 +292,31 @@ _fetchInitialData({
       ? analyzeGerritWork(
           gerritRepo: dartSdkPath,
           failSilently: true,
+          skipResolvedComments: true,
           onProgress: onProgress,
         )
       : Future<GerritAnalysisResult?>.value();
+
+  final localReposFuture = useIsolateRepoScan
+      ? Isolate.run(() => scanLocalGitRepositories(Directory(rootPath)))
+      : Future<List<LocalRepoInfo>>.value(
+          scanLocalGitRepositories(
+            Directory(rootPath),
+            processRunner: syncRunner,
+          ),
+        );
 
   final results = await Future.wait([
     landedPrsFuture,
     activePrsFuture,
     gerritFuture,
+    localReposFuture,
   ]);
 
   final landedPrs = results[0] as List<LandedPr>;
   final activePrs = results[1] as List<GhPr>;
   final gerrit = results[2] as GerritAnalysisResult?;
+  final localRepos = results[3] as List<LocalRepoInfo>;
 
   final gerritMsg = gerrit != null
       ? ' Gerrit: ${gerrit.remoteCLs.length} active CL(s).'
@@ -303,7 +326,12 @@ _fetchInitialData({
     '${activePrs.length} active PR(s).$gerritMsg',
   );
 
-  return (landedPrs: landedPrs, activePrs: activePrs, gerrit: gerrit);
+  return (
+    landedPrs: landedPrs,
+    activePrs: activePrs,
+    gerrit: gerrit,
+    localRepos: localRepos,
+  );
 }
 
 Future<
@@ -314,6 +342,7 @@ _resolveAllLandedPrs({
   required List<LocalRepoInfo> localRepos,
   required PrCleanupOptions options,
   required SyncProcessRunner syncRunner,
+  required ProcessRunner ghAsyncRunner,
   void Function(String message)? onProgress,
 }) async {
   final matchedHeadRefs = {
@@ -328,6 +357,7 @@ _resolveAllLandedPrs({
     lastNDays: options.lastNDays,
     repoFilter: options.repo,
     processRunner: syncRunner,
+    asyncProcessRunner: ghAsyncRunner,
     onProgress: onProgress,
   );
 
@@ -352,6 +382,7 @@ _resolveAllLandedPrs({
     user: options.user,
     repoFilter: options.repo,
     processRunner: syncRunner,
+    asyncProcessRunner: ghAsyncRunner,
     onProgress: onProgress,
   );
 
@@ -392,6 +423,7 @@ Future<List<UnlinkedWorktree>> _findUnlinkedWorktrees({
   required String user,
   required String? repoFilter,
   required SyncProcessRunner syncRunner,
+  required ProcessRunner ghAsyncRunner,
   void Function(String message)? onProgress,
 }) async {
   final matchedWorktreePaths = _collectMatchedWorktreePaths(ghCleanResults);
@@ -410,6 +442,7 @@ Future<List<UnlinkedWorktree>> _findUnlinkedWorktrees({
     user: user,
     repoFilter: repoFilter,
     processRunner: syncRunner,
+    asyncProcessRunner: ghAsyncRunner,
     onProgress: onProgress,
   );
 }

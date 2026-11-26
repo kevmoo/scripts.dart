@@ -1,6 +1,9 @@
 @TestOn('vm')
 library;
 
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:kevmoo_scripts/src/gerrit_view.dart';
 import 'package:kevmoo_scripts/src/gerrit_view/gerrit_queries.dart';
 import 'package:kevmoo_scripts/src/gerrit_view/models.dart';
@@ -353,6 +356,122 @@ void main() {
         defaultBranch: 'main',
       );
       expect(refs, isEmpty);
+    });
+  });
+
+  group('parseForEachRefCommitDetails', () {
+    test('parses multiple branches and extracts Change-Id trailers', () {
+      final raw = [
+        '\x1emain\x00aaa111\x002 hours ago\x00Initial commit\n',
+        '\x1efeature/foo\x00bbb222\x005 minutes ago\x00',
+        '[dart2wasm] Fast path\n\nChange-Id: Iabcdef0123456789\n',
+      ].join();
+
+      final details = parseForEachRefCommitDetails(raw);
+      expect(details.keys, containsAll(['main', 'feature/foo']));
+      expect(details['main']!.sha, 'aaa111');
+      expect(details['main']!.changeId, isEmpty);
+      expect(details['feature/foo']!.sha, 'bbb222');
+      expect(details['feature/foo']!.relativeDate, '5 minutes ago');
+      expect(details['feature/foo']!.changeId, 'Iabcdef0123456789');
+    });
+  });
+
+  group('fetchRemoteCLs comment short-circuiting', () {
+    Map<String, dynamic> buildClJson({
+      required int number,
+      required int totalComments,
+      required int unresolvedComments,
+    }) => {
+      '_number': number,
+      'change_id': 'I$number',
+      'subject': 'CL $number',
+      'status': 'NEW',
+      'current_revision': 'rev_$number',
+      'revisions': {
+        'rev_$number': {'_number': 1},
+      },
+      'owner': {'_account_id': 5005},
+      'total_comment_count': totalComments,
+      'unresolved_comment_count': unresolvedComments,
+    };
+
+    test('skips /comments call when total_comment_count is 0', () async {
+      final requestedUrls = <String>[];
+      final cls = await fetchRemoteCLs(
+        '/fake/repo',
+        'dart-review.googlesource.com',
+        processRunner: (exe, args, {workingDirectory}) async {
+          final url = args.last;
+          requestedUrls.add(url);
+          if (url.contains('changes/?q=')) {
+            final body = jsonEncode([
+              buildClJson(number: 101, totalComments: 0, unresolvedComments: 0),
+              buildClJson(number: 102, totalComments: 2, unresolvedComments: 0),
+            ]);
+            return ProcessResult(0, 0, ")]}'\n$body", '');
+          }
+          final comments = jsonEncode({
+            'a.dart': [
+              {
+                'id': 'c1',
+                'unresolved': false,
+                'author': {'_account_id': 999},
+              },
+            ],
+          });
+          return ProcessResult(0, 0, ")]}'\n$comments", '');
+        },
+      );
+
+      expect(cls.keys, containsAll([101, 102]));
+      expect(cls[101]!.threads.totalThreads, 0);
+      expect(cls[102]!.threads.totalThreads, 1);
+      expect(requestedUrls.where((u) => u.endsWith('/comments')), [
+        'https://dart-review.googlesource.com/changes/102/comments',
+      ]);
+    });
+
+    test('skips /comments call when skipResolvedComments is true and '
+        'unresolved_comment_count is 0', () async {
+      final requestedUrls = <String>[];
+      final cls = await fetchRemoteCLs(
+        '/fake/repo',
+        'dart-review.googlesource.com',
+        skipResolvedComments: true,
+        processRunner: (exe, args, {workingDirectory}) async {
+          final url = args.last;
+          requestedUrls.add(url);
+          if (url.contains('changes/?q=')) {
+            final body = jsonEncode([
+              buildClJson(
+                number: 201,
+                totalComments: 12,
+                unresolvedComments: 0,
+              ),
+              buildClJson(number: 202, totalComments: 3, unresolvedComments: 1),
+            ]);
+            return ProcessResult(0, 0, ")]}'\n$body", '');
+          }
+          final comments = jsonEncode({
+            'b.dart': [
+              {
+                'id': 'c2',
+                'unresolved': true,
+                'author': {'_account_id': 999},
+              },
+            ],
+          });
+          return ProcessResult(0, 0, ")]}'\n$comments", '');
+        },
+      );
+
+      expect(cls[201]!.threads.unresolvedReviewerLeaves, 0);
+      expect(cls[201]!.threads.unresolvedAuthorLeaves, 0);
+      expect(cls[202]!.threads.unresolvedReviewerLeaves, 1);
+      expect(requestedUrls.where((u) => u.endsWith('/comments')), [
+        'https://dart-review.googlesource.com/changes/202/comments',
+      ]);
     });
   });
 }

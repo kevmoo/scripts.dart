@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:io/ansi.dart';
@@ -6,6 +8,7 @@ import 'package:io/io.dart';
 import 'gerrit_view/gerrit_queries.dart';
 import 'gerrit_view/models.dart';
 import 'gerrit_view/report_printer.dart';
+import 'process_utils.dart';
 import 'shared/git_cli.dart';
 
 export 'gerrit_view/report_printer.dart';
@@ -238,20 +241,6 @@ String? _parseGerritHostFromConfig(String actualRepoRoot) {
   return (gerritHost, gerritProject, isGerrit);
 }
 
-List<String> _listAllLocalBranches(String actualRepoRoot) {
-  final out = defaultGitCli.stdoutOrNullSync(const [
-    'for-each-ref',
-    '--format=%(refname:short)',
-    'refs/heads/',
-  ], workingDirectory: actualRepoRoot);
-  if (out == null) return const [];
-  return out
-      .split('\n')
-      .map((s) => s.trim())
-      .where((s) => s.isNotEmpty)
-      .toList();
-}
-
 Map<String, int> _readConfiguredBranchIssues(String actualRepoRoot) {
   final localBranchIssues = <String, int>{};
   final out = defaultGitCli.stdoutOrNullSync(const [
@@ -276,6 +265,7 @@ Map<String, int> _readConfiguredBranchIssues(String actualRepoRoot) {
   String defaultBranch,
 ) {
   final localBranchIssues = _readConfiguredBranchIssues(actualRepoRoot);
+  final allCommitDetails = _fetchAllCommitDetails(actualRepoRoot);
   final branchDetails = <String, CommitDetails>{};
 
   final byChangeId = <String, int>{
@@ -286,17 +276,12 @@ Map<String, int> _readConfiguredBranchIssues(String actualRepoRoot) {
     for (final cl in remoteCLs.values) cl.currentRevision: cl.number,
   };
 
-  final allBranches = <String>{
-    ...localBranchIssues.keys,
-    ..._listAllLocalBranches(actualRepoRoot),
-  };
-
-  for (final branch in allBranches) {
+  for (final entry in allCommitDetails.entries) {
+    final branch = entry.key;
     if (branch == defaultBranch && !localBranchIssues.containsKey(branch)) {
       continue;
     }
-    final details = _fetchCommitDetails(actualRepoRoot, branch);
-    if (details == null) continue;
+    final details = entry.value;
     branchDetails[branch] = details;
 
     if (branch != defaultBranch) {
@@ -411,44 +396,57 @@ final _changeIdRegex = RegExp(
   caseSensitive: false,
 );
 
-CommitDetails? _fetchCommitDetails(String repoPath, String branchName) {
-  final result = defaultGitCli.runSync(
-    [
-      'log',
-      '-n',
-      '1',
-      '--format=COMMIT_METADATA_START%n%H%n%ar%n%B',
-      branchName,
-    ],
-    workingDirectory: repoPath,
-    readOnly: true,
-  );
-  if (result.exitCode != 0) return null;
-
-  final output = result.stdout as String;
-  if (!output.startsWith('COMMIT_METADATA_START\n')) return null;
-
-  final lines = output.substring('COMMIT_METADATA_START\n'.length).split('\n');
-  if (lines case [final String rawSha, final String rawRelativeDate, ...]) {
-    final sha = rawSha.trim();
-    final relativeDate = rawRelativeDate.trim();
-    final rawBody = lines.sublist(2).join('\n');
-
-    var changeId = '';
-    final changeIdMatch = _changeIdRegex.firstMatch(rawBody);
-    if (changeIdMatch != null) {
-      changeId = changeIdMatch.group(1)!;
+/// Parses `git for-each-ref` output formatted with `%1e` record separators and
+/// `%00`-delimited `(branch, sha, relativeDate, contents)` fields.
+Map<String, CommitDetails> parseForEachRefCommitDetails(String rawOutput) {
+  final results = <String, CommitDetails>{};
+  for (final record in rawOutput.split('\x1e')) {
+    if (record.isEmpty) continue;
+    final parsed = _parseSingleRefRecord(record);
+    if (parsed != null) {
+      results[parsed.$1] = parsed.$2;
     }
+  }
+  return results;
+}
 
-    return (
+(String, CommitDetails)? _parseSingleRefRecord(String record) {
+  final firstNul = record.indexOf('\x00');
+  if (firstNul <= 0) return null;
+  final secondNul = record.indexOf('\x00', firstNul + 1);
+  if (secondNul <= firstNul + 1) return null;
+  final thirdNul = record.indexOf('\x00', secondNul + 1);
+  if (thirdNul <= secondNul + 1) return null;
+
+  final branch = record.substring(0, firstNul).trim();
+  final sha = record.substring(firstNul + 1, secondNul).trim();
+  final relativeDate = record.substring(secondNul + 1, thirdNul).trim();
+  final rawBody = record.substring(thirdNul + 1).trimRight();
+  if (branch.isEmpty || sha.isEmpty) return null;
+
+  final changeId = _changeIdRegex.firstMatch(rawBody)?.group(1) ?? '';
+  return (
+    branch,
+    (
       sha: sha,
       relativeDate: relativeDate,
       changeId: changeId,
       rawBody: rawBody,
-    );
-  }
+    ),
+  );
+}
 
-  return null;
+Map<String, CommitDetails> _fetchAllCommitDetails(String repoPath) {
+  const formatArg =
+      '--format=%1e%(refname:short)%00%(objectname)%00'
+      '%(committerdate:relative)%00%(contents)';
+  final result = defaultGitCli.runSync(
+    const ['for-each-ref', formatArg, 'refs/heads/'],
+    workingDirectory: repoPath,
+    readOnly: true,
+  );
+  if (result.exitCode != 0) return const {};
+  return parseForEachRefCommitDetails(result.stdout as String);
 }
 
 List<String> buildShadowFetchRefs(
@@ -482,6 +480,36 @@ List<String> buildShadowFetchRefs(
   return fetchRefs;
 }
 
+const _gitFetchTimeout = Duration(seconds: 25);
+
+Future<bool> _runGitFetchWithTimeout(
+  String workingDirectory,
+  List<String> args,
+) async {
+  try {
+    final process = await Process.start(
+      'git',
+      args,
+      workingDirectory: workingDirectory,
+      environment: nonInteractiveGitEnv(),
+    );
+    final stdoutDrain = process.stdout.transform(utf8.decoder).join();
+    final stderrDrain = process.stderr.transform(utf8.decoder).join();
+    final exitCode = await process.exitCode.timeout(
+      _gitFetchTimeout,
+      onTimeout: () {
+        process.kill();
+        return -1;
+      },
+    );
+    await stdoutDrain;
+    await stderrDrain;
+    return exitCode == 0;
+  } catch (_) {
+    return false;
+  }
+}
+
 Future<void> _fetchRemoteChanges(
   String actualRepoRoot,
   String gerritRemote,
@@ -494,11 +522,12 @@ Future<void> _fetchRemoteChanges(
   onProgress?.call(
     styleDim.wrap('Fetching remote changes from Gerrit ($gerritRemote)...')!,
   );
-  final fetchOk = await defaultGitCli.check(
-    ['fetch', '--quiet', gerritRemote, ...fetchRefs],
-    workingDirectory: actualRepoRoot,
-    readOnly: false,
-  );
+  final fetchOk = await _runGitFetchWithTimeout(actualRepoRoot, [
+    'fetch',
+    '--quiet',
+    gerritRemote,
+    ...fetchRefs,
+  ]);
   if (fetchOk) return;
 
   if (hasClosedBranches &&
@@ -507,12 +536,12 @@ Future<void> _fetchRemoteChanges(
             workingDirectory: actualRepoRoot,
           ) !=
           null) {
-    defaultGitCli.runSync([
+    await _runGitFetchWithTimeout(actualRepoRoot, [
       'fetch',
       'upstream-sdk',
       'refs/heads/$defaultBranch:refs/remotes/$gerritRemote/$defaultBranch',
       '--quiet',
-    ], workingDirectory: actualRepoRoot);
+    ]);
   }
   onProgress?.call(
     yellow.wrap(
@@ -543,6 +572,8 @@ typedef GerritAnalysisResult = ({
 Future<GerritAnalysisResult?> analyzeGerritWork({
   String? gerritRepo,
   bool failSilently = false,
+  bool skipResolvedComments = false,
+  ProcessRunner? processRunner,
   void Function(String message)? onProgress,
 }) async {
   String actualRepoRoot;
@@ -568,20 +599,26 @@ Future<GerritAnalysisResult?> analyzeGerritWork({
   final currentBranch = defaultGitCli.currentBranchSync(actualRepoRoot);
 
   onProgress?.call('Querying active CLs from Gerrit ($gerritHost)...');
-  final remoteCLs = fetchRemoteCLs(actualRepoRoot, gerritHost);
+  final remoteCLs = await fetchRemoteCLs(
+    actualRepoRoot,
+    gerritHost,
+    skipResolvedComments: skipResolvedComments,
+    processRunner: processRunner,
+  );
   final (localBranchIssues, branchDetails) = _discoverLocalBranchIssues(
     actualRepoRoot,
     remoteCLs,
     defaultBranch,
   );
 
-  final closedStatuses = resolveClosedAndUnmappedCLs(
+  final closedStatuses = await resolveClosedAndUnmappedCLs(
     actualRepoRoot,
     localBranchIssues,
     branchDetails,
     remoteCLs,
     defaultBranch,
     gerritHost,
+    processRunner: processRunner,
   );
 
   final gerritRemote = resolveGerritRemoteName(actualRepoRoot);
