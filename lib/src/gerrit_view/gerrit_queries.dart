@@ -1,8 +1,11 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
 import 'package:io/io.dart';
+import 'package:pool/pool.dart';
 
+import '../process_utils.dart';
 import 'models.dart';
 
 String _findRootCommentId(String id, Map<String, String> parentById) {
@@ -264,22 +267,87 @@ DateTime? parseGerritTimestamp(String? raw) {
   return (lastAuthorTouch, cqStatus);
 }
 
-ThreadSummary _fetchClCommentSummary(
+const _emptyThreadSummary = (
+  totalThreads: 0,
+  unresolvedReviewerLeaves: 0,
+  unresolvedAuthorLeaves: 0,
+);
+
+const _defaultGobCurlTimeout = Duration(seconds: 30);
+
+Future<ProcessResult> _runGobCurl(
+  String url, {
+  required String workingDirectory,
+  ProcessRunner? processRunner,
+  Duration timeout = _defaultGobCurlTimeout,
+}) async {
+  if (processRunner != null) {
+    return processRunner('gob-curl', [
+      '-s',
+      url,
+    ], workingDirectory: workingDirectory);
+  }
+  final process = await Process.start('gob-curl', [
+    '-s',
+    url,
+  ], workingDirectory: workingDirectory);
+  final stdoutFuture = process.stdout.transform(utf8.decoder).join();
+  final stderrFuture = process.stderr.transform(utf8.decoder).join();
+  var timedOut = false;
+  final exitCode = await process.exitCode.timeout(
+    timeout,
+    onTimeout: () {
+      timedOut = true;
+      process.kill();
+      return ExitCode.tempFail.code;
+    },
+  );
+  final out = await stdoutFuture;
+  final err = await stderrFuture;
+  return ProcessResult(
+    process.pid,
+    exitCode,
+    out,
+    timedOut ? 'gob-curl timed out after ${timeout.inSeconds}s\n$err' : err,
+  );
+}
+
+bool _canSkipCommentFetch(
+  Map<String, dynamic> item, {
+  required bool skipResolvedComments,
+}) {
+  final total = item['total_comment_count'] as int?;
+  if (total == 0) return true;
+  if (skipResolvedComments && (item['unresolved_comment_count'] as int?) == 0) {
+    return true;
+  }
+  return false;
+}
+
+Future<ThreadSummary> _fetchClCommentSummary(
+  Map<String, dynamic> item,
   String actualRepoRoot,
   String gerritHost,
   int clNumber,
-  int? ownerId,
-) {
-  final gobResult = Process.runSync('gob-curl', [
-    'https://$gerritHost/changes/$clNumber/comments',
-  ], workingDirectory: actualRepoRoot);
-  if (gobResult.exitCode != 0) {
+  int? ownerId, {
+  required bool skipResolvedComments,
+  ProcessRunner? processRunner,
+}) async {
+  if (_canSkipCommentFetch(item, skipResolvedComments: skipResolvedComments)) {
     return (
-      totalThreads: 0,
+      totalThreads: item['total_comment_count'] as int? ?? 0,
       unresolvedReviewerLeaves: 0,
       unresolvedAuthorLeaves: 0,
     );
   }
+
+  final gobResult = await _runGobCurl(
+    'https://$gerritHost/changes/$clNumber/comments',
+    workingDirectory: actualRepoRoot,
+    processRunner: processRunner,
+  );
+  if (gobResult.exitCode != 0) return _emptyThreadSummary;
+
   final cleaned = (gobResult.stdout as String)
       .trim()
       .replaceFirst(")]}'", '')
@@ -290,18 +358,16 @@ ThreadSummary _fetchClCommentSummary(
       return parseGerritCommentsJson(decoded, ownerId);
     }
   } catch (_) {}
-  return (
-    totalThreads: 0,
-    unresolvedReviewerLeaves: 0,
-    unresolvedAuthorLeaves: 0,
-  );
+  return _emptyThreadSummary;
 }
 
-RemoteCL? _parseRemoteClItem(
+Future<RemoteCL?> _parseRemoteClItem(
   Map<String, dynamic> item,
   String actualRepoRoot,
-  String gerritHost,
-) {
+  String gerritHost, {
+  required bool skipResolvedComments,
+  ProcessRunner? processRunner,
+}) async {
   if (item case {
     '_number': final int number,
     'change_id': final String changeId,
@@ -323,11 +389,14 @@ RemoteCL? _parseRemoteClItem(
       ownerId,
       currentRevisionNumber,
     );
-    final threads = _fetchClCommentSummary(
+    final threads = await _fetchClCommentSummary(
+      item,
       actualRepoRoot,
       gerritHost,
       number,
       ownerId,
+      skipResolvedComments: skipResolvedComments,
+      processRunner: processRunner,
     );
 
     final submittable = item['submittable'] as bool?;
@@ -367,10 +436,19 @@ const _changesQuerySuffix =
     '&o=CURRENT_REVISION&o=DETAILED_LABELS&o=DETAILED_ACCOUNTS'
     '&o=MESSAGES&o=SUBMITTABLE&o=SUBMIT_REQUIREMENTS';
 
-Map<int, RemoteCL> fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
-  final gobResult = Process.runSync('gob-curl', [
+const _gerritCommentConcurrency = 8;
+
+Future<Map<int, RemoteCL>> fetchRemoteCLs(
+  String actualRepoRoot,
+  String gerritHost, {
+  bool skipResolvedComments = false,
+  ProcessRunner? processRunner,
+}) async {
+  final gobResult = await _runGobCurl(
     'https://$gerritHost/$_changesQuerySuffix',
-  ], workingDirectory: actualRepoRoot);
+    workingDirectory: actualRepoRoot,
+    processRunner: processRunner,
+  );
   if (gobResult.exitCode != 0) {
     throw GerritViewException(
       'Failed to execute gob-curl. Is it in your PATH and authenticated?\n'
@@ -392,15 +470,24 @@ Map<int, RemoteCL> fetchRemoteCLs(String actualRepoRoot, String gerritHost) {
     );
   }
 
-  final remoteCLs = <int, RemoteCL>{};
-  for (final item in clList) {
-    if (item is! Map<String, dynamic>) continue;
-    final parsed = _parseRemoteClItem(item, actualRepoRoot, gerritHost);
-    if (parsed != null) {
-      remoteCLs[parsed.number] = parsed;
-    }
-  }
-  return remoteCLs;
+  final pool = Pool(_gerritCommentConcurrency);
+  final parsedList = await Future.wait([
+    for (final item in clList.whereType<Map<String, dynamic>>())
+      pool.withResource(
+        () => _parseRemoteClItem(
+          item,
+          actualRepoRoot,
+          gerritHost,
+          skipResolvedComments: skipResolvedComments,
+          processRunner: processRunner,
+        ),
+      ),
+  ]);
+  await pool.close();
+
+  return <int, RemoteCL>{
+    for (final parsed in parsedList.nonNulls) parsed.number: parsed,
+  };
 }
 
 String? _buildClosedClQuery(List<int> clNumbers, Set<String> changeIds) {
@@ -414,14 +501,15 @@ String? _buildClosedClQuery(List<int> clNumbers, Set<String> changeIds) {
   return null;
 }
 
-Map<int, ClStatus> resolveClosedAndUnmappedCLs(
+Future<Map<int, ClStatus>> resolveClosedAndUnmappedCLs(
   String repoPath,
   Map<String, int> localBranchIssues,
   Map<String, CommitDetails> branchDetails,
   Map<int, RemoteCL> remoteCLs,
   String defaultBranch,
-  String gerritHost,
-) {
+  String gerritHost, {
+  ProcessRunner? processRunner,
+}) async {
   final closedIssues = localBranchIssues.values
       .where((i) => !remoteCLs.containsKey(i))
       .toSet()
@@ -438,9 +526,11 @@ Map<int, ClStatus> resolveClosedAndUnmappedCLs(
   final query = _buildClosedClQuery(closedIssues, unmappedChangeIds);
   if (query == null) return statuses;
 
-  final result = Process.runSync('gob-curl', [
+  final result = await _runGobCurl(
     'https://$gerritHost/changes/?q=$query',
-  ], workingDirectory: repoPath);
+    workingDirectory: repoPath,
+    processRunner: processRunner,
+  );
   if (result.exitCode != 0) return statuses;
 
   final cleanedJson = (result.stdout as String)

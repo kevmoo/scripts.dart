@@ -147,7 +147,13 @@ List<LocalRepoInfo> scanLocalGitRepositories(
 
   void walk(Directory dir, int depth) {
     if (depth > maxDepth) return;
-    if (p.basename(dir.path).startsWith('.')) return;
+    final base = p.basename(dir.path);
+    if (base.startsWith('.')) return;
+    if (base == 'dart-sdk' &&
+        FileSystemEntity.typeSync('${dir.path}/.bare') ==
+            FileSystemEntityType.directory) {
+      return;
+    }
 
     if (FileSystemEntity.typeSync('${dir.path}/.git') !=
         FileSystemEntityType.notFound) {

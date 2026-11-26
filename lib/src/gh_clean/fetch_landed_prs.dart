@@ -45,8 +45,8 @@ Future<List<LandedPr>> fetchLandedPrs({
   int limit = 50,
   bool includeOwned = true,
   SyncProcessRunner? processRunner,
+  ProcessRunner? asyncProcessRunner,
 }) async {
-  final runner = processRunner ?? defaultSyncProcessRunner;
   final queryStr = buildLandedSearchQuery(
     user: user,
     repo: repo,
@@ -94,14 +94,28 @@ query($q: String!, $limit: Int!, $cursor: String) {
 }
 ''';
 
-  final nodes = paginateGraphQLSearchSync(
-    graphqlQuery: gqlQuery,
-    searchQuery: queryStr,
-    limit: limit,
-    runner: runner,
-    exceptionBuilder: (message, {exitCode = 1}) =>
-        GhCleanException(message, exitCode: exitCode),
-  );
+  GhCleanException buildErr(String message, {int exitCode = 1}) =>
+      GhCleanException(message, exitCode: exitCode);
+
+  final effectiveAsync =
+      asyncProcessRunner ??
+      (processRunner == null ? defaultProcessRunner : null);
+  final nodes = effectiveAsync != null
+      ? await paginateGraphQLSearch(
+          graphqlQuery: gqlQuery,
+          searchQuery: queryStr,
+          limit: limit,
+          maxPageSize: 50,
+          runner: effectiveAsync,
+          exceptionBuilder: buildErr,
+        )
+      : paginateGraphQLSearchSync(
+          graphqlQuery: gqlQuery,
+          searchQuery: queryStr,
+          limit: limit,
+          runner: processRunner!,
+          exceptionBuilder: buildErr,
+        );
 
   return [
     for (final node in nodes)

@@ -192,6 +192,28 @@ void main() {
       final repos = scanLocalGitRepositories(Directory(d.sandbox));
       check(repos.map((r) => r.repoName)).not(.it()..contains('dart-lang/sdk'));
     });
+
+    test('skips descending into dart-sdk bare worktree container', () async {
+      await d.dir('dart-sdk', [
+        d.dir('.bare'),
+        d.dir('core', [
+          d.dir('agent-1', [
+            d.dir('sdk', [d.file('.git', 'gitdir: /fake')]),
+          ]),
+        ]),
+      ]).create();
+
+      var gitInvocations = 0;
+      final repos = scanLocalGitRepositories(
+        Directory(d.sandbox),
+        processRunner: (exe, args, {workingDirectory}) {
+          gitInvocations++;
+          return ProcessResult(0, 1, '', '');
+        },
+      );
+      check(repos).isEmpty;
+      check(gitInvocations).equals(0);
+    });
   });
 
   group('isDartSdkRemote & isDartSdkRepositoryName', () {

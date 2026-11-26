@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:collection/collection.dart';
 import 'package:path/path.dart' as p;
+import 'package:pool/pool.dart';
 
 import '../gh_clean/branch_policy.dart';
 import '../gh_clean/cleanup_actions.dart';
@@ -47,42 +48,41 @@ typedef _ForkBranchCandidate = ({
   Set<String> doNotDeleteOids,
 });
 
+const ForkBranchScanResult _emptyForkScanResult = (
+  readyToPrune: <PrunableItem>[],
+  additionalTriage: <TriageItem>[],
+  remoteBranchByKey: <String, String>{},
+  candidateLandedIds: <int>{},
+);
+
 /// Scans remote branches on user forks paired with locally cloned upstream
 /// repositories so stale merged, closed-unmerged, duplicate archive, and
 /// unlinked fork branches are surfaced and cleaned up.
-ForkBranchScanResult scanForkRemoteBranches({
+Future<ForkBranchScanResult> scanForkRemoteBranches({
   required List<LocalRepoInfo> localRepos,
   required String user,
   required String? repoFilter,
   required Set<String> handledBranchKeys,
   required Set<String> existingTriageBranchKeys,
   required SyncProcessRunner syncRunner,
+  ProcessRunner? asyncRunner,
   void Function(String message)? onProgress,
-}) {
+}) async {
+  final ghRunner =
+      asyncRunner ??
+      ((exe, args, {workingDirectory}) async =>
+          syncRunner(exe, args, workingDirectory: workingDirectory));
   final multiOwnerRepos = _filterMultiOwnerRootRepos(localRepos, repoFilter);
-  if (multiOwnerRepos.isEmpty) {
-    return (
-      readyToPrune: const [],
-      additionalTriage: const [],
-      remoteBranchByKey: const {},
-      candidateLandedIds: const {},
-    );
-  }
+  if (multiOwnerRepos.isEmpty) return _emptyForkScanResult;
 
-  final forkRefs = _fetchForkRepoRefs(
+  final forkRefs = await _fetchForkRepoRefs(
     multiOwnerRepos: multiOwnerRepos,
     user: user,
     runner: syncRunner,
+    ghRunner: ghRunner,
     onProgress: onProgress,
   );
-  if (forkRefs.candidates.isEmpty) {
-    return (
-      readyToPrune: const [],
-      additionalTriage: const [],
-      remoteBranchByKey: const {},
-      candidateLandedIds: const {},
-    );
-  }
+  if (forkRefs.candidates.isEmpty) return _emptyForkScanResult;
 
   return _classifyForkBranchCandidates(
     candidates: forkRefs.candidates,
@@ -90,6 +90,7 @@ ForkBranchScanResult scanForkRemoteBranches({
     handledBranchKeys: handledBranchKeys,
     existingTriageBranchKeys: existingTriageBranchKeys,
     runner: syncRunner,
+    ghRunner: ghRunner,
   );
 }
 
@@ -124,16 +125,19 @@ bool _isEligibleMultiOwnerRepo(LocalRepoInfo repo, Set<String> filtersLower) {
   return owners.length >= 2;
 }
 
-({String resolvedUser, List<_ForkBranchCandidate> candidates})
+const _forkGraphQLConcurrency = 4;
+
+Future<({String resolvedUser, List<_ForkBranchCandidate> candidates})>
 _fetchForkRepoRefs({
   required List<LocalRepoInfo> multiOwnerRepos,
   required String user,
   required SyncProcessRunner runner,
+  required ProcessRunner ghRunner,
   void Function(String message)? onProgress,
-}) {
+}) async {
   final initialPairs = _selectInitialForkPairs(multiOwnerRepos, user);
   if (initialPairs.isEmpty) {
-    return (resolvedUser: user, candidates: const []);
+    return (resolvedUser: user, candidates: const <_ForkBranchCandidate>[]);
   }
 
   onProgress?.call(
@@ -141,30 +145,16 @@ _fetchForkRepoRefs({
     'repository/repositories...',
   );
 
-  var resolvedUser = user;
   final candidates = <_ForkBranchCandidate>[];
   final queriedForks = <String>{};
-
-  void runPass(List<_ForkRepoPair> pairs) {
-    const batchSize = 15;
-    for (var i = 0; i < pairs.length; i += batchSize) {
-      final batch = pairs.skip(i).take(batchSize).toList();
-      for (final p in batch) {
-        queriedForks.add('${p.forkOwner}/${p.forkName}'.toLowerCase());
-      }
-      final viewer = _fetchForkBatch(
-        batch: batch,
-        currentResolvedUser: resolvedUser,
-        runner: runner,
-        candidatesOut: candidates,
-      );
-      if (resolvedUser == '@me' && viewer != null && viewer.isNotEmpty) {
-        resolvedUser = viewer;
-      }
-    }
-  }
-
-  runPass(initialPairs);
+  final resolvedUser = await _runForkRefsPass(
+    pairs: initialPairs,
+    initialUser: user,
+    queriedForks: queriedForks,
+    candidatesOut: candidates,
+    runner: runner,
+    ghRunner: ghRunner,
+  );
 
   if (user == '@me' && resolvedUser != '@me') {
     final missed = _selectForkPairsForKnownUser(multiOwnerRepos, resolvedUser)
@@ -174,10 +164,61 @@ _fetchForkRepoRefs({
           ),
         )
         .toList();
-    if (missed.isNotEmpty) runPass(missed);
+    if (missed.isNotEmpty) {
+      await _runForkRefsPass(
+        pairs: missed,
+        initialUser: resolvedUser,
+        queriedForks: queriedForks,
+        candidatesOut: candidates,
+        runner: runner,
+        ghRunner: ghRunner,
+      );
+    }
   }
 
   return (resolvedUser: resolvedUser, candidates: candidates);
+}
+
+Future<String> _runForkRefsPass({
+  required List<_ForkRepoPair> pairs,
+  required String initialUser,
+  required Set<String> queriedForks,
+  required List<_ForkBranchCandidate> candidatesOut,
+  required SyncProcessRunner runner,
+  required ProcessRunner ghRunner,
+}) async {
+  const batchSize = 15;
+  final batches = <List<_ForkRepoPair>>[
+    for (var i = 0; i < pairs.length; i += batchSize)
+      pairs.skip(i).take(batchSize).toList(),
+  ];
+  for (final p in pairs) {
+    queriedForks.add('${p.forkOwner}/${p.forkName}'.toLowerCase());
+  }
+
+  final pool = Pool(_forkGraphQLConcurrency);
+  final batchResults = await Future.wait([
+    for (final batch in batches)
+      pool.withResource(
+        () => _fetchForkBatch(
+          batch: batch,
+          currentResolvedUser: initialUser,
+          runner: runner,
+          ghRunner: ghRunner,
+        ),
+      ),
+  ]);
+  await pool.close();
+
+  var resolvedUser = initialUser;
+  for (final res in batchResults) {
+    candidatesOut.addAll(res.candidates);
+    final login = res.viewerLogin;
+    if (resolvedUser == '@me' && login != null && login.isNotEmpty) {
+      resolvedUser = login;
+    }
+  }
+  return resolvedUser;
 }
 
 List<_ForkRepoPair> _selectInitialForkPairs(
@@ -229,41 +270,51 @@ List<_ForkRepoPair> _selectForkPairsForKnownUser(
   return pairs;
 }
 
-String? _fetchForkBatch({
+Future<({String? viewerLogin, List<_ForkBranchCandidate> candidates})>
+_fetchForkBatch({
   required List<_ForkRepoPair> batch,
   required String currentResolvedUser,
   required SyncProcessRunner runner,
-  required List<_ForkBranchCandidate> candidatesOut,
-}) {
+  required ProcessRunner ghRunner,
+}) async {
   final query = _buildForkRefsBatchQuery(batch);
-  final res = runGhWithRetrySync(runner, [
+  final res = await runGhWithRetry(ghRunner, [
     'api',
     'graphql',
     '-f',
     'query=$query',
   ]);
   final data = _tryDecodeGraphQLData(res.stdout);
-  if (data == null) return null;
+  if (data == null) {
+    return (viewerLogin: null, candidates: const <_ForkBranchCandidate>[]);
+  }
 
   final viewerLogin =
       (data['viewer'] as Map<String, dynamic>?)?['login'] as String?;
   final effectiveUser = currentResolvedUser == '@me'
       ? (viewerLogin ?? '')
       : currentResolvedUser;
-  if (effectiveUser.isEmpty) return viewerLogin;
+  if (effectiveUser.isEmpty) {
+    return (
+      viewerLogin: viewerLogin,
+      candidates: const <_ForkBranchCandidate>[],
+    );
+  }
 
+  final candidatesOut = <_ForkBranchCandidate>[];
   for (var i = 0; i < batch.length; i++) {
     final repoNode = data['r$i'];
     if (repoNode is! Map<String, dynamic>) continue;
-    _extractForkRepoCandidates(
+    await _extractForkRepoCandidates(
       pair: batch[i],
       repoNode: repoNode,
       resolvedUser: effectiveUser,
       runner: runner,
+      ghRunner: ghRunner,
       candidatesOut: candidatesOut,
     );
   }
-  return viewerLogin;
+  return (viewerLogin: viewerLogin, candidates: candidatesOut);
 }
 
 String _buildForkRefsBatchQuery(List<_ForkRepoPair> batch) {
@@ -299,13 +350,14 @@ String _buildForkRefsBatchQuery(List<_ForkRepoPair> batch) {
   return buf.toString();
 }
 
-void _extractForkRepoCandidates({
+Future<void> _extractForkRepoCandidates({
   required _ForkRepoPair pair,
   required Map<String, dynamic> repoNode,
   required String resolvedUser,
   required SyncProcessRunner runner,
+  required ProcessRunner ghRunner,
   required List<_ForkBranchCandidate> candidatesOut,
-}) {
+}) async {
   final forkRepo =
       (repoNode['nameWithOwner'] as String?) ??
       '${pair.forkOwner}/${pair.forkName}';
@@ -322,7 +374,7 @@ void _extractForkRepoCandidates({
       (repoNode['defaultBranchRef'] as Map<String, dynamic>?)?['name']
           as String?;
   final permission = (repoNode['viewerPermission'] as String?) ?? 'ADMIN';
-  final allRefs = _collectAllForkRefs(pair, repoNode['refs'], runner);
+  final allRefs = await _collectAllForkRefs(pair, repoNode['refs'], ghRunner);
   final doNotDeleteOids = collectDoNotDeleteOids(
     pair.localRepo,
     runner,
@@ -351,11 +403,11 @@ void _extractForkRepoCandidates({
   }
 }
 
-List<_RemoteForkRef> _collectAllForkRefs(
+Future<List<_RemoteForkRef>> _collectAllForkRefs(
   _ForkRepoPair pair,
   Object? initialRefsObj,
-  SyncProcessRunner runner,
-) {
+  ProcessRunner ghRunner,
+) async {
   final refs = <_RemoteForkRef>[];
   if (initialRefsObj is! Map<String, dynamic>) return refs;
   _appendParsedRefNodes(initialRefsObj['nodes'], refs);
@@ -365,7 +417,7 @@ List<_RemoteForkRef> _collectAllForkRefs(
   while (pageInfo?['hasNextPage'] == true && pages < 5) {
     final cursor = pageInfo?['endCursor'] as String?;
     if (cursor == null || cursor.isEmpty) break;
-    final nextObj = _fetchNextForkRefsPage(pair, cursor, runner);
+    final nextObj = await _fetchNextForkRefsPage(pair, cursor, ghRunner);
     if (nextObj == null) break;
     _appendParsedRefNodes(nextObj['nodes'], refs);
     pageInfo = nextObj['pageInfo'] as Map<String, dynamic>?;
@@ -374,11 +426,11 @@ List<_RemoteForkRef> _collectAllForkRefs(
   return refs;
 }
 
-Map<String, dynamic>? _fetchNextForkRefsPage(
+Future<Map<String, dynamic>?> _fetchNextForkRefsPage(
   _ForkRepoPair pair,
   String cursor,
-  SyncProcessRunner runner,
-) {
+  ProcessRunner ghRunner,
+) async {
   final query =
       'query {\n'
       '  repository(owner: ${jsonEncode(pair.forkOwner)}, '
@@ -400,7 +452,7 @@ Map<String, dynamic>? _fetchNextForkRefsPage(
       '    }\n'
       '  }\n'
       '}';
-  final res = runGhWithRetrySync(runner, [
+  final res = await runGhWithRetry(ghRunner, [
     'api',
     'graphql',
     '-f',
@@ -462,13 +514,14 @@ bool _isAuthoredCandidateRef(
   );
 }
 
-ForkBranchScanResult _classifyForkBranchCandidates({
+Future<ForkBranchScanResult> _classifyForkBranchCandidates({
   required List<_ForkBranchCandidate> candidates,
   required String resolvedUser,
   required Set<String> handledBranchKeys,
   required Set<String> existingTriageBranchKeys,
   required SyncProcessRunner runner,
-}) {
+  required ProcessRunner ghRunner,
+}) async {
   final readyToPrune = <PrunableItem>[];
   final additionalTriage = <TriageItem>[];
   final remoteBranchByKey = <String, String>{};
@@ -488,18 +541,31 @@ ForkBranchScanResult _classifyForkBranchCandidates({
   }
 
   const batchSize = 25;
-  for (var i = 0; i < unhandled.length; i += batchSize) {
-    final batch = unhandled.skip(i).take(batchSize).toList();
-    final query = _buildUpstreamPrBatchQuery(batch);
-    final res = runGhWithRetrySync(runner, [
-      'api',
-      'graphql',
-      '-f',
-      'query=$query',
-    ]);
-    final data = _tryDecodeGraphQLData(res.stdout);
-    if (data == null) continue;
+  final batches = <List<_ForkBranchCandidate>>[
+    for (var i = 0; i < unhandled.length; i += batchSize)
+      unhandled.skip(i).take(batchSize).toList(),
+  ];
 
+  final pool = Pool(_forkGraphQLConcurrency);
+  final batchResponses = await Future.wait([
+    for (final batch in batches)
+      pool.withResource(() async {
+        final query = _buildUpstreamPrBatchQuery(batch);
+        final res = await runGhWithRetry(ghRunner, [
+          'api',
+          'graphql',
+          '-f',
+          'query=$query',
+        ]);
+        return _tryDecodeGraphQLData(res.stdout);
+      }),
+  ]);
+  await pool.close();
+
+  for (var batchIdx = 0; batchIdx < batches.length; batchIdx++) {
+    final data = batchResponses[batchIdx];
+    if (data == null) continue;
+    final batch = batches[batchIdx];
     for (var b = 0; b < batch.length; b++) {
       final qNode = data['q$b'];
       if (qNode is! Map<String, dynamic>) continue;

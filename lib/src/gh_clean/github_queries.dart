@@ -1,6 +1,8 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:pool/pool.dart';
+
 import '../local_repo_scanner.dart';
 import '../process_utils.dart';
 import '../shared/gh_args.dart';
@@ -8,6 +10,18 @@ import '../shared/graphql_utils.dart';
 import 'branch_policy.dart';
 import 'fetch_landed_prs.dart';
 import 'models.dart';
+
+ProcessRunner _resolveAsyncGhRunner(
+  SyncProcessRunner? syncRunner,
+  ProcessRunner? asyncRunner,
+) {
+  if (asyncRunner != null) return asyncRunner;
+  if (syncRunner != null) {
+    return (exe, args, {workingDirectory}) async =>
+        syncRunner(exe, args, workingDirectory: workingDirectory);
+  }
+  return defaultProcessRunner;
+}
 
 Iterable<({LocalRepoInfo repo, String owner, String name})> _filteredRootRepos(
   List<LocalRepoInfo> localRepos, {
@@ -58,9 +72,11 @@ Future<List<LandedPr>> findCrossAuthorLandedPrs(
   int? lastNDays = 7,
   String? repoFilter,
   SyncProcessRunner? processRunner,
+  ProcessRunner? asyncProcessRunner,
   void Function(String message)? onProgress,
 }) async {
   final runner = processRunner ?? defaultSyncProcessRunner;
+  final ghRunner = _resolveAsyncGhRunner(processRunner, asyncProcessRunner);
   final candidates = _collectCandidateBranches(
     localRepos,
     alreadyMatchedBranches,
@@ -76,9 +92,9 @@ Future<List<LandedPr>> findCrossAuthorLandedPrs(
   return _fetchBatchCrossAuthorPrs(
     candidates,
     runner,
+    ghRunner: ghRunner,
     user: user,
     lastNDays: lastNDays,
-    onProgress: onProgress,
   );
 }
 
@@ -138,61 +154,74 @@ bool _isBranchCandidate(
   return !alreadyMatchedBranches.contains(compositeKey);
 }
 
-List<LandedPr> _fetchBatchCrossAuthorPrs(
+const _ghBatchConcurrency = 4;
+
+Future<List<LandedPr>> _fetchBatchCrossAuthorPrs(
   List<_CandidateBranch> candidates,
   SyncProcessRunner runner, {
+  required ProcessRunner ghRunner,
   required String user,
   int? lastNDays,
-  void Function(String message)? onProgress,
-}) {
+}) async {
+  const batchSize = 30;
+  final cutoff = lastNDays != null
+      ? DateTime.now().toUtc().subtract(Duration(days: lastNDays))
+      : null;
+
+  final batches = <List<_CandidateBranch>>[
+    for (var i = 0; i < candidates.length; i += batchSize)
+      candidates.skip(i).take(batchSize).toList(),
+  ];
+
+  final pool = Pool(_ghBatchConcurrency);
+  final batchOutputs = await Future.wait([
+    for (final batch in batches)
+      pool.withResource(
+        () => _runSingleCrossAuthorBatch(batch, runner, ghRunner, cutoff, user),
+      ),
+  ]);
+  await pool.close();
+
   final results = <LandedPr>[];
   final seenPrKeys = <String>{};
-  const batchSize = 30;
-
-  DateTime? cutoff;
-  if (lastNDays != null) {
-    cutoff = DateTime.now().toUtc().subtract(Duration(days: lastNDays));
-  }
-
-  for (var i = 0; i < candidates.length; i += batchSize) {
-    final batch = candidates.skip(i).take(batchSize).toList();
-    final queryStr = _buildBatchCrossAuthorQuery(batch);
-    final result = runGhWithRetrySync(runner, [
-      'api',
-      'graphql',
-      '-f',
-      'query=$queryStr',
-    ]);
-    final data = _tryParseGraphQLData(result.stdout);
-    if (data == null) {
-      if (result.exitCode != 0) {
-        stderr.writeln(
-          'Warning: Failed to fetch cross-author PR data: '
-          '${result.stderr.toString().trim()}',
-        );
-      }
-      continue;
-    }
-
-    for (var b = 0; b < batch.length; b++) {
-      final landedPr = _parseBatchItemLandedPr(
-        data,
-        b,
-        cutoff,
-        batch[b],
-        runner,
-        user: user,
-      );
-      if (landedPr == null) continue;
-
+  for (final batchList in batchOutputs) {
+    for (final landedPr in batchList) {
       final key = '${landedPr.repository}#${landedPr.number}'.toLowerCase();
-      if (seenPrKeys.add(key)) {
-        results.add(landedPr);
-      }
+      if (seenPrKeys.add(key)) results.add(landedPr);
     }
   }
-
   return results;
+}
+
+Future<List<LandedPr>> _runSingleCrossAuthorBatch(
+  List<_CandidateBranch> batch,
+  SyncProcessRunner runner,
+  ProcessRunner ghRunner,
+  DateTime? cutoff,
+  String user,
+) async {
+  final queryStr = _buildBatchCrossAuthorQuery(batch);
+  final result = await runGhWithRetry(ghRunner, [
+    'api',
+    'graphql',
+    '-f',
+    'query=$queryStr',
+  ]);
+  final data = _tryParseGraphQLData(result.stdout);
+  if (data == null) {
+    if (result.exitCode != 0) {
+      stderr.writeln(
+        'Warning: Failed to fetch cross-author PR data: '
+        '${result.stderr.toString().trim()}',
+      );
+    }
+    return const [];
+  }
+
+  return [
+    for (var b = 0; b < batch.length; b++)
+      ?_parseBatchItemLandedPr(data, b, cutoff, batch[b], runner, user: user),
+  ];
 }
 
 String _buildBatchCrossAuthorQuery(List<_CandidateBranch> batch) {
@@ -307,9 +336,11 @@ Future<List<UnlinkedWorktree>> findUnlinkedWorktrees(
   String user = 'kevmoo',
   String? repoFilter,
   SyncProcessRunner? processRunner,
+  ProcessRunner? asyncProcessRunner,
   void Function(String message)? onProgress,
 }) async {
   final runner = processRunner ?? defaultSyncProcessRunner;
+  final ghRunner = _resolveAsyncGhRunner(processRunner, asyncProcessRunner);
   final candidates = _collectCandidateWorktrees(
     localRepos,
     matchedWorktreePaths,
@@ -318,9 +349,10 @@ Future<List<UnlinkedWorktree>> findUnlinkedWorktrees(
 
   final unlinkedCandidates = [
     ...candidates.detachedCandidates,
-    ..._filterUnlinkedCandidates(
+    ...await _filterUnlinkedCandidates(
       candidates.branchCandidates,
       runner,
+      ghRunner: ghRunner,
       user: user,
     ),
   ];
@@ -369,48 +401,67 @@ _collectCandidateWorktrees(
   return (branchCandidates: candidates, detachedCandidates: detachedCandidates);
 }
 
-List<({LocalRepoInfo repo, LocalWorktreeEntry wt})> _filterUnlinkedCandidates(
+Future<List<({LocalRepoInfo repo, LocalWorktreeEntry wt})>>
+_filterUnlinkedCandidates(
   List<_CandidateWorktree> candidates,
   SyncProcessRunner runner, {
+  required ProcessRunner ghRunner,
   required String user,
-}) {
+}) async {
   if (candidates.isEmpty) return const [];
-  final unlinked = <({LocalRepoInfo repo, LocalWorktreeEntry wt})>[];
   const batchSize = 30;
+  final batches = <List<_CandidateWorktree>>[
+    for (var i = 0; i < candidates.length; i += batchSize)
+      candidates.skip(i).take(batchSize).toList(),
+  ];
 
-  for (var i = 0; i < candidates.length; i += batchSize) {
-    final batch = candidates.skip(i).take(batchSize).toList();
-    final queryStr = _buildBatchWorktreePrQuery(batch);
-    final result = runGhWithRetrySync(runner, [
-      'api',
-      'graphql',
-      '-f',
-      'query=$queryStr',
-    ]);
-    if (result.exitCode != 0) {
-      stderr.writeln(
-        'Warning: Failed to fetch GraphQL PR data for candidate worktrees: '
-        '${result.stderr.toString().trim()}',
-      );
-      continue;
-    }
+  final pool = Pool(_ghBatchConcurrency);
+  final batchOutputs = await Future.wait([
+    for (final batch in batches)
+      pool.withResource(
+        () => _runSingleUnlinkedWorktreeBatch(batch, runner, ghRunner, user),
+      ),
+  ]);
+  await pool.close();
 
-    final data = _tryParseGraphQLData(result.stdout);
-    if (data == null) {
-      stderr.writeln(
-        'Warning: Could not parse GraphQL response for candidate worktrees.',
-      );
-      continue;
-    }
+  return [for (final list in batchOutputs) ...list];
+}
 
-    for (var b = 0; b < batch.length; b++) {
-      if (!_batchItemHasPr(data, b, batch[b], user, runner)) {
-        unlinked.add((repo: batch[b].repo, wt: batch[b].wt));
-      }
-    }
+Future<List<({LocalRepoInfo repo, LocalWorktreeEntry wt})>>
+_runSingleUnlinkedWorktreeBatch(
+  List<_CandidateWorktree> batch,
+  SyncProcessRunner runner,
+  ProcessRunner ghRunner,
+  String user,
+) async {
+  final queryStr = _buildBatchWorktreePrQuery(batch);
+  final result = await runGhWithRetry(ghRunner, [
+    'api',
+    'graphql',
+    '-f',
+    'query=$queryStr',
+  ]);
+  if (result.exitCode != 0) {
+    stderr.writeln(
+      'Warning: Failed to fetch GraphQL PR data for candidate worktrees: '
+      '${result.stderr.toString().trim()}',
+    );
+    return const [];
   }
 
-  return unlinked;
+  final data = _tryParseGraphQLData(result.stdout);
+  if (data == null) {
+    stderr.writeln(
+      'Warning: Could not parse GraphQL response for candidate worktrees.',
+    );
+    return const [];
+  }
+
+  return [
+    for (var b = 0; b < batch.length; b++)
+      if (!_batchItemHasPr(data, b, batch[b], user, runner))
+        (repo: batch[b].repo, wt: batch[b].wt),
+  ];
 }
 
 bool _batchItemHasPr(
@@ -569,9 +620,11 @@ Future<List<ClosedUnmergedPr>> findClosedUnmergedPrs(
   String user = 'kevmoo',
   String? repoFilter,
   SyncProcessRunner? processRunner,
+  ProcessRunner? asyncProcessRunner,
   void Function(String message)? onProgress,
 }) async {
   final runner = processRunner ?? defaultSyncProcessRunner;
+  final ghRunner = _resolveAsyncGhRunner(processRunner, asyncProcessRunner);
   final candidates = _collectCandidateBranches(
     localRepos,
     alreadyMatchedBranches,
@@ -584,19 +637,33 @@ Future<List<ClosedUnmergedPr>> findClosedUnmergedPrs(
     '(unmerged) PRs...',
   );
 
+  const batchSize = 30;
+  final batches = <List<_CandidateBranch>>[
+    for (var i = 0; i < candidates.length; i += batchSize)
+      candidates.skip(i).take(batchSize).toList(),
+  ];
+
+  final pool = Pool(_ghBatchConcurrency);
+  final batchOutputs = await Future.wait([
+    for (final batch in batches)
+      pool.withResource(
+        () => _extractClosedUnmergedFromBatch(
+          batch,
+          runner,
+          ghRunner: ghRunner,
+          user: user,
+        ),
+      ),
+  ]);
+  await pool.close();
+
   final results = <ClosedUnmergedPr>[];
   final seenKeys = <String>{};
-  const batchSize = 30;
-
-  for (var i = 0; i < candidates.length; i += batchSize) {
-    final batch = candidates.skip(i).take(batchSize).toList();
-    _extractClosedUnmergedFromBatch(
-      batch,
-      seenKeys,
-      results,
-      runner,
-      user: user,
-    );
+  for (final batchItems in batchOutputs) {
+    for (final item in batchItems) {
+      final key = '${item.repository}#${item.branch}'.toLowerCase();
+      if (seenKeys.add(key)) results.add(item);
+    }
   }
 
   return results..sort((a, b) {
@@ -608,15 +675,14 @@ Future<List<ClosedUnmergedPr>> findClosedUnmergedPrs(
   });
 }
 
-void _extractClosedUnmergedFromBatch(
+Future<List<ClosedUnmergedPr>> _extractClosedUnmergedFromBatch(
   List<_CandidateBranch> batch,
-  Set<String> seenKeys,
-  List<ClosedUnmergedPr> results,
   SyncProcessRunner runner, {
+  required ProcessRunner ghRunner,
   required String user,
-}) {
+}) async {
   final queryStr = _buildBatchClosedUnmergedQuery(batch);
-  final res = runGhWithRetrySync(runner, [
+  final res = await runGhWithRetry(ghRunner, [
     'api',
     'graphql',
     '-f',
@@ -629,26 +695,16 @@ void _extractClosedUnmergedFromBatch(
         'Warning: Failed to query closed (unmerged) PRs batch: $err',
       );
     }
-    return;
+    return const [];
   }
 
   final data = _tryParseGraphQLData(res.stdout);
-  if (data == null) return;
+  if (data == null) return const [];
 
-  for (var b = 0; b < batch.length; b++) {
-    final item = _parseClosedUnmergedBatchItem(
-      data,
-      b,
-      batch[b],
-      runner,
-      user: user,
-    );
-    if (item == null) continue;
-    final key = '${item.repository}#${item.branch}'.toLowerCase();
-    if (seenKeys.add(key)) {
-      results.add(item);
-    }
-  }
+  return [
+    for (var b = 0; b < batch.length; b++)
+      ?_parseClosedUnmergedBatchItem(data, b, batch[b], runner, user: user),
+  ];
 }
 
 String _buildBatchClosedUnmergedQuery(List<_CandidateBranch> batch) {
